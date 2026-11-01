@@ -12,7 +12,7 @@ Tauri 2 window (React / TypeScript)
          SQLite in %APPDATA%\DarPOSERP
 ```
 
-The packaged Tauri process starts the bundled Node runtime and compiled Nest API, waits for the loopback port, and stops that child when the main window closes. The development command starts the API and Tauri/Vite together. The local API uses an in-memory random signing key for short-lived bearer sessions; stored passwords are bcrypt hashes.
+The packaged Tauri process shows the main window immediately and starts the bundled Node runtime and compiled Nest API on a background thread. The frontend polls `/api/auth/health` until the API answers, so a slow first start (antivirus scanning the bundled runtime, cold disk) never blocks or closes the window. The API child is spawned with `CREATE_NO_WINDOW` (no console flash), has a 180-second startup budget, and is stopped when the main window closes. If the API fails to start, the failure is written to `%APPDATA%\DarPOSERP\api.log` and shown in a native error dialog instead of exiting silently. If port 4317 is already served by a previous copy, the new process reuses it instead of spawning a duplicate child that would die with `EADDRINUSE`. The NSIS bundle embeds the WebView2 offline installer so installation works without internet. The development command starts the API and Tauri/Vite together. The local API uses an in-memory random signing key for short-lived bearer sessions; stored passwords are bcrypt hashes.
 
 ## Sale consistency
 
@@ -24,4 +24,4 @@ Prisma schema is the source of truth. A schema SQL script is generated at build/
 
 ## Windows packaging
 
-`desktop/scripts/prepare-runtime.mjs` copies the current Node executable, the compiled API, its production dependency tree, and the generated Prisma client into Tauri resources. The Windows NSIS/MSI bundle remains local at runtime. Rust/Tauri build prerequisites are needed only when creating the desktop package.
+`desktop/scripts/prepare-runtime.mjs` copies the current Node executable, the compiled API, its production dependency tree, and the generated Prisma client into Tauri resources. The assembled `src-tauri/resources/` tree and `*.tsbuildinfo` files are gitignored: the runtime is rebuilt from scratch on every package build, and the server build runs with `incremental: false` so a stale build-info file can never make `tsc` skip emitting `dist` (a fresh clone used to end up without `dist/main.js` this way). The Windows NSIS/MSI bundle remains local at runtime. Rust/Tauri build prerequisites are needed only when creating the desktop package.

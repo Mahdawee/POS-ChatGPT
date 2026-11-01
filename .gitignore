@@ -2,4 +2,7 @@ node_modules/
 dist/
 target/
 .jest-cache/
-ئش
+*.tsbuildinfo
+.local-data/
+.local-data-bundled/
+desktop/src-tauri/resources/

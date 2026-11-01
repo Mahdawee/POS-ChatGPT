@@ -21,6 +21,9 @@
     "useLocalToolsDir": true,
     "icon": ["icons/icon.ico", "icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png"],
     "resources": { "resources/runtime/": "runtime/" },
-    "windows": { "nsis": { "displayLanguageSelector": false, "languages": ["English"] } }
+    "windows": {
+      "webviewInstallMode": { "type": "offlineInstaller" },
+      "nsis": { "displayLanguageSelector": false, "languages": ["English"] }
+    }
   }
 }
