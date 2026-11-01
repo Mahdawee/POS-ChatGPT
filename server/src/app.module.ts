@@ -7,13 +7,14 @@ import { CatalogModule } from "./modules/catalog.module";
 import { ContactsModule } from "./modules/contacts.module";
 import { InventoryModule } from "./modules/inventory.module";
 import { SalesModule } from "./modules/sales.module";
+import { PurchasesModule } from "./modules/purchases.module";
 import { CashModule } from "./modules/cash.module";
 import { UsersModule } from "./modules/users.module";
 import { SettingsModule } from "./modules/settings.module";
 import { DashboardModule } from "./modules/dashboard.module";
 
 @Module({
-  imports: [PrismaModule, AuthModule, CatalogModule, ContactsModule, InventoryModule, SalesModule, CashModule, UsersModule, SettingsModule, DashboardModule],
+  imports: [PrismaModule, AuthModule, CatalogModule, ContactsModule, InventoryModule, SalesModule, PurchasesModule, CashModule, UsersModule, SettingsModule, DashboardModule],
   providers: [{ provide: APP_GUARD, useClass: LocalAuthGuard }],
 })
 export class AppModule {}

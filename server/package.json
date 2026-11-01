@@ -1,11 +1,11 @@
 {
   "name": "@dar-pos/server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "start": "node dist/main.js",
     "start:dev": "npm run db:schema && cross-env API_HOST=127.0.0.1 API_PORT=4317 ts-node-dev --respawn --transpile-only src/main.ts",
-    "build": "npm run db:schema && tsc -p tsconfig.build.json",
+    "build": "npm run db:schema && npm run db:generate && tsc -p tsconfig.build.json",
     "db:generate": "node scripts/prisma-local.cjs generate",
     "db:push": "node scripts/prisma-local.cjs db push",
     "db:schema": "node scripts/prisma-local.cjs migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script --output prisma/schema.sql",

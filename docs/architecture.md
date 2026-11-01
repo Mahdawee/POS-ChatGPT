@@ -20,6 +20,16 @@ The packaged Tauri process shows the main window immediately and starts the bund
 
 The checkout operation checks active products, quantities, discount, payment amount, customer and open cash session before creating the receipt. It then creates the sale and item snapshots, decrements stock, writes stock movements, and writes the audit record in one Prisma interactive transaction. A client-generated idempotency key makes retries return the original receipt.
 
+## Purchases, sale returns and credit accounts
+
+These flows follow the same transactional pattern as checkout:
+
+- **Purchases** (`POST /api/purchases`): merges duplicate lines, validates active products and safe integer totals, then creates the purchase plus item snapshots, increments stock, refreshes each product's `cost` to the latest purchase price and writes `PURCHASE` movements atomically.
+- **Sale returns** (`POST /api/sales/:id/return`): validates requested quantities against the invoice items minus already-returned amounts. Restocks the goods with `SALE_RETURN` movements. A full return refunds the discounted sale total; partial returns refund undiscounted line prices. Cash sales take the refund out of the currently open cash session (if any); credit returns reduce the customer's balance by construction.
+- **Customer credit** (`GET /api/customers/:id`, `POST /api/customers/:id/payments`): balance = credit sales − credit returns − payments. A payment recorded while a cash session is open also writes an `IN` cash movement, so expected drawer cash stays correct.
+
+Backups: `src/backup.ts` wraps `VACUUM INTO` (never inside a transaction). The manual backup button and the automatic snapshot on every cash close share it; the close path is best-effort so a backup failure can never invalidate the committed close, and auto backups are pruned to the newest 10.
+
 ## Database and first run
 
 Prisma schema is the source of truth. A schema SQL script is generated at build/dev start and uses `CREATE TABLE IF NOT EXISTS` at API boot, which lets a fresh installed copy initialize itself without a database server or Prisma CLI. The first boot inserts starter data only when no user exists. Future schema changes should be shipped as versioned SQLite migrations; do not remove or overwrite a customer's `%APPDATA%\DarPOSERP\pos.db`.

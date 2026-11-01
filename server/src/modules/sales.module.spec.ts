@@ -34,3 +34,60 @@ describe("POS checkout", () => {
     expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "SALE", quantity: -2, stockAfter: 3 }) }));
   });
 });
+
+const saleFixture = {
+  id: "sale-1",
+  receiptNo: "POS-1",
+  subtotal: 30,
+  discount: 5,
+  total: 25,
+  paymentMethod: "CASH",
+  items: [{ id: "item-1", productId: "product-1", name: "چای", sku: "T-1", quantity: 3, unitPrice: 10, lineTotal: 30 }],
+  returns: [] as { items: { productId: string; quantity: number }[] }[],
+};
+
+function returnSetup(sale: typeof saleFixture = saleFixture) {
+  const tx = {
+    sale: { findUnique: jest.fn().mockResolvedValue(sale) },
+    product: { findMany: jest.fn().mockResolvedValue([{ ...product, stock: 0 }]), update: jest.fn().mockResolvedValue({}) },
+    saleReturn: { create: jest.fn().mockImplementation(({ data }: { data: { total: number; returnNo: string } }) => Promise.resolve({ id: "return-1", ...data })) },
+    cashSession: { findFirst: jest.fn().mockResolvedValue({ id: "cash-1" }) },
+    cashMovement: { create: jest.fn().mockResolvedValue({}) },
+    inventoryMovement: { create: jest.fn().mockResolvedValue({}) },
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
+  };
+  const prisma = { $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)) };
+  return { controller: new SalesController(prisma as never), tx };
+}
+
+describe("Sale returns", () => {
+  it("restocks the goods and records a SALE_RETURN movement", async () => {
+    const { controller, tx } = returnSetup();
+    const record = await controller.returnSale("sale-1", { items: [{ productId: "product-1", quantity: 2 }] }, user);
+    expect(tx.product.update).toHaveBeenCalledWith({ where: { id: "product-1" }, data: { stock: { increment: 2 } } });
+    expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "SALE_RETURN", quantity: 2, stockAfter: 2 }) }));
+    expect(record.total).toBe(20);
+    expect(tx.auditLog.create).toHaveBeenCalled();
+  });
+
+  it("rejects returning more than what was sold, including already returned amounts", async () => {
+    const { controller, tx } = returnSetup();
+    await expect(controller.returnSale("sale-1", { items: [{ productId: "product-1", quantity: 4 }] }, user)).rejects.toBeInstanceOf(BadRequestException);
+    const partially = { ...saleFixture, returns: [{ items: [{ productId: "product-1", quantity: 2 }] }] };
+    const second = returnSetup(partially);
+    await expect(second.controller.returnSale("sale-1", { items: [{ productId: "product-1", quantity: 2 }] }, user)).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.saleReturn.create).not.toHaveBeenCalled();
+  });
+
+  it("refunds the discounted total on a full return and takes cash out of the open session", async () => {
+    const { controller, tx } = returnSetup();
+    const record = await controller.returnSale("sale-1", { items: [{ productId: "product-1", quantity: 3 }] }, user);
+    expect(record.total).toBe(25); // sale.total after discount, not 30
+    expect(tx.cashMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "OUT", amount: 25, cashSessionId: "cash-1" }) }));
+  });
+
+  it("rejects a product that was not on the original invoice", async () => {
+    const { controller } = returnSetup();
+    await expect(controller.returnSale("sale-1", { items: [{ productId: "other", quantity: 1 }] }, user)).rejects.toBeInstanceOf(BadRequestException);
+  });
+});

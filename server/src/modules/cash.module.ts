@@ -1,6 +1,7 @@
 import { BadRequestException, Body, Controller, Get, Module, Post } from "@nestjs/common";
 import { CashMovementDto, CloseCashDto, OpenCashDto } from "../dto";
 import { CurrentUser, SessionUser } from "../auth";
+import { createBackup, pruneAutoBackups } from "../backup";
 import { PrismaService } from "../prisma.service";
 
 @Controller("cash")
@@ -48,7 +49,7 @@ class CashController {
   }
 
   @Post("close") async close(@Body() dto: CloseCashDto, @CurrentUser() user: SessionUser) {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const session = await tx.cashSession.findFirst({ where: { status: "OPEN" } });
       if (!session) throw new BadRequestException("صندوق باز وجود ندارد.");
       const [cashIn, cashOut, cashSales] = await Promise.all([
@@ -61,6 +62,16 @@ class CashController {
       await tx.auditLog.create({ data: { actor: user.username, action: "CLOSE_CASH", entity: "CashSession", entityId: session.id, detail: `expected=${expected}; counted=${dto.countedCash}` } });
       return { ...updated, difference: dto.countedCash - expected };
     });
+    // Automatic safety snapshot whenever a shift is closed. A backup failure
+    // must never invalidate the already-committed close, so it is best effort.
+    try {
+      const path = await createBackup(this.prisma, "auto");
+      pruneAutoBackups(10);
+      await this.prisma.auditLog.create({ data: { actor: user.username, action: "CREATE_BACKUP", entity: "Database", detail: path } });
+    } catch (error) {
+      await this.prisma.auditLog.create({ data: { actor: user.username, action: "BACKUP_FAILED", entity: "Database", detail: String(error) } }).catch(() => undefined);
+    }
+    return result;
   }
 }
 

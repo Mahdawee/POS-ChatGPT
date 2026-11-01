@@ -70,3 +70,29 @@ export class SettingDto {
   @IsString() @MinLength(1) @MaxLength(60) key!: string;
   @IsString() @MaxLength(500) value!: string;
 }
+export class PurchaseLineDto {
+  @IsString() productId!: string;
+  @Type(() => Number) @IsInt() @Min(1) @Max(1000000) quantity!: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) unitCost?: number;
+}
+export class PurchaseDto {
+  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => PurchaseLineDto) items!: PurchaseLineDto[];
+  @IsOptional() @IsString() supplierId?: string;
+  @IsOptional() @IsString() @MaxLength(60) invoiceNo?: string;
+  @IsOptional() @IsString() @MaxLength(300) note?: string;
+}
+export class ReturnLineDto {
+  @IsString() productId!: string;
+  @Type(() => Number) @IsInt() @Min(1) @Max(1000000) quantity!: number;
+}
+export class SaleReturnDto {
+  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => ReturnLineDto) items!: ReturnLineDto[];
+  @IsOptional() @IsString() @MaxLength(300) note?: string;
+}
+export class CustomerPaymentDto {
+  @Type(() => Number) @IsInt() @Min(1) @Max(2147483647) amount!: number;
+  @IsOptional() @IsString() @MaxLength(300) note?: string;
+}
+export class ResetPasswordDto {
+  @IsString() @MinLength(8) @MaxLength(100) newPassword!: string;
+}

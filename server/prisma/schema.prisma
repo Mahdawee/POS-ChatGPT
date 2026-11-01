@@ -55,6 +55,8 @@ model Product {
   category    Category?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   saleItems   SaleItem[]
   movements   InventoryMovement[]
+  purchaseItems PurchaseItem[]
+  returnItems   SaleReturnItem[]
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
   @@index([name])
@@ -69,6 +71,7 @@ model Customer {
   note      String?
   isActive  Boolean  @default(true)
   sales     Sale[]
+  payments  CustomerPayment[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@index([name])
@@ -82,6 +85,7 @@ model Supplier {
   address   String?
   note      String?
   isActive  Boolean  @default(true)
+  purchases Purchase[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@index([name])
@@ -96,6 +100,9 @@ model User {
   isActive     Boolean     @default(true)
   sales        Sale[]
   cashSessions CashSession[]
+  purchases    Purchase[]
+  saleReturns  SaleReturn[]
+  customerPayments CustomerPayment[]
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 }
@@ -124,6 +131,7 @@ model Sale {
   cashSessionId  String?
   cashSession    CashSession?  @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
   items          SaleItem[]
+  returns        SaleReturn[]
   createdAt      DateTime      @default(now())
   @@index([createdAt])
 }
@@ -165,6 +173,7 @@ model CashSession {
   user        User         @relation(fields: [userId], references: [id])
   sales       Sale[]
   movements   CashMovement[]
+  customerPayments CustomerPayment[]
   openedAt    DateTime     @default(now())
   closedAt    DateTime?
   @@index([status, openedAt])
@@ -189,4 +198,76 @@ model AuditLog {
   detail    String?
   createdAt DateTime @default(now())
   @@index([entity, createdAt])
+}
+
+model Purchase {
+  id         String         @id @default(cuid())
+  invoiceNo  String?
+  note       String?
+  supplierId String?
+  supplier   Supplier?      @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  userId     String
+  user       User           @relation(fields: [userId], references: [id])
+  total      Int
+  items      PurchaseItem[]
+  createdAt  DateTime       @default(now())
+  @@index([createdAt])
+  @@index([supplierId])
+}
+
+model PurchaseItem {
+  id         String   @id @default(cuid())
+  purchaseId String
+  purchase   Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id])
+  name       String
+  sku        String
+  quantity   Int
+  unitCost   Int
+  lineTotal  Int
+  @@index([purchaseId])
+}
+
+model SaleReturn {
+  id        String          @id @default(cuid())
+  returnNo  String          @unique
+  saleId    String
+  sale      Sale            @relation(fields: [saleId], references: [id])
+  total     Int
+  note      String?
+  userId    String
+  user      User            @relation(fields: [userId], references: [id])
+  items     SaleReturnItem[]
+  createdAt DateTime        @default(now())
+  @@index([saleId])
+  @@index([createdAt])
+}
+
+model SaleReturnItem {
+  id           String     @id @default(cuid())
+  saleReturnId String
+  saleReturn   SaleReturn @relation(fields: [saleReturnId], references: [id], onDelete: Cascade)
+  productId    String
+  product      Product    @relation(fields: [productId], references: [id])
+  name         String
+  sku          String
+  quantity     Int
+  unitPrice    Int
+  lineTotal    Int
+  @@index([saleReturnId])
+}
+
+model CustomerPayment {
+  id            String       @id @default(cuid())
+  customerId    String
+  customer      Customer     @relation(fields: [customerId], references: [id])
+  amount        Int
+  note          String?
+  cashSessionId String?
+  cashSession   CashSession? @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
+  userId        String
+  user          User         @relation(fields: [userId], references: [id])
+  createdAt     DateTime     @default(now())
+  @@index([customerId, createdAt])
 }

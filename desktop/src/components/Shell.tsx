@@ -1,12 +1,13 @@
 import { type ReactNode } from "react";
-import { Activity, Banknote, Box, Boxes, CircleUserRound, FileText, LayoutDashboard, LogOut, PackagePlus, Settings2, ShoppingCart, Tags, UsersRound, type LucideIcon } from "lucide-react";
+import { Activity, Banknote, Box, Boxes, CircleUserRound, FileText, LayoutDashboard, LogOut, PackagePlus, Settings2, ShoppingCart, Tags, Truck, UsersRound, type LucideIcon } from "lucide-react";
 import type { User } from "../lib/api";
 
-export type PageId = "dashboard" | "pos" | "products" | "categories" | "customers" | "suppliers" | "inventory" | "sales" | "cash" | "users" | "settings";
+export type PageId = "dashboard" | "pos" | "products" | "categories" | "customers" | "suppliers" | "purchases" | "inventory" | "sales" | "cash" | "users" | "settings";
 const navigation: { id: PageId; label: string; icon: LucideIcon; group: string; admin?: boolean }[] = [
   { id: "dashboard", label: "نمای کلی", icon: LayoutDashboard, group: "اصلی" },
   { id: "pos", label: "صندوق فروش", icon: ShoppingCart, group: "اصلی" },
   { id: "sales", label: "فروش‌ها", icon: FileText, group: "فروش و انبار" },
+  { id: "purchases", label: "خریدها", icon: Truck, group: "فروش و انبار" },
   { id: "products", label: "کالاها", icon: Box, group: "فروش و انبار" },
   { id: "categories", label: "دسته‌بندی‌ها", icon: Tags, group: "فروش و انبار" },
   { id: "inventory", label: "موجودی انبار", icon: Boxes, group: "فروش و انبار" },
@@ -18,12 +19,13 @@ const navigation: { id: PageId; label: string; icon: LucideIcon; group: string; 
 ];
 const titles: Record<PageId, string> = Object.fromEntries(navigation.map((item) => [item.id, item.label])) as Record<PageId, string>;
 
-export function Shell({ page, onNavigate, user, onLogout, children }: { page: PageId; onNavigate: (page: PageId) => void; user: User; onLogout: () => void; children: ReactNode }) {
+export function Shell({ page, onNavigate, user, onLogout, shopName, children }: { page: PageId; onNavigate: (page: PageId) => void; user: User; onLogout: () => void; shopName?: string; children: ReactNode }) {
   const groups = [...new Set(navigation.map((item) => item.group))];
+  const store = shopName?.trim() || "فروشگاه من";
   return <div className="app-shell">
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark">رو</div><div><strong>روشن</strong><span>فروش و مدیریت فروشگاه</span></div></div>
-      <div className="store-chip"><span className="store-dot"/><span>فروشگاه من</span><small>محلی · آماده کار</small></div>
+      <div className="store-chip"><span className="store-dot"/><span>{store}</span><small>محلی · آماده کار</small></div>
       <nav className="side-nav">
         {groups.map((group) => <section className="nav-group" key={group}><div className="nav-label">{group}</div>{navigation.filter((item) => item.group === group && (!item.admin || user.role === "ADMIN")).map(({ id, label, icon: Icon }) => <button key={id} className={`nav-item ${page === id ? "active" : ""}`} onClick={() => onNavigate(id)}><Icon size={18} strokeWidth={1.8}/><span>{label}</span>{id === "pos" && <kbd>F2</kbd>}</button>)}</section>)}
       </nav>

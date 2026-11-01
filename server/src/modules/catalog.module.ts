@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Module, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Get, Module, Param, Patch, Post, Query } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
 import { CategoryDto, ProductDto } from "../dto";
 
@@ -17,7 +17,7 @@ class CategoriesController {
 @Controller("products")
 class ProductsController {
   constructor(private readonly prisma: PrismaService) {}
-  @Get() list() { return this.prisma.product.findMany({ where: { isActive: true }, include: { category: true }, orderBy: { name: "asc" } }); }
+  @Get() list(@Query("archived") archived?: string) { return this.prisma.product.findMany({ where: { isActive: archived !== "1" }, include: { category: true }, orderBy: { name: "asc" } }); }
   @Post() async create(@Body() dto: ProductDto) {
     const stock = dto.stock ?? 0;
     const item = await this.prisma.$transaction(async (tx) => {
@@ -30,9 +30,12 @@ class ProductsController {
   }
   @Patch(":id") async update(@Param("id") id: string, @Body() dto: ProductDto) {
     const { stock: _stock, ...fields } = dto;
-    return this.prisma.product.update({ where: { id }, data: { ...fields, sku: fields.sku.trim(), barcode: fields.barcode?.trim() || null, name: fields.name.trim(), categoryId: fields.categoryId || null } });
+    const item = await this.prisma.product.update({ where: { id }, data: { ...fields, sku: fields.sku.trim(), barcode: fields.barcode?.trim() || null, name: fields.name.trim(), categoryId: fields.categoryId || null } });
+    await this.prisma.auditLog.create({ data: { action: "UPDATE", entity: "Product", entityId: id, detail: item.sku } });
+    return item;
   }
   @Patch(":id/archive") async archive(@Param("id") id: string) { return this.prisma.product.update({ where: { id }, data: { isActive: false } }); }
+  @Patch(":id/restore") async restore(@Param("id") id: string) { return this.prisma.product.update({ where: { id }, data: { isActive: true } }); }
 }
 
 @Module({ controllers: [CategoriesController, ProductsController] })

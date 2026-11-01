@@ -196,3 +196,95 @@ CREATE INDEX IF NOT EXISTS "CashSession_status_openedAt_idx" ON "CashSession"("s
 
 -- CreateIndex
 CREATE INDEX IF NOT EXISTS "AuditLog_entity_createdAt_idx" ON "AuditLog"("entity", "createdAt");
+
+-- CreateTable
+CREATE TABLE IF NOT EXISTS "Purchase" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "invoiceNo" TEXT,
+    "note" TEXT,
+    "supplierId" TEXT,
+    "userId" TEXT NOT NULL,
+    "total" INTEGER NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "Purchase_supplierId_fkey" FOREIGN KEY ("supplierId") REFERENCES "Supplier" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT "Purchase_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE IF NOT EXISTS "PurchaseItem" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "purchaseId" TEXT NOT NULL,
+    "productId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "sku" TEXT NOT NULL,
+    "quantity" INTEGER NOT NULL,
+    "unitCost" INTEGER NOT NULL,
+    "lineTotal" INTEGER NOT NULL,
+    CONSTRAINT "PurchaseItem_purchaseId_fkey" FOREIGN KEY ("purchaseId") REFERENCES "Purchase" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "PurchaseItem_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE IF NOT EXISTS "SaleReturn" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "returnNo" TEXT NOT NULL,
+    "saleId" TEXT NOT NULL,
+    "total" INTEGER NOT NULL,
+    "note" TEXT,
+    "userId" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "SaleReturn_saleId_fkey" FOREIGN KEY ("saleId") REFERENCES "Sale" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "SaleReturn_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE IF NOT EXISTS "SaleReturnItem" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "saleReturnId" TEXT NOT NULL,
+    "productId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "sku" TEXT NOT NULL,
+    "quantity" INTEGER NOT NULL,
+    "unitPrice" INTEGER NOT NULL,
+    "lineTotal" INTEGER NOT NULL,
+    CONSTRAINT "SaleReturnItem_saleReturnId_fkey" FOREIGN KEY ("saleReturnId") REFERENCES "SaleReturn" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "SaleReturnItem_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE IF NOT EXISTS "CustomerPayment" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "customerId" TEXT NOT NULL,
+    "amount" INTEGER NOT NULL,
+    "note" TEXT,
+    "cashSessionId" TEXT,
+    "userId" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "CustomerPayment_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "Customer" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "CustomerPayment_cashSessionId_fkey" FOREIGN KEY ("cashSessionId") REFERENCES "CashSession" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT "CustomerPayment_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX IF NOT EXISTS "SaleReturn_returnNo_key" ON "SaleReturn"("returnNo");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "Purchase_createdAt_idx" ON "Purchase"("createdAt");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "Purchase_supplierId_idx" ON "Purchase"("supplierId");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "PurchaseItem_purchaseId_idx" ON "PurchaseItem"("purchaseId");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "SaleReturn_saleId_idx" ON "SaleReturn"("saleId");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "SaleReturn_createdAt_idx" ON "SaleReturn"("createdAt");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "SaleReturnItem_saleReturnId_idx" ON "SaleReturnItem"("saleReturnId");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "CustomerPayment_customerId_createdAt_idx" ON "CustomerPayment"("customerId", "createdAt");
