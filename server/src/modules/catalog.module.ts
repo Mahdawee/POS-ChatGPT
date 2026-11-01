@@ -11,7 +11,11 @@ class CategoriesController {
     await this.prisma.auditLog.create({ data: { action: "CREATE", entity: "Category", entityId: item.id, detail: item.name } });
     return item;
   }
-  @Patch(":id") update(@Param("id") id: string, @Body() dto: CategoryDto) { return this.prisma.category.update({ where: { id }, data: { name: dto.name.trim(), color: dto.color } }); }
+  @Patch(":id") async update(@Param("id") id: string, @Body() dto: CategoryDto) {
+    const item = await this.prisma.category.update({ where: { id }, data: { name: dto.name.trim(), color: dto.color } });
+    await this.prisma.auditLog.create({ data: { action: "UPDATE", entity: "Category", entityId: id, detail: item.name } });
+    return item;
+  }
 }
 
 @Controller("products")

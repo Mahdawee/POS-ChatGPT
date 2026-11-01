@@ -73,6 +73,23 @@ fn read_tail(path: &Path, max_chars: usize) -> String {
     content.chars().skip(length - max_chars).collect()
 }
 
+/// The bundled API streams its stdout/stderr into api.log. Without a cap the
+/// file would grow forever on machines that run for years; keep only the tail.
+#[cfg(not(debug_assertions))]
+fn cap_log(path: &Path) {
+    const MAX_LOG_BYTES: u64 = 2 * 1024 * 1024;
+    const KEPT_TAIL_CHARS: usize = 64 * 1024;
+    if let Ok(meta) = std::fs::metadata(path) {
+        if meta.len() > MAX_LOG_BYTES {
+            let tail = read_tail(path, KEPT_TAIL_CHARS);
+            if std::fs::write(path, tail).is_err() {
+                // Never block startup over log rotation.
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+}
+
 /// Tauri resolves `current_exe()` through `Path::canonicalize()`, which on
 /// Windows returns verbatim paths (`\\?\C:\...`). Node.js 22+ crashes with
 /// `EISDIR: illegal operation on a directory, lstat 'C:'` when its main
@@ -128,6 +145,7 @@ fn start_bundled_api(app: tauri::AppHandle, closing: Arc<AtomicBool>) {
         report_startup_failure(&api_log, &format!("Could not create the local data directory: {error}"));
         return;
     }
+    cap_log(&api_log);
     append_log(&api_log, "Starting the bundled local POS API.");
 
     let runtime = match app.path().resolve("runtime", tauri::path::BaseDirectory::Resource) {
