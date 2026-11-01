@@ -73,6 +73,23 @@ fn read_tail(path: &Path, max_chars: usize) -> String {
     content.chars().skip(length - max_chars).collect()
 }
 
+/// Tauri resolves `current_exe()` through `Path::canonicalize()`, which on
+/// Windows returns verbatim paths (`\\?\C:\...`). Node.js 22+ crashes with
+/// `EISDIR: illegal operation on a directory, lstat 'C:'` when its main
+/// script path carries that prefix, so convert the resolved runtime path
+/// back to a normal Win32 path before spawning the bundled API.
+#[cfg(not(debug_assertions))]
+fn strip_verbatim_prefix(path: &Path) -> std::path::PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        std::path::PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        std::path::PathBuf::from(rest)
+    } else {
+        path.to_path_buf()
+    }
+}
+
 /// Reports a bundled API startup failure to the user (dialog + log)
 /// instead of letting the process exit silently.
 #[cfg(not(debug_assertions))]
@@ -114,12 +131,13 @@ fn start_bundled_api(app: tauri::AppHandle, closing: Arc<AtomicBool>) {
     append_log(&api_log, "Starting the bundled local POS API.");
 
     let runtime = match app.path().resolve("runtime", tauri::path::BaseDirectory::Resource) {
-        Ok(path) => path,
+        Ok(path) => strip_verbatim_prefix(&path),
         Err(error) => {
             report_startup_failure(&api_log, &format!("Could not resolve the bundled runtime: {error}"));
             return;
         }
     };
+    append_log(&api_log, &format!("Bundled runtime at {}", runtime.display()));
     let node = runtime.join("node.exe");
     let server_dir = runtime.join("server");
     let entry = server_dir.join("dist").join("main.js");
