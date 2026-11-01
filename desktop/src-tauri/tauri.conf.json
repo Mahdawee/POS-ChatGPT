@@ -1,0 +1,26 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "روشن فروشگاهی",
+  "version": "0.1.0",
+  "identifier": "af.darpos.local",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{ "title": "روشن | فروش و مدیریت فروشگاه", "width": 1440, "height": 920, "minWidth": 1120, "minHeight": 720, "center": true }],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost http://127.0.0.1:4317; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "useLocalToolsDir": true,
+    "icon": ["icons/icon.ico", "icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png"],
+    "resources": { "resources/runtime/": "runtime/" },
+    "windows": { "nsis": { "displayLanguageSelector": false, "languages": ["English"] } }
+  }
+}

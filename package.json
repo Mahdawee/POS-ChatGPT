@@ -1,0 +1,23 @@
+{
+  "name": "dar-pos-erp",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "setup:dependencies": "npm install && npm --prefix server install && npm --prefix desktop install && npm run db:generate",
+    "dev": "concurrently -k -n api,desktop -c blue,green \"npm:dev:api\" \"npm:dev:desktop\"",
+    "dev:api": "npm --prefix server run start:dev",
+    "dev:desktop": "npm --prefix desktop run tauri:dev",
+    "build": "npm run build:api && npm run build:desktop",
+    "build:api": "npm --prefix server run build",
+    "build:desktop": "npm --prefix desktop run build",
+    "test": "npm --prefix server test",
+    "db:generate": "npm --prefix server run db:generate",
+    "db:push": "npm --prefix server run db:push",
+    "db:seed": "npm --prefix server run db:seed",
+    "tauri:build": "npm --prefix desktop run tauri:build",
+    "tauri": "npm --prefix desktop run tauri"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

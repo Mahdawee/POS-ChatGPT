@@ -1,0 +1,192 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  CASHIER
+}
+
+enum PaymentMethod {
+  CASH
+  MOBILE
+  CREDIT
+}
+
+enum MovementType {
+  SALE
+  PURCHASE
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  SALE_RETURN
+}
+
+enum CashMovementType {
+  IN
+  OUT
+}
+
+model Category {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  color     String    @default("#7488a3")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  products  Product[]
+}
+
+model Product {
+  id          String              @id @default(cuid())
+  sku         String              @unique
+  barcode     String?             @unique
+  name        String
+  unit        String              @default("عدد")
+  price       Int
+  cost        Int                 @default(0)
+  stock       Int                 @default(0)
+  minStock    Int                 @default(0)
+  isActive    Boolean             @default(true)
+  categoryId  String?
+  category    Category?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  saleItems   SaleItem[]
+  movements   InventoryMovement[]
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  @@index([name])
+  @@index([categoryId])
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String?
+  address   String?
+  note      String?
+  isActive  Boolean  @default(true)
+  sales     Sale[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([name])
+  @@index([phone])
+}
+
+model Supplier {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String?
+  address   String?
+  note      String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([name])
+}
+
+model User {
+  id           String      @id @default(cuid())
+  username     String      @unique
+  displayName  String
+  passwordHash String
+  role         UserRole    @default(CASHIER)
+  isActive     Boolean     @default(true)
+  sales        Sale[]
+  cashSessions CashSession[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model Sale {
+  id             String        @id @default(cuid())
+  receiptNo      String        @unique
+  idempotencyKey String?       @unique
+  subtotal       Int
+  discount       Int           @default(0)
+  total          Int
+  amountPaid     Int
+  change         Int           @default(0)
+  paymentMethod  PaymentMethod
+  note           String?
+  customerId     String?
+  customer       Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  userId         String
+  user           User          @relation(fields: [userId], references: [id])
+  cashSessionId  String?
+  cashSession    CashSession?  @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
+  items          SaleItem[]
+  createdAt      DateTime      @default(now())
+  @@index([createdAt])
+}
+
+model SaleItem {
+  id        String  @id @default(cuid())
+  saleId    String
+  sale      Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  name      String
+  sku       String
+  quantity  Int
+  unitPrice Int
+  lineTotal Int
+}
+
+model InventoryMovement {
+  id        String       @id @default(cuid())
+  productId String
+  product   Product     @relation(fields: [productId], references: [id])
+  type      MovementType
+  quantity  Int
+  stockAfter Int
+  reference String?
+  note      String?
+  createdAt DateTime     @default(now())
+  @@index([productId, createdAt])
+}
+
+model CashSession {
+  id          String       @id @default(cuid())
+  status      String       @default("OPEN")
+  openingCash Int
+  expectedCash Int?
+  countedCash Int?
+  note        String?
+  userId      String
+  user        User         @relation(fields: [userId], references: [id])
+  sales       Sale[]
+  movements   CashMovement[]
+  openedAt    DateTime     @default(now())
+  closedAt    DateTime?
+  @@index([status, openedAt])
+}
+
+model CashMovement {
+  id            String           @id @default(cuid())
+  type          CashMovementType
+  amount        Int
+  description   String
+  cashSessionId String
+  cashSession   CashSession       @relation(fields: [cashSessionId], references: [id], onDelete: Cascade)
+  createdAt     DateTime         @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actor     String?
+  action    String
+  entity    String
+  entityId  String?
+  detail    String?
+  createdAt DateTime @default(now())
+  @@index([entity, createdAt])
+}

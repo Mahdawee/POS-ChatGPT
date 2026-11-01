@@ -1,0 +1,14 @@
+node_modules/
+dist/
+target/
+.jest-cache/
+.local-data/
+.local-data-bundled/
+.env
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+desktop/src-tauri/binaries/*.exe
+desktop/src-tauri/icons/generated/
+desktop/src-tauri/resources/runtime/
