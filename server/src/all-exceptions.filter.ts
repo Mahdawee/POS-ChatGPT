@@ -75,6 +75,15 @@ export class AllExceptionsFilter implements ExceptionFilter {
       status = exception.getStatus();
       const body = exception.getResponse();
       message = typeof body === "string" ? body : ((body as { message?: string | string[] }).message ?? exception.message);
+    } else if (
+      // A STALE generated Prisma client (schema updated by a pull, client
+      // never regenerated) makes `prisma.expense` undefined, so the first
+      // model call dies with exactly this TypeError. Tell the user the
+      // actionable fix instead of a scary 500.
+      name === "TypeError" && /Cannot read properties of undefined \(reading '(findMany|findUnique|findFirst|create|createMany|update|updateMany|delete|deleteMany|count|aggregate|groupBy|upsert)'\)/.test(String((shape as { message?: unknown } | undefined)?.message))
+    ) {
+      status = HttpStatus.SERVICE_UNAVAILABLE;
+      message = "برنامهٔ سرور به‌روزرسانی ناتمام دارد؛ یک بار برنامه را ببندید و دوباره باز کنید.";
     } else if (isKnownPrisma) {
       const mapped = PRISMA_MESSAGES[code];
       if (mapped) {

@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "start": "node dist/main.js",
-    "start:dev": "npm run db:schema && cross-env API_HOST=127.0.0.1 API_PORT=4317 ts-node-dev --respawn --transpile-only src/main.ts",
+    "start:dev": "npm run db:schema && npm run db:generate && cross-env API_HOST=127.0.0.1 API_PORT=4317 ts-node-dev --respawn --transpile-only src/main.ts",
     "build": "npm run db:schema && npm run db:generate && tsc -p tsconfig.build.json",
     "db:generate": "node scripts/prisma-local.cjs generate",
     "db:push": "node scripts/prisma-local.cjs db push",

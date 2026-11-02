@@ -38,12 +38,39 @@ export async function ensureColumnMigrations(db: { $queryRawUnsafe(sql: string):
  * losslessly, which Prisma's Float fields read back unchanged. New databases
  * get REAL columns straight from schema.sql.
  */
+/**
+ * Models the application queries. The generated Prisma client must know all
+ * of them; a stale client (schema.prisma updated by a pull, client never
+ * regenerated) exposes `undefined` for the new models and every endpoint
+ * touching them dies with "Cannot read properties of undefined (reading
+ * 'findMany')". Checked loudly at boot so api.log names the real cause
+ * instead of leaving the cashier with cryptic 5xx replies.
+ */
+const REQUIRED_MODELS = [
+  "user", "setting", "category", "product", "customer", "supplier",
+  "sale", "saleItem", "saleReturn", "saleReturnItem",
+  "purchase", "purchaseItem", "purchaseReturn", "purchaseReturnItem",
+  "customerPayment", "supplierPayment",
+  "inventoryMovement", "cashSession", "cashMovement",
+  "expense", "auditLog",
+] as const;
+
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private optimizeTimer: NodeJS.Timeout | undefined;
 
   async onModuleInit() {
     await this.$connect();
+    const missing = REQUIRED_MODELS.filter((model) => !(this as unknown as Record<string, unknown>)[model]);
+    if (missing.length) {
+      // Loud and actionable: this is a developer-machine problem (stale
+      // generated client), not a data problem. Dev starts regenerate the
+      // client automatically now, so a restart fixes it.
+      console.error(
+        `[prisma-client] The generated Prisma client is OUT OF DATE — these models are missing: ${missing.join(", ")}. ` +
+          "Run `npm run db:generate` in the server folder (or restart `npm run dev`) and restart the app.",
+      );
+    }
     await this.$queryRawUnsafe("PRAGMA journal_mode=WAL");
     await this.$queryRawUnsafe("PRAGMA optimize");
     const schemaPath = join(__dirname, "../prisma/schema.sql");

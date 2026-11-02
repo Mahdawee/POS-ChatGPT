@@ -102,4 +102,13 @@ describe("All-exceptions filter", () => {
     expect(spy.mock.calls[0].join(" ")).toMatch(/\[unhandled E[0-9A-Z]+\]/);
     spy.mockRestore();
   });
+
+  it("turns the stale-Prisma-client TypeError (prisma.expense undefined) into an actionable 503", () => {
+    const error = new TypeError("Cannot read properties of undefined (reading 'findMany')");
+    const { status, json } = run(error);
+    expect(status).toHaveBeenCalledWith(HttpStatus.SERVICE_UNAVAILABLE);
+    const payload = json.mock.calls[0][0] as { message: string; detail: string };
+    expect(payload.message).toContain("دوباره باز کنید");
+    expect(payload.detail).toContain("TypeError");
+  });
 });
