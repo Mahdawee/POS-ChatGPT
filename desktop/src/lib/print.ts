@@ -1,5 +1,5 @@
-import QRCode from "qrcode";
 import { invoke } from "@tauri-apps/api/core";
+import { qrSvg } from "./qr";
 import { dateTime, dayLabel, dir, fullDate, lang, money, moneyPlain, percent, t } from "../i18n";
 import type { CustomerDetail, ProfitReport, Product, PurchaseReturn, Sale, SaleReturn, ShopSettings, ZReport } from "./api";
 
@@ -72,19 +72,20 @@ export function printHtml(inner: string, options: { width?: string; title?: stri
   frame.srcdoc = html;
 }
 
-// Payment QR (Settings → receipts): encoded once and cached per text, since
-// the setting rarely changes between receipts.
+// Payment QR (Settings → receipts): rendered once and cached per text, since
+// the setting rarely changes between receipts. Inline SVG keeps it crisp at
+// any print size and needs no async canvas round-trip.
 let qrCache = new Map<string, string>();
-async function paymentQrImage(shop: ShopSettings): Promise<string> {
+function paymentQrSvg(shop: ShopSettings): string {
   const text = shop.paymentQr?.trim();
   if (!text) return "";
   const cached = qrCache.get(text);
   if (cached) return cached;
   try {
-    const dataUrl = await QRCode.toDataURL(text, { margin: 1, width: 200, errorCorrectionLevel: "M" });
+    const svg = qrSvg(text);
     if (qrCache.size > 8) qrCache = new Map();
-    qrCache.set(text, dataUrl);
-    return dataUrl;
+    qrCache.set(text, svg);
+    return svg;
   } catch { return ""; }
 }
 
@@ -143,25 +144,25 @@ export function invoiceHtml(sale: Sale, shop: ShopSettings): string {
  * If the quick path fails (e.g. non-Windows, missing printer), we fall back
  * to the dialog and surface a notice through the darpos:print-fallback event.
  */
-export async function printSaleReceipt(sale: Sale, shop: ShopSettings, options: { copies?: number } = {}): Promise<void> {
-  if (shop.printMode === "quick") {
-    try {
-      await invoke("quick_print", { printer: shop.quickPrinter || "", text: textReceipt(sale, shop) });
-      return;
-    } catch (error) {
-      console.error("quick print failed, falling back to the print dialog", error);
-      window.dispatchEvent(new CustomEvent("darpos:print-fallback"));
-    }
+export function printSaleReceipt(sale: Sale, shop: ShopSettings, options: { copies?: number; forceDialog?: boolean } = {}): void {
+  if (shop.printMode === "quick" && !options.forceDialog) {
+    void invoke("quick_print", { printer: shop.quickPrinter || "", text: textReceipt(sale, shop) })
+      .catch((error: unknown) => {
+        console.error("quick print failed, falling back to the print dialog", error);
+        window.dispatchEvent(new CustomEvent("darpos:print-fallback"));
+        printSaleReceipt(sale, shop, { ...options, forceDialog: true });
+      });
+    return;
   }
-  const qrData = await paymentQrImage(shop);
-  const qrHtml = qrData ? `<img class="receipt-qr" src="${qrData}" alt=""/><p class="qr-note">${esc(t("پرداخت با اسکن QR"))}</p>` : "";
+  const svg = paymentQrSvg(shop);
+  const qrHtml = svg ? `${svg}<p class="qr-note">${esc(t("پرداخت با اسکن QR"))}</p>` : "";
   printHtml(saleReceiptHtml(sale, shop, qrHtml), { copies: options.copies ?? (Number(shop.receiptCopies) || 1) });
 }
 
 /** Debt statement with the optional payment QR appended. */
-export async function printDebtReceipt(detail: CustomerDetail, shop: ShopSettings): Promise<void> {
-  const qr = await paymentQrImage(shop);
-  printHtml(debtReceiptHtml(detail, shop, qr ? `<img class="receipt-qr" src="${qr}" alt=""/><p class="qr-note">${esc(t("پرداخت با اسکن QR"))}</p>` : ""));
+export function printDebtReceipt(detail: CustomerDetail, shop: ShopSettings): void {
+  const svg = paymentQrSvg(shop);
+  printHtml(debtReceiptHtml(detail, shop, svg ? `${svg}<p class="qr-note">${esc(t("پرداخت با اسکن QR"))}</p>` : ""));
 }
 
 /** Smoke-tests the quick-print channel from the Settings page. */
