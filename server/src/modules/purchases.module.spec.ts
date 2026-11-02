@@ -10,6 +10,7 @@ function setup() {
     product: { findMany: jest.fn().mockResolvedValue([{ ...product }]), update: jest.fn().mockResolvedValue({}) },
     supplier: { findUnique: jest.fn().mockResolvedValue({ id: "supplier-1", name: "تأمین‌کننده" }) },
     purchase: { create: jest.fn().mockImplementation(({ data }: { data: { total: number } }) => { created.total = data.total; return Promise.resolve({ ...created, total: data.total }); }) },
+    productBatch: { create: jest.fn().mockResolvedValue({}) },
     inventoryMovement: { create: jest.fn().mockResolvedValue({}) },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
   };
@@ -25,6 +26,16 @@ describe("Purchases", () => {
     expect(tx.product.update).toHaveBeenCalledWith({ where: { id: "product-1" }, data: { stock: { increment: 5 }, cost: 12 } });
     expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "PURCHASE", quantity: 5, stockAfter: 7 }) }));
     expect(tx.auditLog.create).toHaveBeenCalled();
+  });
+
+  it("tracks a delivery with its own expiry date as a batch (lot)", async () => {
+    const { controller, tx } = setup();
+    await controller.create({ items: [{ productId: "product-1", quantity: 5, unitCost: 12, expiryDate: "2026-12-01" }], supplierId: "supplier-1" }, user);
+    expect(tx.productBatch.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ productId: "product-1", initialQty: 5, remainingQty: 5, expiryDate: new Date("2026-12-01T00:00:00.000Z") }) }));
+    expect(tx.purchase.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ items: { create: [expect.objectContaining({ expiryDate: new Date("2026-12-01T00:00:00.000Z") })] } }) }));
+    // No expiry on the line → no batch row, item keeps a null expiry.
+    await controller.create({ items: [{ productId: "product-1", quantity: 2, unitCost: 10 }] }, user);
+    expect(tx.productBatch.create).toHaveBeenCalledTimes(1);
   });
 
   it("merges duplicated lines for the same product before writing", async () => {

@@ -3,10 +3,11 @@ import { randomBytes } from "node:crypto";
 import { CurrentUser, SessionUser } from "../auth";
 import { SaleDto, SaleReturnDto } from "../dto";
 import { PrismaService } from "../prisma.service";
+import { CheckoutService } from "../services/checkout";
 
 @Controller("sales")
 export class SalesController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly checkoutService: CheckoutService) {}
   @Get() list(@Query("from") from?: string, @Query("to") to?: string, @Query("skip") skip?: string, @Query("take") take?: string) {
     const where: { createdAt?: { gte?: Date; lte?: Date } } = {};
     if (from) where.createdAt = { ...where.createdAt, gte: new Date(from) };
@@ -41,7 +42,7 @@ export class SalesController {
       for (const line of dto.items) requested.set(line.productId, (requested.get(line.productId) || 0) + line.quantity);
       const returned = new Map<string, number>();
       for (const item of sale.returns.flatMap((record) => record.items)) returned.set(item.productId, (returned.get(item.productId) || 0) + item.quantity);
-      let total = 0;
+      let lineSum = 0;
       const lines: { productId: string; name: string; sku: string; quantity: number; unitPrice: number; unitCost: number; lineTotal: number }[] = [];
       for (const [productId, quantity] of requested) {
         const saleItem = sale.items.find((item) => item.productId === productId);
@@ -49,27 +50,36 @@ export class SalesController {
         const already = returned.get(productId) || 0;
         if (already + quantity > saleItem.quantity) throw new BadRequestException(`بیشتر از مقدار فاکتور نمی‌توان برگشت داد. قابل برگشت: ${saleItem.quantity - already}`);
         const lineTotal = Math.round(saleItem.unitPrice * quantity);
-        if (!Number.isSafeInteger(total + lineTotal)) throw new BadRequestException("مبلغ برگشتی از سقف مجاز بیشتر است.");
-        total += lineTotal;
+        if (!Number.isSafeInteger(lineSum + lineTotal)) throw new BadRequestException("مبلغ برگشتی از سقف مجاز بیشتر است.");
+        lineSum += lineTotal;
         lines.push({ productId, name: saleItem.name, sku: saleItem.sku, quantity, unitPrice: saleItem.unitPrice, unitCost: saleItem.unitCost, lineTotal });
       }
+      // What the customer actually settled at checkout (cash + mobile; a
+      // legacy overpaid cash sale carries only its total as cashPart).
+      const paidPart = sale.cashPart + sale.mobilePart;
+      const alreadyRefunded = sale.returns.reduce((sum, record) => sum + record.total, 0);
+      const alreadyRelieved = sale.returns.reduce((sum, record) => sum + record.creditRelief, 0);
+      const alreadyCashRefunded = sale.returns.reduce((sum, record) => sum + record.cashAmount, 0);
       // Returning every item of the invoice refunds the final paid amount
       // (i.e. the sale total after discount); partial returns refund the
-      // undiscounted line prices.
+      // undiscounted line prices — but never more than what was actually
+      // paid, so a discounted invoice cannot be refunded above its collection.
       const fullReturn = sale.items.every((item) => (returned.get(item.productId) || 0) + (requested.get(item.productId) || 0) >= item.quantity);
-      if (fullReturn) total = sale.total;
-      // Whatever the combination of partial/full returns, a discounted
-      // invoice must never refund more than the customer actually paid:
-      // undiscounted line prices + the full-total shortcut could otherwise
-      // add up past sale.total across two returns (e.g. lines 60+40 with a
-      // 20 discount refunding 60 then 80 = 140 for an 80 payment).
-      const alreadyRefunded = sale.returns.reduce((sum, record) => sum + record.total, 0);
-      total = Math.min(total, Math.max(0, sale.total - alreadyRefunded));
+      let total = fullReturn ? Math.min(sale.total, paidPart) : lineSum;
+      total = Math.min(total, Math.max(0, paidPart - alreadyRefunded));
+      // Goods bought on credit stop being a debt the moment they come back:
+      // a full return clears whatever credit is still open, a partial return
+      // relieves the (undiscounted) value of the returned goods.
+      const reliefLeft = Math.max(0, sale.creditPart - alreadyRelieved);
+      const creditRelief = sale.creditPart > 0 ? Math.min(fullReturn ? reliefLeft : lineSum, reliefLeft) : 0;
+      // Only the cash portion of the refund may leave the drawer.
+      const cashLeft = Math.max(0, sale.cashPart - alreadyCashRefunded);
+      const cashAmount = Math.min(total, cashLeft);
       const products = await tx.product.findMany({ where: { id: { in: lines.map((line) => line.productId) } } });
       const productMap = new Map(products.map((product) => [product.id, product]));
       const returnNo = `RET-${Date.now()}-${randomBytes(2).toString("hex").toUpperCase()}`;
       const record = await tx.saleReturn.create({
-        data: { returnNo, saleId: sale.id, total, note: dto.note?.trim(), userId: user.id, items: { create: lines } },
+        data: { returnNo, saleId: sale.id, total, creditRelief, cashAmount, note: dto.note?.trim(), userId: user.id, items: { create: lines } },
         include: { items: true },
       });
       for (const line of lines) {
@@ -80,9 +90,9 @@ export class SalesController {
       }
       // Cash refunds leave the register when a shift is still open; refunds
       // on closed shifts (or non-cash sales) stay bookkeeping-only.
-      if (sale.paymentMethod === "CASH") {
+      if (cashAmount > 0) {
         const session = await tx.cashSession.findFirst({ where: { status: "OPEN" }, orderBy: { openedAt: "desc" } });
-        if (session) await tx.cashMovement.create({ data: { type: "OUT", amount: total, description: `برگشت فاکتور ${sale.receiptNo}`, cashSessionId: session.id } });
+        if (session) await tx.cashMovement.create({ data: { type: "OUT", amount: cashAmount, description: `برگشت فاکتور ${sale.receiptNo}`, cashSessionId: session.id } });
       }
       await tx.auditLog.create({ data: { actor: user.username, action: "SALE_RETURN", entity: "Sale", entityId: sale.id, detail: `${returnNo} / ${total}` } });
       return record;
@@ -90,80 +100,11 @@ export class SalesController {
   }
 
   @Post()
-  async checkout(@Body() dto: SaleDto, @CurrentUser() user: SessionUser, @Headers("idempotency-key") requestKey?: string) {
-    const idempotencyKey = requestKey?.slice(0, 100);
-    if (idempotencyKey) {
-      const previous = await this.prisma.sale.findUnique({ where: { idempotencyKey }, include: { items: true, customer: true } });
-      if (previous) return previous;
-    }
-    const quantities = new Map<string, number>();
-    for (const line of dto.items) quantities.set(line.productId, (quantities.get(line.productId) || 0) + line.quantity);
-    const lines = [...quantities.entries()];
-    return this.prisma.$transaction(async (tx) => {
-      const products = await tx.product.findMany({ where: { id: { in: lines.map(([id]) => id) }, isActive: true } });
-      if (products.length !== lines.length) throw new BadRequestException("یکی از کالاها غیرفعال است یا پیدا نشد.");
-      const productMap = new Map(products.map((product) => [product.id, product]));
-      // Same rule as the POS screen: the line switches to the wholesale price
-      // once its quantity reaches the wholesale minimum. Keeping it here (not
-      // trusting client-sent prices) means the invoice total is always honest.
-      const unitPriceFor = (product: { price: number; wholesalePrice: number | null; wholesaleMinQty: number | null }, quantity: number): number =>
-        product.wholesalePrice != null && product.wholesaleMinQty != null && quantity >= product.wholesaleMinQty ? product.wholesalePrice : product.price;
-      let subtotal = 0;
-      for (const [productId, quantity] of lines) {
-        const product = productMap.get(productId)!;
-        if (product.stock < quantity) throw new BadRequestException(`موجودی ${product.name} کافی نیست. موجودی فعلی: ${product.stock}`);
-        // Weighted goods (kg) produce fractional math; money stays whole-afghani.
-        const lineTotal = Math.round(unitPriceFor(product, quantity) * quantity);
-        if (!Number.isSafeInteger(lineTotal) || lineTotal > 2147483647) throw new BadRequestException("مبلغ یک قلم از سقف مجاز بیشتر است.");
-        subtotal += lineTotal;
-        if (subtotal > 2147483647) throw new BadRequestException("جمع فاکتور از سقف مجاز بیشتر است.");
-      }
-      const discount = dto.discount || 0;
-      if (discount > subtotal) throw new BadRequestException("تخفیف نمی‌تواند از مبلغ فروش بیشتر باشد.");
-      const total = subtotal - discount;
-      const amountPaid = dto.amountPaid ?? (dto.paymentMethod === "CREDIT" ? 0 : total);
-      if (dto.paymentMethod === "CASH" && amountPaid < total) throw new BadRequestException("مبلغ نقدی دریافتی کمتر از جمع فاکتور است.");
-      if (dto.paymentMethod === "MOBILE" && amountPaid < total) throw new BadRequestException("پرداخت موبایلی باید کامل باشد.");
-      if (dto.paymentMethod === "CREDIT" && amountPaid > total) throw new BadRequestException("مبلغ پرداختی نمی‌تواند از جمع فاکتور بیشتر باشد.");
-      if (dto.paymentMethod === "CREDIT" && !dto.customerId) throw new BadRequestException("برای ثبت فروش نسیه، مشتری را انتخاب کنید.");
-      if (dto.customerId && !(await tx.customer.findUnique({ where: { id: dto.customerId } }))) throw new BadRequestException("مشتری پیدا نشد.");
-      let cashSessionId: string | undefined;
-      if (dto.paymentMethod === "CASH") {
-        const session = await tx.cashSession.findFirst({ where: { status: "OPEN" }, orderBy: { openedAt: "desc" } });
-        if (!session) throw new BadRequestException("صندوق بسته است. ابتدا صندوق را باز کنید.");
-        cashSessionId = session.id;
-      }
-      const receiptNo = `POS-${Date.now()}-${randomBytes(2).toString("hex").toUpperCase()}`;
-      const sale = await tx.sale.create({
-        data: {
-          receiptNo, idempotencyKey, subtotal, discount, total, amountPaid,
-          change: dto.paymentMethod === "CASH" ? amountPaid - total : 0,
-          paymentMethod: dto.paymentMethod, note: dto.note?.trim(), customerId: dto.customerId || null,
-          userId: user.id, cashSessionId,
-          items: { create: lines.map(([productId, quantity]) => { const product = productMap.get(productId)!; const unitPrice = unitPriceFor(product, quantity); return { productId, name: product.name, sku: product.sku, quantity, unitPrice, unitCost: product.cost, lineTotal: Math.round(unitPrice * quantity) }; }) },
-        }, include: { items: true, customer: true },
-      });
-      for (const [productId, quantity] of lines) {
-        const product = productMap.get(productId)!;
-        const stockAfter = product.stock - quantity;
-        await tx.product.update({ where: { id: productId }, data: { stock: { decrement: quantity } } });
-        await tx.inventoryMovement.create({ data: { productId, type: "SALE", quantity: -quantity, stockAfter, reference: receiptNo } });
-      }
-      // A credit sale may collect part of the money up front (0 < amountPaid
-      // ≤ total is allowed by the API). That down-payment is a customer
-      // payment like any other — without this row it would never settle
-      // against the customer's balance and they would be billed for it
-      // again. Cash handed over with an open register also enters the drawer.
-      if (dto.paymentMethod === "CREDIT" && amountPaid > 0) {
-        const paySession = await tx.cashSession.findFirst({ where: { status: "OPEN" }, orderBy: { openedAt: "desc" } });
-        if (paySession) await tx.cashMovement.create({ data: { type: "IN", amount: amountPaid, description: `پیش‌پرداخت فاکتور ${receiptNo}`, cashSessionId: paySession.id } });
-        await tx.customerPayment.create({ data: { customerId: dto.customerId!, amount: amountPaid, note: `پیش‌پرداخت فاکتور ${receiptNo}`, cashSessionId: paySession?.id, userId: user.id } });
-      }
-      await tx.auditLog.create({ data: { actor: user.username, action: "CHECKOUT", entity: "Sale", entityId: sale.id, detail: `${receiptNo} / ${total}` } });
-      return sale;
-    });
+  checkout(@Body() dto: SaleDto, @CurrentUser() user: SessionUser, @Headers("idempotency-key") requestKey?: string) {
+    // Keyed sales (offline queue retries) return the original receipt.
+    return this.checkoutService.checkout(dto, user, requestKey?.slice(0, 100));
   }
 }
 
-@Module({ controllers: [SalesController] })
+@Module({ controllers: [SalesController], providers: [CheckoutService] })
 export class SalesModule {}

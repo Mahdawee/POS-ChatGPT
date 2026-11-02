@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS "Product" (
     "cost" INTEGER NOT NULL DEFAULT 0,
     "stock" REAL NOT NULL DEFAULT 0,
     "minStock" REAL NOT NULL DEFAULT 0,
+    "backstock" REAL NOT NULL DEFAULT 0,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "categoryId" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -36,6 +37,7 @@ CREATE TABLE IF NOT EXISTS "Customer" (
     "phone" TEXT,
     "address" TEXT,
     "note" TEXT,
+    "creditLimit" INTEGER NOT NULL DEFAULT 0,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL
@@ -82,6 +84,10 @@ CREATE TABLE IF NOT EXISTS "Sale" (
     "total" INTEGER NOT NULL,
     "amountPaid" INTEGER NOT NULL,
     "change" INTEGER NOT NULL DEFAULT 0,
+    "cashPart" INTEGER NOT NULL DEFAULT 0,
+    "mobilePart" INTEGER NOT NULL DEFAULT 0,
+    "creditPart" INTEGER NOT NULL DEFAULT 0,
+    "invoiceNo" TEXT,
     "paymentMethod" TEXT NOT NULL,
     "note" TEXT,
     "customerId" TEXT,
@@ -103,6 +109,7 @@ CREATE TABLE IF NOT EXISTS "SaleItem" (
     "quantity" REAL NOT NULL,
     "unitPrice" INTEGER NOT NULL,
     "unitCost" INTEGER NOT NULL DEFAULT 0,
+    "discount" INTEGER NOT NULL DEFAULT 0,
     "lineTotal" INTEGER NOT NULL,
     CONSTRAINT "SaleItem_saleId_fkey" FOREIGN KEY ("saleId") REFERENCES "Sale" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "SaleItem_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
@@ -181,6 +188,7 @@ CREATE TABLE IF NOT EXISTS "PurchaseItem" (
     "quantity" REAL NOT NULL,
     "unitCost" INTEGER NOT NULL,
     "lineTotal" INTEGER NOT NULL,
+    "expiryDate" DATETIME,
     CONSTRAINT "PurchaseItem_purchaseId_fkey" FOREIGN KEY ("purchaseId") REFERENCES "Purchase" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "PurchaseItem_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
@@ -191,6 +199,8 @@ CREATE TABLE IF NOT EXISTS "SaleReturn" (
     "returnNo" TEXT NOT NULL,
     "saleId" TEXT NOT NULL,
     "total" INTEGER NOT NULL,
+    "creditRelief" INTEGER NOT NULL DEFAULT 0,
+    "cashAmount" INTEGER NOT NULL DEFAULT 0,
     "note" TEXT,
     "userId" TEXT NOT NULL,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -312,6 +322,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "User_username_key" ON "User"("username");
 
 -- CreateIndex
 CREATE UNIQUE INDEX IF NOT EXISTS "Sale_receiptNo_key" ON "Sale"("receiptNo");
+CREATE UNIQUE INDEX IF NOT EXISTS "Sale_invoiceNo_key" ON "Sale"("invoiceNo");
 
 -- CreateIndex
 CREATE UNIQUE INDEX IF NOT EXISTS "Sale_idempotencyKey_key" ON "Sale"("idempotencyKey");
@@ -378,3 +389,74 @@ CREATE INDEX IF NOT EXISTS "PurchaseReturnItem_purchaseReturnId_idx" ON "Purchas
 
 -- CreateIndex
 CREATE INDEX IF NOT EXISTS "SupplierPayment_supplierId_createdAt_idx" ON "SupplierPayment"("supplierId", "createdAt");
+
+-- CreateTable (round 15)
+CREATE TABLE IF NOT EXISTS "Stocktake" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "name" TEXT,
+    "note" TEXT,
+    "status" TEXT NOT NULL DEFAULT 'OPEN',
+    "userId" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "appliedAt" DATETIME,
+    CONSTRAINT "Stocktake_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS "StocktakeLine" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "stocktakeId" TEXT NOT NULL,
+    "productId" TEXT NOT NULL,
+    "expected" REAL NOT NULL,
+    "counted" REAL NOT NULL,
+    "diff" REAL NOT NULL,
+    CONSTRAINT "StocktakeLine_stocktakeId_fkey" FOREIGN KEY ("stocktakeId") REFERENCES "Stocktake" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "StocktakeLine_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS "Quote" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "quoteNo" TEXT NOT NULL,
+    "customerId" TEXT,
+    "userId" TEXT NOT NULL,
+    "note" TEXT,
+    "total" INTEGER NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'OPEN',
+    "saleId" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "convertedAt" DATETIME,
+    CONSTRAINT "Quote_quoteNo_key" UNIQUE ("quoteNo"),
+    CONSTRAINT "Quote_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "Customer" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT "Quote_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "Quote_saleId_fkey" FOREIGN KEY ("saleId") REFERENCES "Sale" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS "QuoteItem" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "quoteId" TEXT NOT NULL,
+    "productId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "sku" TEXT NOT NULL,
+    "quantity" REAL NOT NULL,
+    "unitPrice" INTEGER NOT NULL,
+    "lineTotal" INTEGER NOT NULL,
+    CONSTRAINT "QuoteItem_quoteId_fkey" FOREIGN KEY ("quoteId") REFERENCES "Quote" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "QuoteItem_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS "ProductBatch" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "productId" TEXT NOT NULL,
+    "expiryDate" DATETIME NOT NULL,
+    "initialQty" REAL NOT NULL,
+    "remainingQty" REAL NOT NULL,
+    "purchaseId" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "ProductBatch_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "ProductBatch_purchaseId_fkey" FOREIGN KEY ("purchaseId") REFERENCES "Purchase" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS "Stocktake_createdAt_idx" ON "Stocktake"("createdAt");
+CREATE INDEX IF NOT EXISTS "StocktakeLine_stocktakeId_idx" ON "StocktakeLine"("stocktakeId");
+CREATE INDEX IF NOT EXISTS "Quote_status_createdAt_idx" ON "Quote"("status", "createdAt");
+CREATE INDEX IF NOT EXISTS "QuoteItem_quoteId_idx" ON "QuoteItem"("quoteId");
+CREATE INDEX IF NOT EXISTS "ProductBatch_productId_expiryDate_idx" ON "ProductBatch"("productId", "expiryDate");

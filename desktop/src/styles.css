@@ -149,3 +149,9 @@ html.dark .login-card,html.dark .lock-card{background:#151d23;border-color:#2a34
 .diag-block[open] summary{border-bottom:1px solid #edf0f0}
 .diag-block pre{margin:0;padding:10px 12px;font-size:9px;line-height:1.6;color:#687580;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;background:#fbfcfc}
 .error-box span{min-width:0;flex:1}
+/* Round 15 — stocktake sheet + misc form rows */
+.checkbox-row{display:flex;align-items:center;gap:8px;font-size:12px;color:#3d4a54;margin-top:8px}
+.checkbox-row input{width:16px;height:16px;accent-color:#246847}
+.count-sheet{max-height:46vh;overflow:auto}
+.count-sheet input{width:110px;padding:5px 8px;font-size:12px}
+html.dark .checkbox-row{color:#b6c2cc}

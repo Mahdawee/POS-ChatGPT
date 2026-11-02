@@ -60,13 +60,13 @@ export const del = <T,>(path: string) => request<T>(path, { method: "DELETE" });
 
 export type User = { id: string; username: string; displayName: string; role: "ADMIN" | "CASHIER" };
 export type Category = { id: string; name: string; color: string; _count?: { products: number } };
-export type Product = { id: string; sku: string; barcode: string | null; name: string; unit: string; isWeighted?: boolean; expiryDate?: string | null; price: number; wholesalePrice?: number | null; wholesaleMinQty?: number | null; cost: number; stock: number; minStock: number; categoryId: string | null; category?: Category | null; isActive?: boolean };
-export type Contact = { id: string; name: string; phone: string | null; address: string | null; note: string | null; balance?: number };
-export type SaleItem = { id: string; name: string; sku: string; quantity: number; unitPrice: number; lineTotal: number; productId: string };
+export type Product = { id: string; sku: string; barcode: string | null; name: string; unit: string; isWeighted?: boolean; expiryDate?: string | null; price: number; wholesalePrice?: number | null; wholesaleMinQty?: number | null; cost: number; stock: number; backstock?: number; minStock: number; categoryId: string | null; category?: Category | null; isActive?: boolean };
+export type Contact = { id: string; name: string; phone: string | null; address: string | null; note: string | null; balance?: number; creditLimit?: number };
+export type SaleItem = { id: string; name: string; sku: string; quantity: number; unitPrice: number; lineTotal: number; productId: string; discount?: number };
 export type SaleReturnItem = { id: string; productId: string; name: string; sku: string; quantity: number; unitPrice: number; lineTotal: number };
-export type SaleReturn = { id: string; returnNo: string; total: number; note: string | null; createdAt: string; user?: { displayName: string }; items?: SaleReturnItem[] };
-export type Sale = { id: string; receiptNo: string; subtotal: number; discount: number; total: number; amountPaid: number; change: number; paymentMethod: "CASH" | "MOBILE" | "CREDIT"; createdAt: string; customer?: Contact | null; user?: { displayName: string }; items: SaleItem[]; returns?: SaleReturn[] };
-export type PurchaseItem = { id: string; productId: string; name: string; sku: string; quantity: number; unitCost: number; lineTotal: number };
+export type SaleReturn = { id: string; returnNo: string; total: number; creditRelief?: number; cashAmount?: number; note: string | null; createdAt: string; user?: { displayName: string }; items?: SaleReturnItem[] };
+export type Sale = { id: string; receiptNo: string; invoiceNo?: string | null; subtotal: number; discount: number; total: number; amountPaid: number; change: number; cashPart?: number; mobilePart?: number; creditPart?: number; paymentMethod: "CASH" | "MOBILE" | "CREDIT"; createdAt: string; customer?: Contact | null; user?: { displayName: string }; items: SaleItem[]; returns?: SaleReturn[] };
+export type PurchaseItem = { id: string; productId: string; name: string; sku: string; quantity: number; unitCost: number; lineTotal: number; expiryDate?: string | null };
 export type Purchase = { id: string; invoiceNo: string | null; note: string | null; total: number; paidAmount: number; createdAt: string; supplier?: Contact | null; user?: { displayName: string }; items: PurchaseItem[] };
 export type PurchaseReturnItem = { id: string; productId: string; name: string; sku: string; quantity: number; unitCost: number; lineTotal: number };
 export type PurchaseReturn = { id: string; returnNo: string; total: number; note: string | null; createdAt: string; supplier?: Contact | null; user?: { displayName: string }; purchase?: { invoiceNo: string | null } | null; items: PurchaseReturnItem[] };
@@ -80,15 +80,19 @@ export type ProfitReport = {
   from: string; to: string; revenue: number; refunds: number; netRevenue: number; cost: number; profit: number; margin: number;
   unknownCostRevenue: number; invoiceCount: number; purchasesTotal: number; expenses: number; netProfit: number;
   byDay: { day: string; revenue: number; profit: number }[];
+  byUser?: { userId: string; cashier: string; revenue: number; profit: number; count: number }[];
+  bySession?: { sessionId: string; cashier: string; openedAt: string; closedAt: string | null; revenue: number; count: number }[];
   topProducts: { productId: string; name: string; quantity: number; revenue: number; profit: number }[];
   byCategory: { category: string; revenue: number; profit: number; quantity: number }[];
   byHour: { hour: number; revenue: number; count: number }[];
-  paymentMix: { method: string; total: number; count: number }[];
+  paymentMix: { method: string; total: number; count?: number }[];
+  previous?: ProfitReport;
+  comparison?: { revenue: number | null; netRevenue: number | null; profit: number | null; netProfit: number | null; invoiceCount: number | null };
 };
 export type AuditEntry = { id: string; actor: string | null; action: string; entity: string; entityId: string | null; detail: string | null; createdAt: string };
 export type BackupExport = { filename: string; data: string };
 export type DebtorsReport = {
-  customers: { id: string; name: string; phone: string | null; balance: number }[];
+  customers: { id: string; name: string; phone: string | null; balance: number; aging?: { d30: number; d60: number; older: number } }[];
   customersTotal: number;
   suppliers: { id: string; name: string; phone: string | null; balance: number }[];
   suppliersTotal: number;
@@ -102,3 +106,58 @@ export type ZReport = {
   invoiceCount: number; returnsTotal: number; expected: number; counted: number; difference: number;
 };
 export type ProductImportResult = { created: number; updated: number; errors: Array<{ row: number; message: string }> };
+
+export type ProductBatch = { id: string; productId: string; expiryDate: string; initialQty: number; remainingQty: number; product?: { name: string; sku: string; unit: string } };
+export type StocktakeLine = { id: string; productId: string; expected: number; counted: number; diff: number; product?: { name: string; sku: string; unit: string } };
+export type Stocktake = { id: string; name: string | null; note: string | null; status: "OPEN" | "APPLIED" | "VOID"; createdAt: string; appliedAt: string | null; user?: { displayName: string }; lines?: StocktakeLine[]; _count?: { lines: number } };
+export type QuoteItem = { id: string; productId: string; name: string; sku: string; quantity: number; unitPrice: number; lineTotal: number };
+export type Quote = { id: string; quoteNo: string; note: string | null; total: number; status: "OPEN" | "CONVERTED" | "VOID"; createdAt: string; convertedAt: string | null; customer?: Contact | null; items?: QuoteItem[]; _count?: { items: number } };
+
+// ── Offline sale queue ──────────────────────────────────────────────────────
+// When the API is unreachable (fetch throws TypeError), completed baskets are
+// parked in localStorage with a random idempotency key and retried every 30s
+// and on demand. 4xx replies delete the entry with a warning — the server
+// saw and rejected it (e.g. insufficient stock), so retrying is pointless.
+const QUEUE_KEY = "darpos-offline-sales";
+export type OfflineSale = { key: string; savedAt: number; total: number; label: string; payload: Record<string, unknown> };
+
+export function readOfflineQueue(): OfflineSale[] {
+  try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || "[]") as OfflineSale[]; } catch { return []; }
+}
+function writeOfflineQueue(queue: OfflineSale[]): void {
+  try { localStorage.setItem(QUEUE_KEY, JSON.stringify(queue)); } catch { /* storage full/unavailable */ }
+}
+export function enqueueOfflineSale(label: string, total: number, payload: Record<string, unknown>): OfflineSale {
+  const sale: OfflineSale = { key: `off-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`, savedAt: Date.now(), label, total, payload };
+  writeOfflineQueue([...readOfflineQueue(), sale]);
+  return sale;
+}
+export function removeFromOfflineQueue(key: string): void {
+  writeOfflineQueue(readOfflineQueue().filter((sale) => sale.key !== key));
+}
+/** Posts one parked sale. Resolves {ok:true} on success, {ok:false,retry:true}
+ *  when the server is still unreachable, {ok:false,retry:false} when the
+ *  server rejected it for good. */
+export async function replayOfflineSale(sale: OfflineSale): Promise<{ ok: boolean; retry: boolean; message?: string }> {
+  try {
+    await post("sales", sale.payload, { "Idempotency-Key": sale.key });
+    removeFromOfflineQueue(sale.key);
+    return { ok: true, retry: false };
+  } catch (error) {
+    if (error instanceof TypeError) return { ok: false, retry: true };
+    removeFromOfflineQueue(sale.key);
+    return { ok: false, retry: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+/** Retries every parked sale; resolves when the queue settles (empty or all
+ *  remaining entries are permanent rejections already reported). */
+export async function flushOfflineQueue(onProgress?: (result: { ok: boolean; retry: boolean; message?: string }) => void): Promise<number> {
+  let synced = 0;
+  for (const sale of readOfflineQueue()) {
+    const result = await replayOfflineSale(sale);
+    onProgress?.(result);
+    if (result.ok) synced += 1;
+    if (result.retry) break; // server still down; stop and keep the rest
+  }
+  return synced;
+}

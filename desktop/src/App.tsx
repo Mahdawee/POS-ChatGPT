@@ -150,7 +150,7 @@ export default function App() {
   const content = <Suspense fallback={<Loading/>}>{(() => {
         switch (page) {
           case "dashboard": return <DashboardPage onNavigate={setPage}/>;
-          case "pos": return <PosPage notify={notify}/>;
+          case "pos": return <PosPage notify={notify} user={user}/>;
           case "products": return <ProductsPage notify={notify} user={user}/>;
           case "categories": return <CategoriesPage notify={notify}/>;
           case "customers": return <ContactsPage kind="customers" notify={notify}/>;

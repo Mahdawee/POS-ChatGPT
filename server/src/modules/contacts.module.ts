@@ -23,14 +23,14 @@ export class CustomersController {
     const customer = await this.prisma.customer.findUnique({ where: { id } });
     if (!customer) throw new NotFoundException("مشتری پیدا نشد.");
     const [creditSales, creditReturns, paymentsTotal, payments, recentSales] = await Promise.all([
-      this.prisma.sale.aggregate({ _sum: { total: true }, where: { customerId: id, paymentMethod: "CREDIT" } }),
-      this.prisma.saleReturn.aggregate({ _sum: { total: true }, where: { sale: { customerId: id, paymentMethod: "CREDIT" } } }),
+      this.prisma.sale.aggregate({ _sum: { creditPart: true }, where: { customerId: id, creditPart: { gt: 0 } } }),
+      this.prisma.saleReturn.aggregate({ _sum: { creditRelief: true }, where: { sale: { customerId: id, creditPart: { gt: 0 } } } }),
       this.prisma.customerPayment.aggregate({ _sum: { amount: true }, where: { customerId: id } }),
       this.prisma.customerPayment.findMany({ where: { customerId: id }, orderBy: { createdAt: "desc" }, take: 20, include: { user: { select: { displayName: true } } } }),
       this.prisma.sale.findMany({ where: { customerId: id }, orderBy: { createdAt: "desc" }, take: 10, include: { items: true, user: { select: { displayName: true } } } }),
     ]);
-    const creditTotal = creditSales._sum.total || 0;
-    const returnsTotal = creditReturns._sum.total || 0;
+    const creditTotal = creditSales._sum.creditPart || 0;
+    const returnsTotal = creditReturns._sum.creditRelief || 0;
     const paidTotal = paymentsTotal._sum.amount || 0;
     return { customer, creditSales: creditTotal, creditReturns: returnsTotal, paymentsTotal: paidTotal, balance: creditTotal - returnsTotal - paidTotal, payments, recentSales };
   }
@@ -83,14 +83,21 @@ export class SuppliersController {
     return { supplier, purchasesTotal, paidAtPurchase, paymentsTotal: paidLater, balance: purchasesTotal - paidAtPurchase - paidLater, payments, recentPurchases };
   }
 
-  /** ثبت پرداخت به تأمین‌کننده — فقط ثبت حسابداری است؛ صندوق دست نمی‌خورد. */
+  /** ثبت پرداخت به تأمین‌کننده؛ با fromCash مبلغ از صندوق باز خارج می‌شود. */
   @Post(":id/payments")
   async pay(@Param("id") id: string, @Body() dto: SupplierPaymentDto, @CurrentUser() user: SessionUser) {
     return this.prisma.$transaction(async (tx) => {
       const supplier = await tx.supplier.findUnique({ where: { id } });
       if (!supplier || !supplier.isActive) throw new BadRequestException("تأمین‌کننده پیدا نشد.");
+      // Money leaves the drawer only when the caller explicitly asks for it
+      // and a register is open; otherwise it is bookkeeping only.
+      if (dto.fromCash) {
+        const session = await tx.cashSession.findFirst({ where: { status: "OPEN" } });
+        if (!session) throw new BadRequestException("صندوق باز وجود ندارد.");
+        await tx.cashMovement.create({ data: { type: "OUT", amount: dto.amount, description: `پرداخت به تأمین‌کننده ${supplier.name}`, cashSessionId: session.id } });
+      }
       const payment = await tx.supplierPayment.create({ data: { supplierId: id, amount: dto.amount, note: dto.note?.trim(), userId: user.id }, include: { supplier: true } });
-      await tx.auditLog.create({ data: { actor: user.username, action: "SUPPLIER_PAYMENT", entity: "Supplier", entityId: id, detail: String(dto.amount) } });
+      await tx.auditLog.create({ data: { actor: user.username, action: "SUPPLIER_PAYMENT", entity: "Supplier", entityId: id, detail: `${dto.amount}${dto.fromCash ? " / از صندوق" : ""}` } });
       return payment;
     });
   }

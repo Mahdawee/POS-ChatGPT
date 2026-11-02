@@ -33,16 +33,27 @@ export class ContactDto {
   @IsOptional() @IsString() @MaxLength(40) phone?: string;
   @IsOptional() @IsString() @MaxLength(200) address?: string;
   @IsOptional() @IsString() @MaxLength(300) note?: string;
+  /** Customers only: 0 disables the credit-limit warning. */
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(999999999) creditLimit?: number;
 }
 export class SaleLineDto {
   @IsString() productId!: string;
   @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001) @Max(1000000) quantity!: number;
+  /** Optional per-line discount in whole afghani. */
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) discount?: number;
 }
 export class SaleDto {
   @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => SaleLineDto) items!: SaleLineDto[];
   @IsOptional() @IsInt() @Min(0) @Max(2147483647) discount?: number;
+  /** Percentage alternative to the flat `discount` (0–100). */
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(100) discountPercent?: number;
   @IsEnum(["CASH", "MOBILE", "CREDIT"]) paymentMethod!: "CASH" | "MOBILE" | "CREDIT";
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) amountPaid?: number;
+  /** Mixed payment: cash and mobile portions; the remainder becomes credit. */
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) splitCash?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) splitMobile?: number;
+  /** ADMIN-only flag to complete a sale that exceeds the customer's credit limit. */
+  @IsOptional() @IsBoolean() overrideCreditLimit?: boolean;
   @IsOptional() @IsString() customerId?: string;
   @IsOptional() @IsString() @MaxLength(300) note?: string;
 }
@@ -83,6 +94,8 @@ export class PurchaseLineDto {
   @IsString() productId!: string;
   @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001) @Max(1000000) quantity!: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) unitCost?: number;
+  /** Optional batch/lot expiry for this delivery — feeds expiry warnings. */
+  @IsOptional() @IsString() @MaxLength(10) expiryDate?: string;
 }
 export class PurchaseDto {
   @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => PurchaseLineDto) items!: PurchaseLineDto[];
@@ -106,6 +119,8 @@ export class CustomerPaymentDto {
 export class SupplierPaymentDto {
   @Type(() => Number) @IsInt() @Min(1) @Max(2147483647) amount!: number;
   @IsOptional() @IsString() @MaxLength(300) note?: string;
+  /** Pay out of the open register (cash OUT movement), like expenses. */
+  @IsOptional() @IsBoolean() fromCash?: boolean;
 }
 export class ResetPasswordDto {
   @IsString() @MinLength(8) @MaxLength(100) newPassword!: string;
@@ -150,4 +165,32 @@ export class PurchaseReturnDto {
 /** Base64 payload of a portable .db backup (Settings → restore). */
 export class RestoreBackupDto {
   @IsString() @MinLength(16) data!: string;
+}
+
+export class StocktakeLineDto {
+  @IsString() productId!: string;
+  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0) @Max(2147483647) counted!: number;
+}
+export class StocktakeDto {
+  @IsOptional() @IsString() @MaxLength(120) name?: string;
+  @IsOptional() @IsString() @MaxLength(300) note?: string;
+  /** Apply the differences as stock adjustments right away. */
+  @IsOptional() @IsBoolean() apply?: boolean;
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(2000) @ValidateNested({ each: true }) @Type(() => StocktakeLineDto) lines!: StocktakeLineDto[];
+}
+
+export class StockTransferDto {
+  @IsString() productId!: string;
+  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001) @Max(1000000) quantity!: number;
+  @IsEnum(["TO_BACKROOM", "TO_SALES"]) direction!: "TO_BACKROOM" | "TO_SALES";
+}
+
+export class QuoteLineDto {
+  @IsString() productId!: string;
+  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001) @Max(1000000) quantity!: number;
+}
+export class QuoteDto {
+  @IsOptional() @IsString() customerId?: string;
+  @IsOptional() @IsString() @MaxLength(300) note?: string;
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(200) @ValidateNested({ each: true }) @Type(() => QuoteLineDto) items!: QuoteLineDto[];
 }

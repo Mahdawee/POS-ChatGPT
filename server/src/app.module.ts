@@ -15,9 +15,11 @@ import { DashboardModule } from "./modules/dashboard.module";
 import { ReportsModule } from "./modules/reports.module";
 import { ExpensesModule } from "./modules/expenses.module";
 import { AuditModule } from "./modules/audit.module";
+import { StocktakeModule } from "./modules/stocktake.module";
+import { QuotesModule } from "./modules/quotes.module";
 
 @Module({
-  imports: [PrismaModule, AuthModule, CatalogModule, ContactsModule, InventoryModule, SalesModule, PurchasesModule, CashModule, UsersModule, SettingsModule, DashboardModule, ReportsModule, ExpensesModule, AuditModule],
+  imports: [PrismaModule, AuthModule, CatalogModule, ContactsModule, InventoryModule, SalesModule, PurchasesModule, CashModule, UsersModule, SettingsModule, DashboardModule, ReportsModule, ExpensesModule, AuditModule, StocktakeModule, QuotesModule],
   providers: [{ provide: APP_GUARD, useClass: LocalAuthGuard }],
 })
 export class AppModule {}
