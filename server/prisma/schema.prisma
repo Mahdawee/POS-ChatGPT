@@ -79,15 +79,16 @@ model Customer {
 }
 
 model Supplier {
-  id        String   @id @default(cuid())
+  id        String            @id @default(cuid())
   name      String
   phone     String?
   address   String?
   note      String?
-  isActive  Boolean  @default(true)
+  isActive  Boolean           @default(true)
   purchases Purchase[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  payments  SupplierPayment[]
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
   @@index([name])
 }
 
@@ -103,6 +104,7 @@ model User {
   purchases    Purchase[]
   saleReturns  SaleReturn[]
   customerPayments CustomerPayment[]
+  supplierPayments SupplierPayment[]
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 }
@@ -146,6 +148,7 @@ model SaleItem {
   sku       String
   quantity  Int
   unitPrice Int
+  unitCost  Int     @default(0)
   lineTotal Int
 }
 
@@ -209,6 +212,7 @@ model Purchase {
   userId     String
   user       User           @relation(fields: [userId], references: [id])
   total      Int
+  paidAmount Int            @default(0)
   items      PurchaseItem[]
   createdAt  DateTime       @default(now())
   @@index([createdAt])
@@ -254,6 +258,7 @@ model SaleReturnItem {
   sku          String
   quantity     Int
   unitPrice    Int
+  unitCost     Int        @default(0)
   lineTotal    Int
   @@index([saleReturnId])
 }
@@ -270,4 +275,16 @@ model CustomerPayment {
   user          User         @relation(fields: [userId], references: [id])
   createdAt     DateTime     @default(now())
   @@index([customerId, createdAt])
+}
+
+model SupplierPayment {
+  id         String   @id @default(cuid())
+  supplierId String
+  supplier   Supplier @relation(fields: [supplierId], references: [id])
+  amount     Int
+  note       String?
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  createdAt  DateTime @default(now())
+  @@index([supplierId, createdAt])
 }

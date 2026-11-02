@@ -38,6 +38,9 @@ export class PurchasesController {
         if (total > 2147483647) throw new BadRequestException("جمع رسید خرید از سقف مجاز بیشتر است.");
       }
       if (dto.supplierId && !(await tx.supplier.findUnique({ where: { id: dto.supplierId } }))) throw new BadRequestException("تأمین‌کننده پیدا نشد.");
+      // Amount settled at purchase time; the remainder becomes supplier debt.
+      // This is bookkeeping only and never touches the cash drawer.
+      const paidAmount = dto.paidAmount === undefined ? total : Math.min(dto.paidAmount, total);
       const purchase = await tx.purchase.create({
         data: {
           invoiceNo: dto.invoiceNo?.trim() || null,
@@ -45,6 +48,7 @@ export class PurchasesController {
           supplierId: dto.supplierId || null,
           userId: user.id,
           total,
+          paidAmount,
           items: {
             create: lines.map(([productId, { quantity, unitCost }]) => {
               const product = productMap.get(productId)!;

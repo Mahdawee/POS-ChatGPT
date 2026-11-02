@@ -30,7 +30,7 @@ export class SalesController {
       const returned = new Map<string, number>();
       for (const item of sale.returns.flatMap((record) => record.items)) returned.set(item.productId, (returned.get(item.productId) || 0) + item.quantity);
       let total = 0;
-      const lines: { productId: string; name: string; sku: string; quantity: number; unitPrice: number; lineTotal: number }[] = [];
+      const lines: { productId: string; name: string; sku: string; quantity: number; unitPrice: number; unitCost: number; lineTotal: number }[] = [];
       for (const [productId, quantity] of requested) {
         const saleItem = sale.items.find((item) => item.productId === productId);
         if (!saleItem) throw new BadRequestException("این کالا در فاکتور اصلی وجود ندارد.");
@@ -39,7 +39,7 @@ export class SalesController {
         const lineTotal = saleItem.unitPrice * quantity;
         if (!Number.isSafeInteger(total + lineTotal)) throw new BadRequestException("مبلغ برگشتی از سقف مجاز بیشتر است.");
         total += lineTotal;
-        lines.push({ productId, name: saleItem.name, sku: saleItem.sku, quantity, unitPrice: saleItem.unitPrice, lineTotal });
+        lines.push({ productId, name: saleItem.name, sku: saleItem.sku, quantity, unitPrice: saleItem.unitPrice, unitCost: saleItem.unitCost, lineTotal });
       }
       // Returning every item of the invoice refunds the final paid amount
       // (i.e. the sale total after discount); partial returns refund the
@@ -115,7 +115,7 @@ export class SalesController {
           change: dto.paymentMethod === "CASH" ? amountPaid - total : 0,
           paymentMethod: dto.paymentMethod, note: dto.note?.trim(), customerId: dto.customerId || null,
           userId: user.id, cashSessionId,
-          items: { create: lines.map(([productId, quantity]) => { const product = productMap.get(productId)!; return { productId, name: product.name, sku: product.sku, quantity, unitPrice: product.price, lineTotal: product.price * quantity }; }) },
+          items: { create: lines.map(([productId, quantity]) => { const product = productMap.get(productId)!; return { productId, name: product.name, sku: product.sku, quantity, unitPrice: product.price, unitCost: product.cost, lineTotal: product.price * quantity }; }) },
         }, include: { items: true, customer: true },
       });
       for (const [productId, quantity] of lines) {

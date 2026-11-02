@@ -1,4 +1,4 @@
-import { CustomersController } from "./contacts.module";
+import { CustomersController, SuppliersController } from "./contacts.module";
 
 function setup() {
   const tx = {
@@ -40,5 +40,37 @@ describe("Customer credit balances", () => {
     expect(tx.cashMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "IN", amount: 200, cashSessionId: "cash-1" }) }));
     expect(tx.customerPayment.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ customerId: "customer-1", amount: 200, userId: user.id }) }));
     expect(tx.auditLog.create).toHaveBeenCalled();
+  });
+});
+
+function supplierSetup() {
+  const tx = {
+    supplier: { findUnique: jest.fn().mockResolvedValue({ id: "supplier-1", name: "تأمین‌کننده نمونه", isActive: true }) },
+    supplierPayment: { create: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ id: "payment-1", ...data })) },
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
+  };
+  const prisma = {
+    $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)),
+    supplier: { findMany: jest.fn().mockResolvedValue([{ id: "supplier-1", name: "تأمین‌کننده نمونه", isActive: true }]) },
+    purchase: { groupBy: jest.fn().mockResolvedValue([{ supplierId: "supplier-1", _sum: { total: 800, paidAmount: 500 } }]) },
+    supplierPayment: { groupBy: jest.fn().mockResolvedValue([{ supplierId: "supplier-1", _sum: { amount: 100 } }]) },
+  };
+  return { controller: new SuppliersController(prisma as never), tx, prisma };
+}
+
+describe("Supplier balances", () => {
+  it("computes balance as purchases minus paid-at-purchase minus later payments", async () => {
+    const { controller } = supplierSetup();
+    const list = (await controller.list()) as Array<{ id: string; balance: number }>;
+    expect(list[0]?.balance).toBe(200); // 800 - 500 - 100
+  });
+
+  it("records a supplier payment as bookkeeping only, without touching the cash drawer", async () => {
+    const { controller, tx } = supplierSetup();
+    const user = { id: "user-1", username: "admin", displayName: "Admin", role: "ADMIN" as const };
+    await controller.pay("supplier-1", { amount: 150 }, user);
+    expect(tx.supplierPayment.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ supplierId: "supplier-1", amount: 150, userId: user.id }) }));
+    expect(tx.auditLog.create).toHaveBeenCalled();
+    expect(tx).not.toHaveProperty("cashMovement");
   });
 });

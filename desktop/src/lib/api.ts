@@ -37,9 +37,18 @@ export type SaleReturnItem = { id: string; productId: string; name: string; sku:
 export type SaleReturn = { id: string; returnNo: string; total: number; note: string | null; createdAt: string; user?: { displayName: string }; items?: SaleReturnItem[] };
 export type Sale = { id: string; receiptNo: string; subtotal: number; discount: number; total: number; amountPaid: number; change: number; paymentMethod: "CASH" | "MOBILE" | "CREDIT"; createdAt: string; customer?: Contact | null; user?: { displayName: string }; items: SaleItem[]; returns?: SaleReturn[] };
 export type PurchaseItem = { id: string; productId: string; name: string; sku: string; quantity: number; unitCost: number; lineTotal: number };
-export type Purchase = { id: string; invoiceNo: string | null; note: string | null; total: number; createdAt: string; supplier?: Contact | null; user?: { displayName: string }; items: PurchaseItem[] };
+export type Purchase = { id: string; invoiceNo: string | null; note: string | null; total: number; paidAmount: number; createdAt: string; supplier?: Contact | null; user?: { displayName: string }; items: PurchaseItem[] };
 export type CustomerPayment = { id: string; amount: number; note: string | null; createdAt: string; user?: { displayName: string } };
 export type CustomerDetail = { customer: Contact; creditSales: number; creditReturns: number; paymentsTotal: number; balance: number; payments: CustomerPayment[]; recentSales: Sale[] };
+export type SupplierPayment = CustomerPayment;
+export type SupplierDetail = { supplier: Contact; purchasesTotal: number; paidAtPurchase: number; paymentsTotal: number; balance: number; payments: SupplierPayment[]; recentPurchases: Purchase[] };
+export type ProfitReport = {
+  from: string; to: string; revenue: number; refunds: number; netRevenue: number; cost: number; profit: number; margin: number;
+  unknownCostRevenue: number; invoiceCount: number; purchasesTotal: number;
+  byDay: { day: string; revenue: number; profit: number }[];
+  topProducts: { productId: string; name: string; quantity: number; revenue: number; profit: number }[];
+  paymentMix: { method: string; total: number; count: number }[];
+};
 export type ShopSettings = { shopName?: string; receiptFooter?: string; [key: string]: string | undefined };
 export type CashSession = { id: string; status: "OPEN" | "CLOSED"; openingCash: number; expectedCash: number; cashSalesAmount?: number; countedCash: number | null; difference?: number; openedAt: string; closedAt: string | null; user?: { displayName: string }; movements?: { id: string; type: "IN" | "OUT"; amount: number; description: string }[] };
 

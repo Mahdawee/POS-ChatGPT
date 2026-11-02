@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, Get, Module, NotFoundException, Param, Patch, Post } from "@nestjs/common";
 import { CurrentUser, SessionUser } from "../auth";
-import { ContactDto, CustomerPaymentDto } from "../dto";
+import { ContactDto, CustomerPaymentDto, SupplierPaymentDto } from "../dto";
 import { PrismaService } from "../prisma.service";
 
 @Controller("customers")
@@ -59,11 +59,50 @@ export class CustomersController {
 }
 
 @Controller("suppliers")
-class SuppliersController {
+export class SuppliersController {
   constructor(private readonly prisma: PrismaService) {}
-  @Get() list() { return this.prisma.supplier.findMany({ where: { isActive: true }, orderBy: { name: "asc" } }); }
+  /** Active suppliers with their outstanding balance (purchases − paid at purchase − later payments). */
+  @Get() async list() {
+    const [suppliers, purchases, payments] = await Promise.all([
+      this.prisma.supplier.findMany({ where: { isActive: true }, orderBy: { name: "asc" } }),
+      this.prisma.purchase.groupBy({ by: ["supplierId"], _sum: { total: true, paidAmount: true }, where: { supplierId: { not: null } } }),
+      this.prisma.supplierPayment.groupBy({ by: ["supplierId"], _sum: { amount: true } }),
+    ]);
+    const balance = new Map<string, number>();
+    for (const row of purchases) if (row.supplierId) balance.set(row.supplierId, (balance.get(row.supplierId) || 0) + (row._sum.total || 0) - (row._sum.paidAmount || 0));
+    for (const row of payments) balance.set(row.supplierId, (balance.get(row.supplierId) || 0) - (row._sum.amount || 0));
+    return suppliers.map((supplier) => ({ ...supplier, balance: balance.get(supplier.id) || 0 }));
+  }
   @Post() create(@Body() dto: ContactDto) { return this.prisma.supplier.create({ data: { ...dto, name: dto.name.trim() } }); }
   @Patch(":id") update(@Param("id") id: string, @Body() dto: ContactDto) { return this.prisma.supplier.update({ where: { id }, data: { ...dto, name: dto.name.trim() } }); }
+
+  /** حساب تأمین‌کننده: مانده = جمع خرید − پرداخت هنگام خرید − پرداخت‌های بعدی */
+  @Get(":id") async detail(@Param("id") id: string) {
+    const supplier = await this.prisma.supplier.findUnique({ where: { id } });
+    if (!supplier) throw new NotFoundException("تأمین‌کننده پیدا نشد.");
+    const [purchasesAgg, paymentsTotal, payments, recentPurchases] = await Promise.all([
+      this.prisma.purchase.aggregate({ _sum: { total: true, paidAmount: true }, where: { supplierId: id } }),
+      this.prisma.supplierPayment.aggregate({ _sum: { amount: true }, where: { supplierId: id } }),
+      this.prisma.supplierPayment.findMany({ where: { supplierId: id }, orderBy: { createdAt: "desc" }, take: 20, include: { user: { select: { displayName: true } } } }),
+      this.prisma.purchase.findMany({ where: { supplierId: id }, orderBy: { createdAt: "desc" }, take: 10, include: { items: true, user: { select: { displayName: true } } } }),
+    ]);
+    const purchasesTotal = purchasesAgg._sum.total || 0;
+    const paidAtPurchase = purchasesAgg._sum.paidAmount || 0;
+    const paidLater = paymentsTotal._sum.amount || 0;
+    return { supplier, purchasesTotal, paidAtPurchase, paymentsTotal: paidLater, balance: purchasesTotal - paidAtPurchase - paidLater, payments, recentPurchases };
+  }
+
+  /** ثبت پرداخت به تأمین‌کننده — فقط ثبت حسابداری است؛ صندوق دست نمی‌خورد. */
+  @Post(":id/payments")
+  async pay(@Param("id") id: string, @Body() dto: SupplierPaymentDto, @CurrentUser() user: SessionUser) {
+    return this.prisma.$transaction(async (tx) => {
+      const supplier = await tx.supplier.findUnique({ where: { id } });
+      if (!supplier || !supplier.isActive) throw new BadRequestException("تأمین‌کننده پیدا نشد.");
+      const payment = await tx.supplierPayment.create({ data: { supplierId: id, amount: dto.amount, note: dto.note?.trim(), userId: user.id }, include: { supplier: true } });
+      await tx.auditLog.create({ data: { actor: user.username, action: "SUPPLIER_PAYMENT", entity: "Supplier", entityId: id, detail: String(dto.amount) } });
+      return payment;
+    });
+  }
 }
 
 @Module({ controllers: [CustomersController, SuppliersController] })

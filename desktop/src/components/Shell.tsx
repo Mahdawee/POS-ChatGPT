@@ -1,8 +1,8 @@
 import { type ReactNode } from "react";
-import { Activity, Banknote, Box, Boxes, CircleUserRound, FileText, LayoutDashboard, LogOut, PackagePlus, Settings2, ShoppingCart, Tags, Truck, UsersRound, type LucideIcon } from "lucide-react";
+import { Activity, Banknote, BarChart3, Box, Boxes, CircleUserRound, FileText, LayoutDashboard, LogOut, PackagePlus, Settings2, ShoppingCart, Tags, Truck, UsersRound, type LucideIcon } from "lucide-react";
 import type { User } from "../lib/api";
 
-export type PageId = "dashboard" | "pos" | "products" | "categories" | "customers" | "suppliers" | "purchases" | "inventory" | "sales" | "cash" | "users" | "settings";
+export type PageId = "dashboard" | "pos" | "products" | "categories" | "customers" | "suppliers" | "purchases" | "inventory" | "sales" | "reports" | "cash" | "users" | "settings";
 const navigation: { id: PageId; label: string; icon: LucideIcon; group: string; admin?: boolean }[] = [
   { id: "dashboard", label: "نمای کلی", icon: LayoutDashboard, group: "اصلی" },
   { id: "pos", label: "صندوق فروش", icon: ShoppingCart, group: "اصلی" },
@@ -13,6 +13,7 @@ const navigation: { id: PageId; label: string; icon: LucideIcon; group: string; 
   { id: "inventory", label: "موجودی انبار", icon: Boxes, group: "فروش و انبار" },
   { id: "customers", label: "مشتریان", icon: UsersRound, group: "اشخاص" },
   { id: "suppliers", label: "تأمین‌کنندگان", icon: PackagePlus, group: "اشخاص" },
+  { id: "reports", label: "گزارش‌ها", icon: BarChart3, group: "مدیریت", admin: true },
   { id: "cash", label: "مدیریت صندوق", icon: Banknote, group: "مدیریت" },
   { id: "users", label: "کاربران", icon: CircleUserRound, group: "مدیریت", admin: true },
   { id: "settings", label: "تنظیمات", icon: Settings2, group: "مدیریت", admin: true },

@@ -48,4 +48,14 @@ describe("Purchases", () => {
     await expect(controller.create({ items: [{ productId: "product-1", quantity: 1, unitCost: 5 }], supplierId: "missing" }, user)).rejects.toBeInstanceOf(BadRequestException);
     expect(tx.purchase.create).not.toHaveBeenCalled();
   });
+
+  it("defaults to fully paid and clamps overpayment to the purchase total", async () => {
+    const { controller, tx } = setup();
+    await controller.create({ items: [{ productId: "product-1", quantity: 5, unitCost: 12 }] }, user);
+    expect(tx.purchase.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ total: 60, paidAmount: 60 }) }));
+    await controller.create({ items: [{ productId: "product-1", quantity: 5, unitCost: 12 }], paidAmount: 999999 }, user);
+    expect(tx.purchase.create).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ total: 60, paidAmount: 60 }) }));
+    await controller.create({ items: [{ productId: "product-1", quantity: 5, unitCost: 12 }], paidAmount: 20 }, user);
+    expect(tx.purchase.create).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ total: 60, paidAmount: 20 }) }));
+  });
 });

@@ -24,15 +24,17 @@ The checkout operation checks active products, quantities, discount, payment amo
 
 These flows follow the same transactional pattern as checkout:
 
-- **Purchases** (`POST /api/purchases`): merges duplicate lines, validates active products and safe integer totals, then creates the purchase plus item snapshots, increments stock, refreshes each product's `cost` to the latest purchase price and writes `PURCHASE` movements atomically.
+- **Purchases** (`POST /api/purchases`): merges duplicate lines, validates active products and safe integer totals, then creates the purchase plus item snapshots, increments stock, refreshes each product's `cost` to the latest purchase price and writes `PURCHASE` movements atomically. `paidAmount` records what was settled at purchase time; the remainder becomes supplier debt (bookkeeping only — it never touches the cash drawer).
 - **Sale returns** (`POST /api/sales/:id/return`): validates requested quantities against the invoice items minus already-returned amounts. Restocks the goods with `SALE_RETURN` movements. A full return refunds the discounted sale total; partial returns refund undiscounted line prices. Cash sales take the refund out of the currently open cash session (if any); credit returns reduce the customer's balance by construction.
 - **Customer credit** (`GET /api/customers/:id`, `POST /api/customers/:id/payments`): balance = credit sales − credit returns − payments. A payment recorded while a cash session is open also writes an `IN` cash movement, so expected drawer cash stays correct.
+- **Supplier credit** (`GET /api/suppliers/:id`, `POST /api/suppliers/:id/payments`): balance = Σ(purchase.total − purchase.paidAmount) − Σ payments. Supplier payments are deliberately bookkeeping-only; paying a supplier from the drawer is a manual cash movement.
+- **Profit report** (`GET /api/reports/profit`, admin only): every sale item snapshots `unitCost` at checkout (and every return item snapshots the original sale item's cost), so gross profit = net revenue − Σ(quantity × unitCost) stays historically accurate even when purchase prices change. Sales recorded before v0.3 have no stored cost; the report exposes `unknownCostRevenue` so the UI can warn about over-stated profit for those rows.
 
 Backups: `src/backup.ts` wraps `VACUUM INTO` (never inside a transaction). The manual backup button and the automatic snapshot on every cash close share it; the close path is best-effort so a backup failure can never invalidate the committed close, and auto backups are pruned to the newest 10.
 
 ## Database and first run
 
-Prisma schema is the source of truth. A schema SQL script is generated at build/dev start and uses `CREATE TABLE IF NOT EXISTS` at API boot, which lets a fresh installed copy initialize itself without a database server or Prisma CLI. The first boot inserts starter data only when no user exists. Future schema changes should be shipped as versioned SQLite migrations; do not remove or overwrite a customer's `%APPDATA%\DarPOSERP\pos.db`.
+Prisma schema is the source of truth. A schema SQL script is generated at build/dev start and uses `CREATE TABLE IF NOT EXISTS` at API boot, which lets a fresh installed copy initialize itself without a database server or Prisma CLI. Because `IF NOT EXISTS` cannot add columns to existing tables, `COLUMN_MIGRATIONS` in `prisma.service.ts` backfills every column added after the first release with an idempotent `ALTER TABLE ... ADD COLUMN` (checked via `PRAGMA table_info`); append new entries there when adding columns to existing models and never remove old ones. The first boot inserts starter data only when no user exists. Future schema changes should be shipped as versioned SQLite migrations; do not remove or overwrite a customer's `%APPDATA%\DarPOSERP\pos.db`.
 
 ## Windows packaging
 

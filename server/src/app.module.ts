@@ -12,9 +12,10 @@ import { CashModule } from "./modules/cash.module";
 import { UsersModule } from "./modules/users.module";
 import { SettingsModule } from "./modules/settings.module";
 import { DashboardModule } from "./modules/dashboard.module";
+import { ReportsModule } from "./modules/reports.module";
 
 @Module({
-  imports: [PrismaModule, AuthModule, CatalogModule, ContactsModule, InventoryModule, SalesModule, PurchasesModule, CashModule, UsersModule, SettingsModule, DashboardModule],
+  imports: [PrismaModule, AuthModule, CatalogModule, ContactsModule, InventoryModule, SalesModule, PurchasesModule, CashModule, UsersModule, SettingsModule, DashboardModule, ReportsModule],
   providers: [{ provide: APP_GUARD, useClass: LocalAuthGuard }],
 })
 export class AppModule {}

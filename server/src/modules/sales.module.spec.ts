@@ -2,7 +2,7 @@ import { BadRequestException } from "@nestjs/common";
 import { SalesController } from "./sales.module";
 
 const user = { id: "user-1", username: "admin", displayName: "Admin", role: "ADMIN" as const };
-const product = { id: "product-1", name: "چای", sku: "T-1", stock: 2, price: 10, isActive: true };
+const product = { id: "product-1", name: "چای", sku: "T-1", stock: 2, price: 10, cost: 6, isActive: true };
 
 function setup(stock = 2) {
   const tx = {
@@ -30,6 +30,7 @@ describe("POS checkout", () => {
     const { controller, tx } = setup(5);
     await controller.checkout({ items: [{ productId: "product-1", quantity: 2 }], paymentMethod: "CASH", amountPaid: 25 }, user);
     expect(tx.sale.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ subtotal: 20, total: 20, change: 5 }) }));
+    expect(tx.sale.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ items: { create: [{ productId: "product-1", name: "چای", sku: "T-1", quantity: 2, unitPrice: 10, unitCost: 6, lineTotal: 20 }] } }) }));
     expect(tx.product.update).toHaveBeenCalledWith({ where: { id: "product-1" }, data: { stock: { decrement: 2 } } });
     expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "SALE", quantity: -2, stockAfter: 3 }) }));
   });
@@ -42,7 +43,7 @@ const saleFixture = {
   discount: 5,
   total: 25,
   paymentMethod: "CASH",
-  items: [{ id: "item-1", productId: "product-1", name: "چای", sku: "T-1", quantity: 3, unitPrice: 10, lineTotal: 30 }],
+  items: [{ id: "item-1", productId: "product-1", name: "چای", sku: "T-1", quantity: 3, unitPrice: 10, unitCost: 6, lineTotal: 30 }],
   returns: [] as { items: { productId: string; quantity: number }[] }[],
 };
 
@@ -66,6 +67,7 @@ describe("Sale returns", () => {
     const record = await controller.returnSale("sale-1", { items: [{ productId: "product-1", quantity: 2 }] }, user);
     expect(tx.product.update).toHaveBeenCalledWith({ where: { id: "product-1" }, data: { stock: { increment: 2 } } });
     expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "SALE_RETURN", quantity: 2, stockAfter: 2 }) }));
+    expect(tx.saleReturn.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ items: { create: [expect.objectContaining({ unitCost: 6 })] } }) }));
     expect(record.total).toBe(20);
     expect(tx.auditLog.create).toHaveBeenCalled();
   });

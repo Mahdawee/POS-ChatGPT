@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS "SaleItem" (
     "sku" TEXT NOT NULL,
     "quantity" INTEGER NOT NULL,
     "unitPrice" INTEGER NOT NULL,
+    "unitCost" INTEGER NOT NULL DEFAULT 0,
     "lineTotal" INTEGER NOT NULL,
     CONSTRAINT "SaleItem_saleId_fkey" FOREIGN KEY ("saleId") REFERENCES "Sale" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "SaleItem_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
@@ -205,6 +206,7 @@ CREATE TABLE IF NOT EXISTS "Purchase" (
     "supplierId" TEXT,
     "userId" TEXT NOT NULL,
     "total" INTEGER NOT NULL,
+    "paidAmount" INTEGER NOT NULL DEFAULT 0,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "Purchase_supplierId_fkey" FOREIGN KEY ("supplierId") REFERENCES "Supplier" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
     CONSTRAINT "Purchase_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
@@ -246,6 +248,7 @@ CREATE TABLE IF NOT EXISTS "SaleReturnItem" (
     "sku" TEXT NOT NULL,
     "quantity" INTEGER NOT NULL,
     "unitPrice" INTEGER NOT NULL,
+    "unitCost" INTEGER NOT NULL DEFAULT 0,
     "lineTotal" INTEGER NOT NULL,
     CONSTRAINT "SaleReturnItem_saleReturnId_fkey" FOREIGN KEY ("saleReturnId") REFERENCES "SaleReturn" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "SaleReturnItem_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
@@ -288,3 +291,18 @@ CREATE INDEX IF NOT EXISTS "SaleReturnItem_saleReturnId_idx" ON "SaleReturnItem"
 
 -- CreateIndex
 CREATE INDEX IF NOT EXISTS "CustomerPayment_customerId_createdAt_idx" ON "CustomerPayment"("customerId", "createdAt");
+
+-- CreateTable
+CREATE TABLE IF NOT EXISTS "SupplierPayment" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "supplierId" TEXT NOT NULL,
+    "amount" INTEGER NOT NULL,
+    "note" TEXT,
+    "userId" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "SupplierPayment_supplierId_fkey" FOREIGN KEY ("supplierId") REFERENCES "Supplier" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "SupplierPayment_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "SupplierPayment_supplierId_createdAt_idx" ON "SupplierPayment"("supplierId", "createdAt");

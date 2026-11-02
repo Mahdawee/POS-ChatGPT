@@ -80,6 +80,7 @@ export class PurchaseDto {
   @IsOptional() @IsString() supplierId?: string;
   @IsOptional() @IsString() @MaxLength(60) invoiceNo?: string;
   @IsOptional() @IsString() @MaxLength(300) note?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) paidAmount?: number;
 }
 export class ReturnLineDto {
   @IsString() productId!: string;
@@ -90,6 +91,10 @@ export class SaleReturnDto {
   @IsOptional() @IsString() @MaxLength(300) note?: string;
 }
 export class CustomerPaymentDto {
+  @Type(() => Number) @IsInt() @Min(1) @Max(2147483647) amount!: number;
+  @IsOptional() @IsString() @MaxLength(300) note?: string;
+}
+export class SupplierPaymentDto {
   @Type(() => Number) @IsInt() @Min(1) @Max(2147483647) amount!: number;
   @IsOptional() @IsString() @MaxLength(300) note?: string;
 }
