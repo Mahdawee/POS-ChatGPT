@@ -39,13 +39,17 @@ export class InventoryController {
   @Get("reorder")
   async reorder() {
     const since = new Date(Date.now() - 30 * 86400000);
-    const [products, soldRows, purchases] = await Promise.all([
+    const [products, soldRows, returnedRows, purchases] = await Promise.all([
       this.prisma.product.findMany({ where: { isActive: true, isBundle: false }, select: { id: true, name: true, sku: true, unit: true, stock: true, backstock: true, reserved: true, minStock: true, cost: true } }),
       this.prisma.saleItem.findMany({ where: { sale: { createdAt: { gte: since } } }, select: { productId: true, quantity: true } }),
+      this.prisma.saleReturnItem.findMany({ where: { saleReturn: { createdAt: { gte: since } } }, select: { productId: true, quantity: true } }),
       this.prisma.purchaseItem.findMany({ orderBy: { purchase: { createdAt: "desc" } }, take: 2000, select: { productId: true, purchase: { select: { supplier: { select: { id: true, name: true, phone: true } } } } } }),
     ]);
+    // Net velocity: goods sold and then returned did not really leave the
+    // shop, so they must not inflate the reorder suggestion.
     const soldMap = new Map<string, number>();
     for (const row of soldRows) soldMap.set(row.productId, (soldMap.get(row.productId) || 0) + row.quantity);
+    for (const row of returnedRows) soldMap.set(row.productId, (soldMap.get(row.productId) || 0) - row.quantity);
     const lastSupplier = new Map<string, { id: string; name: string; phone: string | null }>();
     for (const item of purchases) {
       if (!lastSupplier.has(item.productId) && item.purchase.supplier) {
@@ -53,7 +57,7 @@ export class InventoryController {
       }
     }
     const rows = products.map((product) => {
-      const sold = soldMap.get(product.id) || 0;
+      const sold = Math.max(0, soldMap.get(product.id) || 0); // returns can exceed in-window sales
       const velocity = sold / 30;
       const onHand = product.stock + product.backstock - product.reserved;
       const daysLeft = velocity > 0 ? onHand / velocity : null;
@@ -94,7 +98,10 @@ export class InventoryController {
       const product = await tx.product.findUnique({ where: { id: dto.productId } });
       if (!product || !product.isActive) throw new BadRequestException("کالا پیدا نشد.");
       if (dto.direction === "TO_BACKROOM") {
-        if (product.stock < dto.quantity) throw new BadRequestException(`موجودی قفسهٔ فروش ${product.name} کافی نیست. موجودی فعلی: ${product.stock}`);
+        // Reservations live on the shelf: moving promised units to the
+        // backroom would strand the pre-order waiting for them.
+        const free = product.stock - product.reserved;
+        if (free < dto.quantity) throw new BadRequestException(`موجودی آزاد قفسهٔ فروش ${product.name} کافی نیست. موجودی آزاد: ${free} (رزرو سفارش: ${product.reserved})`);
         const stock = product.stock - dto.quantity;
         await tx.product.update({ where: { id: product.id }, data: { stock, backstock: { increment: dto.quantity } } });
         await tx.inventoryMovement.create({ data: { productId: product.id, type: "ADJUSTMENT_OUT", quantity: -dto.quantity, stockAfter: stock, note: "انتقال به انبار پشتیبان" } });

@@ -93,6 +93,7 @@ export class SalesController {
         if (!product || !product.isSerialized) continue;
         const serials = serialsByProduct.get(line.productId) || [];
         if (!serials.length || serials.length !== Math.round(line.quantity)) throw new BadRequestException(`برای برگشت «${line.name}» شمارهٔ سریال هر دستگاه را وارد کنید (${Math.round(line.quantity)} عدد).`);
+        if (new Set(serials).size !== serials.length) throw new BadRequestException(`سریال تکراری در برگشت «${line.name}» هست؛ هر دستگاه را یک بار وارد کنید.`);
         const saleItemIds = new Set(sale.items.map((item) => item.id));
         const units = await tx.serialUnit.findMany({ where: { serial: { in: serials } } });
         const unitMap = new Map(units.map((unit) => [unit.serial, unit]));
@@ -103,6 +104,17 @@ export class SalesController {
         }
       }
       const returnNo = `RET-${Date.now()}-${randomBytes(2).toString("hex").toUpperCase()}`;
+      // Restock with a running stock map: a component shared by several
+      // returned bundles must chain its increments so every movement row's
+      // stockAfter stays truthful.
+      const runningStock = new Map<string, number>();
+      const restock = async (product: { id: string; stock: number }, quantity: number, note: string): Promise<void> => {
+        const before = runningStock.has(product.id) ? runningStock.get(product.id)! : product.stock;
+        const stockAfter = before + quantity;
+        runningStock.set(product.id, stockAfter);
+        await tx.product.update({ where: { id: product.id }, data: { stock: { increment: quantity } } });
+        await tx.inventoryMovement.create({ data: { productId: product.id, type: "SALE_RETURN", quantity, stockAfter, reference: returnNo, note } });
+      };
       const record = await tx.saleReturn.create({
         data: { returnNo, saleId: sale.id, total, creditRelief, cashAmount, walletRefund, note: dto.note?.trim(), userId: user.id, items: { create: lines } },
         include: { items: true },
@@ -111,16 +123,11 @@ export class SalesController {
         const product = productMap.get(line.productId);
         if (!product) continue; // product row vanished; keep the financial record
         // Bundles never carried their own stock: the components come back.
-        const physical: Array<{ productId: string; stock: number; quantity: number; name: string }> = [];
         if (product.isBundle) {
           const rows = await tx.bundleComponent.findMany({ where: { bundleId: line.productId }, include: { component: true } });
-          for (const row of rows) physical.push({ productId: row.componentId, stock: row.component.stock, quantity: row.quantity * line.quantity, name: row.component.name });
+          for (const row of rows) await restock(row.component, row.quantity * line.quantity, `برگشت جزء بستهٔ ${product.name}`);
         } else {
-          physical.push({ productId: line.productId, stock: product.stock, quantity: line.quantity, name: product.name });
-        }
-        for (const part of physical) {
-          await tx.product.update({ where: { id: part.productId }, data: { stock: { increment: part.quantity } } });
-          await tx.inventoryMovement.create({ data: { productId: part.productId, type: "SALE_RETURN", quantity: part.quantity, stockAfter: part.stock + part.quantity, reference: returnNo, note: product.isBundle ? `برگشت جزء بستهٔ ${product.name}` : "برگشت از فروش" } });
+          await restock(product, line.quantity, "برگشت از فروش");
         }
         // Tracked units re-enter sellable stock.
         for (const serial of serialsByProduct.get(line.productId) || []) {

@@ -1,7 +1,20 @@
-import { BadRequestException, Body, Controller, Get, Module, Param, Patch, Post, Put, Query } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Module, NotFoundException, Param, Patch, Post, Put, Query } from "@nestjs/common";
 import { AdminOnly, CurrentUser, SessionUser } from "../auth";
 import { BundleDto, CategoryDto, ProductDto, ProductImportDto } from "../dto";
 import { PrismaService } from "../prisma.service";
+
+/**
+ * Prisma's unique-constraint error (P2002) would surface as a raw 500; the
+ * cashier only needs to know the code/barcode is already taken.
+ */
+function mapProductConflict(error: unknown): unknown {
+  if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {
+    const target = JSON.stringify((error as { meta?: unknown }).meta ?? "");
+    const field = target.includes("barcode") ? "بارکد" : "کد کالا";
+    return new BadRequestException(`این ${field} برای کالای دیگری ثبت شده است.`);
+  }
+  return error;
+}
 
 @Controller("categories")
 class CategoriesController {
@@ -31,17 +44,23 @@ export class ProductsController {
     return this.prisma.product.findMany({ where, include: { category: true, bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true } } } }, serialUnits: { where: { status: "IN_STOCK" }, select: { id: true } } }, orderBy: { name: "asc" } });
   }
   @Post() async create(@Body() dto: ProductDto) {
+    if (dto.isBundle && dto.isSerialized) throw new BadRequestException("یک کالا نمی‌تواند هم‌زمان بسته و سریال‌دار باشد؛ بسته اجزایی ساده دارد.");
     const stock = dto.stock ?? 0;
     const item = await this.prisma.$transaction(async (tx) => {
       const product = await tx.product.create({ data: { sku: dto.sku.trim(), barcode: dto.barcode?.trim() || null, name: dto.name.trim(), unit: dto.unit || "عدد", isWeighted: dto.isWeighted ?? false, isBundle: dto.isBundle ?? false, isSerialized: dto.isSerialized ?? false, expiryDate: dto.expiryDate ? new Date(`${dto.expiryDate}T00:00:00.000Z`) : null, price: dto.price, wholesalePrice: dto.wholesalePrice ?? null, wholesaleMinQty: dto.wholesaleMinQty ?? null, cost: dto.cost ?? 0, stock, minStock: dto.minStock ?? 0, categoryId: dto.categoryId || null } });
       if (stock > 0) await tx.inventoryMovement.create({ data: { productId: product.id, type: "ADJUSTMENT_IN", quantity: stock, stockAfter: stock, note: "موجودی اولیه" } });
       await tx.auditLog.create({ data: { action: "CREATE", entity: "Product", entityId: product.id, detail: product.sku } });
       return product;
-    });
+    }).catch((error) => { throw mapProductConflict(error); });
     return item;
   }
   @Patch(":id") async update(@Param("id") id: string, @Body() dto: ProductDto) {
     const { stock: _stock, ...fields } = dto;
+    // The flags are optional on PATCH: judge the request against the stored
+    // product, not against absent keys.
+    const stored = await this.prisma.product.findUnique({ where: { id }, select: { isBundle: true, isSerialized: true } });
+    if (!stored) throw new NotFoundException("کالا پیدا نشد.");
+    if ((fields.isBundle ?? stored.isBundle) && (fields.isSerialized ?? stored.isSerialized)) throw new BadRequestException("یک کالا نمی‌تواند هم‌زمان بسته و سریال‌دار باشد؛ بسته اجزایی ساده دارد.");
     const item = await this.prisma.product.update({ where: { id }, data: {
       ...fields,
       sku: fields.sku.trim(), barcode: fields.barcode?.trim() || null, name: fields.name.trim(), categoryId: fields.categoryId || null,
@@ -50,18 +69,19 @@ export class ProductsController {
       // and "YYYY-MM-DD" sets it. Passing the raw string through used to work
       // only by Prisma's good graces and could never clear a date.
       expiryDate: fields.expiryDate === undefined ? undefined : fields.expiryDate ? new Date(`${fields.expiryDate}T00:00:00.000Z`) : null,
-    } });
+    } }).catch((error) => { throw mapProductConflict(error); });
     await this.prisma.auditLog.create({ data: { action: "UPDATE", entity: "Product", entityId: id, detail: item.sku } });
     return item;
   }
   /** اجزای یک بسته/BOM را جایگزین می‌کند (اقلام قبلی پاک می‌شوند). */
   @AdminOnly()
   @Put(":id/bundle")
-  async setBundle(@Param("id") id: string, @Body() dto: BundleDto) {
+  async setBundle(@Param("id") id: string, @Body() dto: BundleDto, @CurrentUser() user: SessionUser) {
     return this.prisma.$transaction(async (tx) => {
       const bundle = await tx.product.findUnique({ where: { id } });
       if (!bundle || !bundle.isActive) throw new BadRequestException("کالا پیدا نشد.");
       if (!bundle.isBundle) throw new BadRequestException("ابتدا کالا را به‌عنوان «بسته» ذخیره کنید.");
+      if (bundle.isSerialized) throw new BadRequestException("کالای سریال‌دار نمی‌تواند بسته باشد؛ بسته اجزایی ساده دارد.");
       const ids = [...new Set(dto.components.map((row) => row.productId))];
       const components = await tx.product.findMany({ where: { id: { in: ids }, isActive: true } });
       if (components.length !== ids.length) throw new BadRequestException("یکی از اجزای بسته پیدا نشد یا غیرفعال است.");
@@ -71,7 +91,7 @@ export class ProductsController {
       }
       await tx.bundleComponent.deleteMany({ where: { bundleId: id } });
       await tx.bundleComponent.createMany({ data: dto.components.map((row) => ({ bundleId: id, componentId: row.productId, quantity: row.quantity })) });
-      await tx.auditLog.create({ data: { actor: "admin", action: "SET_BUNDLE", entity: "Product", entityId: id, detail: `${dto.components.length} جزء` } });
+      await tx.auditLog.create({ data: { actor: user.username, action: "SET_BUNDLE", entity: "Product", entityId: id, detail: `${dto.components.length} جزء` } });
       return tx.product.findUnique({ where: { id }, include: { bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true } } } } } });
     });
   }

@@ -17,6 +17,12 @@ export class InstallmentsController {
   async create(@Body() dto: CreateInstallmentPlanDto, @CurrentUser() user: SessionUser) {
     const customer = await this.prisma.customer.findUnique({ where: { id: dto.customerId } });
     if (!customer || !customer.isActive) throw new BadRequestException("مشتری پیدا نشد.");
+    // An optional sale link must point at a real invoice of the SAME customer,
+    // otherwise the receipt view would show a plan that never financed it.
+    if (dto.saleId) {
+      const sale = await this.prisma.sale.findUnique({ where: { id: dto.saleId }, select: { customerId: true } });
+      if (!sale || sale.customerId !== dto.customerId) throw new BadRequestException("فاکتور مربوط به این مشتری پیدا نشد.");
+    }
     const interval = dto.intervalDays ?? 30;
     const start = dto.startDate ? new Date(`${dto.startDate}T00:00:00`) : new Date(Date.now() + interval * 86400000);
     if (Number.isNaN(start.getTime())) throw new BadRequestException("تاریخ شروع معتبر نیست.");

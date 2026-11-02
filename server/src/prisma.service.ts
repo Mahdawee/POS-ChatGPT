@@ -87,6 +87,20 @@ export async function ensureColumnMigrations(db: { $queryRawUnsafe(sql: string):
 }
 
 /**
+ * Repairs historical `invoiceNo` data before the unique index is created
+ * (schema.sql) — an upgraded database can carry duplicates from the days
+ * before the index existed, and `CREATE UNIQUE INDEX` refuses to run over
+ * them, killing the boot. Two idempotent passes:
+ *  1. sales without a number inherit one derived from their receipt number;
+ *  2. within each group of duplicates only the oldest row keeps the number;
+ *     the rest get a `-<rowid>` suffix, which is stable across re-runs.
+ */
+export async function ensureUniqueInvoiceNos(db: { $executeRawUnsafe(sql: string): Promise<unknown> }): Promise<void> {
+  await db.$executeRawUnsafe(`UPDATE "Sale" SET "invoiceNo" = 'INV-' || COALESCE("receiptNo", "id") WHERE "invoiceNo" IS NULL OR "invoiceNo" = ''`);
+  await db.$executeRawUnsafe(`UPDATE "Sale" SET "invoiceNo" = "invoiceNo" || '-' || "rowid" WHERE "rowid" NOT IN (SELECT MIN("rowid") FROM "Sale" GROUP BY "invoiceNo")`);
+}
+
+/**
  * SQLite tuning applied to every database at boot:
  * - WAL lets reads (reports, lists) continue while a sale is being written.
  * - `PRAGMA optimize` refreshes the query planner's statistics; we repeat it
@@ -136,10 +150,15 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     }
     await this.$queryRawUnsafe("PRAGMA journal_mode=WAL");
     await this.$queryRawUnsafe("PRAGMA optimize");
+    // Order matters for UPGRADED databases: additive columns must exist (and
+    // invoice numbers must be unique) before schema.sql tries to build the
+    // indexes that reference them — otherwise the very first boot after an
+    // upgrade dies on "no such column" / "UNIQUE constraint failed".
+    await ensureColumnMigrations(this);
+    await ensureUniqueInvoiceNos(this);
     const schemaPath = join(__dirname, "../prisma/schema.sql");
     const schema = readFileSync(schemaPath, "utf8");
     for (const statement of schema.split(";").map((sql) => sql.trim()).filter(Boolean)) await this.$executeRawUnsafe(statement);
-    await ensureColumnMigrations(this);
     await backfillPaymentParts(this);
     await ensureInitialData(this);
     this.optimizeTimer = setInterval(() => {

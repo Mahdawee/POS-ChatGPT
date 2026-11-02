@@ -151,7 +151,7 @@ function installmentsSetup() {
     customerPayment: { create: jest.fn().mockResolvedValue({}) },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
   };
-  const prisma = { $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)), customer: { findUnique: jest.fn().mockResolvedValue({ id: "customer-1", name: "احمد", isActive: true }) }, installmentPlan: { findMany: jest.fn().mockResolvedValue([]) } };
+  const prisma = { $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)), customer: { findUnique: jest.fn().mockResolvedValue({ id: "customer-1", name: "احمد", isActive: true }) }, installmentPlan: { findMany: jest.fn().mockResolvedValue([]) }, sale: { findUnique: jest.fn().mockResolvedValue(null) } };
   const controller = new InstallmentsController(prisma as never);
   return { controller, tx, prisma };
 }
@@ -244,14 +244,18 @@ describe("Round 16 — reorder suggestions", () => {
     const prisma = {
       product: { findMany: jest.fn().mockResolvedValue(products) },
       saleItem: { findMany: jest.fn().mockResolvedValue([{ productId: "p1", quantity: 30 }, { productId: "p2", quantity: 3 }]) },
+      // Six of the thirty sold units came straight back: the net velocity is
+      // 24/30 per day, not 30/30 — returns must not inflate the suggestion.
+      saleReturnItem: { findMany: jest.fn().mockResolvedValue([{ productId: "p1", quantity: 6 }]) },
       purchaseItem: { findMany: jest.fn().mockResolvedValue([{ productId: "p1", purchase: { supplier: { id: "sup-1", name: "تأمین‌کننده", phone: null } } }]) },
     };
     const controller = new InventoryController(prisma as never);
-    const rows = (await controller.reorder()) as Array<{ productId: string; suggested: number; belowMin: boolean; lastSupplier: { id: string } | null }>;
+    const rows = (await controller.reorder()) as Array<{ productId: string; suggested: number; belowMin: boolean; soldLast30: number; lastSupplier: { id: string } | null }>;
     const tea = rows.find((row) => row.productId === "p1");
     expect(tea).toBeDefined();
     expect(tea!.belowMin).toBe(true);
-    expect(tea!.suggested).toBe(Math.ceil(1 * 14 + 5 - 2)); // velocity 1/day + minStock − on hand
+    expect(tea!.suggested).toBe(Math.ceil(0.8 * 14 + 5 - 2)); // net velocity 0.8/day (24 sold − 6 returned) + minStock − on hand
+    expect(tea!.soldLast30).toBe(24);
     expect(tea!.lastSupplier?.id).toBe("sup-1");
     expect(rows.find((row) => row.productId === "p2")).toBeUndefined();
   });
@@ -307,5 +311,107 @@ describe("Round 16 — orders reserve and release stock", () => {
     await controller.cancel("order-1", admin);
     expect(tx.product.update).toHaveBeenCalledWith(expect.objectContaining({ data: { reserved: { decrement: 3 } } }));
     expect(tx.customerOrder.update).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "CANCELLED" } }));
+  });
+});
+
+describe("Round 16 audit — regression fixes", () => {
+  it("rejects the same serial twice in one sale (stock would drop double for one device)", async () => {
+    const phone = product({ id: "phone-1", name: "گوشی", isSerialized: true, stock: 2 });
+    const serials = [
+      { serial: "IMEI-1", productId: "phone-1", status: "IN_STOCK", saleItemId: null },
+      { serial: "IMEI-2", productId: "phone-1", status: "IN_STOCK", saleItemId: null },
+    ];
+    const { service } = checkoutSetup([phone], { serialUnits: serials });
+    await expect(service.checkout({ items: [{ productId: "phone-1", quantity: 2, serials: ["IMEI-1", "IMEI-1"] }], paymentMethod: "CASH" }, admin)).rejects.toThrow(/تکراری/);
+  });
+
+  it("checks the COMBINED component demand when two bundles share a component", async () => {
+    // 5 teas on the shelf; each bundle takes 3 → each line alone fits, but
+    // together they need 6 and must be refused instead of driving stock < 0.
+    const boxA = product({ id: "bundle-a", name: "بستهٔ الف", isBundle: true, stock: 0 });
+    const boxB = product({ id: "bundle-b", name: "بستهٔ ب", isBundle: true, stock: 0 });
+    const tea = product({ id: "product-1", stock: 5 });
+    const { service } = checkoutSetup([boxA, boxB, tea], { components: [
+      { bundleId: "bundle-a", componentId: "product-1", quantity: 3 },
+      { bundleId: "bundle-b", componentId: "product-1", quantity: 3 },
+    ] });
+    await expect(service.checkout({ items: [{ productId: "bundle-a", quantity: 1 }, { productId: "bundle-b", quantity: 1 }], paymentMethod: "CASH" }, admin)).rejects.toThrow(/مجموع بسته‌ها/);
+  });
+
+  it("chains stockAfter when a shared component is deducted for two bundles", async () => {
+    const boxA = product({ id: "bundle-a", name: "بستهٔ الف", isBundle: true, stock: 0 });
+    const boxB = product({ id: "bundle-b", name: "بستهٔ ب", isBundle: true, stock: 0 });
+    const tea = product({ id: "product-1", stock: 10 });
+    const { service, tx } = checkoutSetup([boxA, boxB, tea], { components: [
+      { bundleId: "bundle-a", componentId: "product-1", quantity: 3 },
+      { bundleId: "bundle-b", componentId: "product-1", quantity: 3 },
+    ] });
+    await service.checkout({ items: [{ productId: "bundle-a", quantity: 1 }, { productId: "bundle-b", quantity: 1 }], paymentMethod: "CASH" }, admin);
+    const movements = (tx.inventoryMovement.create as jest.Mock).mock.calls
+      .map((call) => call[0].data)
+      .filter((data: { productId: string }) => data.productId === "product-1")
+      .map((data: { stockAfter: number }) => data.stockAfter)
+      .sort((a: number, b: number) => a - b);
+    expect(movements).toEqual([4, 7]); // 10 − 3 − 3, each movement honest
+  });
+
+  it("refuses to move reserved shelf stock to the backroom", async () => {
+    const tx = { product: { findUnique: jest.fn().mockResolvedValue({ id: "product-1", name: "چای", isActive: true, stock: 10, reserved: 6, backstock: 0 }) }, product_update: jest.fn().mockResolvedValue({}), inventoryMovement: { create: jest.fn() }, auditLog: { create: jest.fn() } };
+    const prisma = { $transaction: jest.fn((work: (client: unknown) => unknown) => work({ product: { update: jest.fn() }, inventoryMovement: tx.inventoryMovement, auditLog: tx.auditLog })) };
+    // Rebuild the controller with the row the transfer endpoint reads.
+    const controller = new InventoryController({ ...prisma, $transaction: jest.fn(async (work: (client: unknown) => unknown) => work({ product: { findUnique: tx.product.findUnique, update: jest.fn().mockResolvedValue({}) }, inventoryMovement: tx.inventoryMovement, auditLog: tx.auditLog })) } as never);
+    // Free shelf = 10 − 6 = 4: transferring 5 must be refused…
+    await expect(controller.transfer({ productId: "product-1", quantity: 5, direction: "TO_BACKROOM" }, admin)).rejects.toThrow(/آزاد/);
+    // …while 4 (the whole free part) goes through.
+    await expect(controller.transfer({ productId: "product-1", quantity: 4, direction: "TO_BACKROOM" }, admin)).resolves.toBeTruthy();
+  });
+
+  it("rejects a product that is both bundle and serialized, and a duplicate sku surfaces as 400", async () => {
+    const tx = {
+      product: { create: jest.fn().mockRejectedValue(Object.assign(new Error("Unique constraint failed"), { code: "P2002", meta: { target: ["Product_sku_key"] } })) },
+      inventoryMovement: { create: jest.fn() },
+      auditLog: { create: jest.fn() },
+    };
+    const prisma = {
+      $transaction: jest.fn((work: (client: typeof tx) => unknown) => Promise.resolve(work(tx))),
+      product: {
+        findUnique: jest.fn().mockResolvedValue({ id: "product-1", isBundle: true, isSerialized: false }),
+        update: jest.fn().mockResolvedValue({ id: "product-1", sku: "T-1" }),
+      },
+      auditLog: { create: jest.fn() },
+    };
+    const { ProductsController } = jest.requireActual("./catalog.module") as typeof import("./catalog.module");
+    const controller = new ProductsController(prisma as never);
+    await expect(controller.create({ sku: "T-1", name: "چای", price: 10, isBundle: true, isSerialized: true } as never)).rejects.toBeInstanceOf(BadRequestException);
+    // A stored bundle that gets the serialized flag switched on via PATCH is refused too.
+    await expect(controller.update("product-1", { sku: "T-1", name: "چای", price: 10, isSerialized: true } as never)).rejects.toThrow(/هم‌زمان/);
+    // Unique violations map to a friendly BadRequest instead of a raw 500.
+    await expect(controller.create({ sku: "T-1", name: "چای تکراری", price: 10 } as never)).rejects.toThrow(/کد کالا/);
+  });
+
+  it("setBundle logs the acting user, not a hardcoded 'admin'", async () => {
+    const tx = {
+      product: {
+        findUnique: jest.fn().mockResolvedValue({ id: "bundle-1", name: "بسته", isActive: true, isBundle: true, isSerialized: false, bundleComponents: [] }),
+        findMany: jest.fn().mockResolvedValue([{ id: "product-1", name: "چای", isActive: true, isBundle: false, isSerialized: false }]),
+      },
+      bundleComponent: { deleteMany: jest.fn().mockResolvedValue({}), createMany: jest.fn().mockResolvedValue({}) },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = { $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)) };
+    const { ProductsController } = jest.requireActual("./catalog.module") as typeof import("./catalog.module");
+    const controller = new ProductsController(prisma as never);
+    await controller.setBundle("bundle-1", { components: [{ productId: "product-1", quantity: 2 }] }, { ...admin, username: "cashier-ali" });
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ actor: "cashier-ali", action: "SET_BUNDLE" }) }));
+  });
+
+  it("rejects an installment plan linked to another customer's (or a missing) sale", async () => {
+    const { controller, prisma } = installmentsSetup();
+    (prisma.sale.findUnique as jest.Mock).mockResolvedValue({ customerId: "someone-else" });
+    await expect(controller.create({ customerId: "customer-1", total: 9000, installmentCount: 3, saleId: "sale-9" }, admin)).rejects.toThrow(/فاکتور/);
+    (prisma.sale.findUnique as jest.Mock).mockResolvedValue(null);
+    await expect(controller.create({ customerId: "customer-1", total: 9000, installmentCount: 3, saleId: "sale-9" }, admin)).rejects.toThrow(/فاکتور/);
+    // No saleId → no link check, plan is created as before.
+    await expect(controller.create({ customerId: "customer-1", total: 9000, installmentCount: 3 }, admin)).resolves.toBeTruthy();
   });
 });

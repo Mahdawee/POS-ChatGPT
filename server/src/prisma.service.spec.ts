@@ -1,4 +1,4 @@
-import { backfillPaymentParts, ensureColumnMigrations } from "./prisma.service";
+import { backfillPaymentParts, ensureColumnMigrations, ensureUniqueInvoiceNos } from "./prisma.service";
 
 function db(tableColumns: Record<string, string[]>) {
   const statements: string[] = [];
@@ -99,5 +99,23 @@ describe("Payment-parts backfill for pre-parts databases", () => {
     const saleStatements = statements.filter((sql) => sql.startsWith('UPDATE "Sale" SET'));
     expect(saleStatements.length).toBe(4);
     for (const sql of saleStatements) expect(sql).toContain(`WHERE "cashPart" = 0 AND "mobilePart" = 0 AND "creditPart" = 0`);
+  });
+});
+
+describe("Invoice-number repair before the unique index is built", () => {
+  it("backfills blank numbers and only suffixes later duplicates", async () => {
+    const statements: string[] = [];
+    const client = { $executeRawUnsafe: jest.fn().mockImplementation((sql: string) => { statements.push(sql); return Promise.resolve(0); }) };
+    await ensureUniqueInvoiceNos(client);
+    expect(statements).toEqual([
+      // 1) sales without a number inherit one from their receipt number…
+      expect.stringContaining(`UPDATE "Sale" SET "invoiceNo" = 'INV-' || COALESCE("receiptNo", "id") WHERE "invoiceNo" IS NULL OR "invoiceNo" = ''`),
+      // 2) …and within each duplicate group only the oldest row keeps the
+      //    number; the rest get a stable `-<rowid>` suffix.
+      expect.stringContaining(`UPDATE "Sale" SET "invoiceNo" = "invoiceNo" || '-' || "rowid" WHERE "rowid" NOT IN (SELECT MIN("rowid") FROM "Sale" GROUP BY "invoiceNo")`),
+    ]);
+    // Both statements are unconditional full-table passes that converge after
+    // one run: on a second run every number is present and unique, so both
+    // UPDATEs simply match zero rows (idempotent by construction).
   });
 });

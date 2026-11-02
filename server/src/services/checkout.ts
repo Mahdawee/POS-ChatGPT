@@ -89,6 +89,7 @@ export class CheckoutService {
       // must be available for the multiplied quantity. Open pre-orders
       // reserve stock, so walk-in availability is stock − reserved.
       const bundleComponents = new Map<string, Array<{ component: StockishProduct; quantity: number }>>();
+      const componentById = new Map<string, StockishProduct>();
       for (const [productId, quantity] of lines) {
         const product = productMap.get(productId)!;
         if (product.isBundle) {
@@ -99,6 +100,7 @@ export class CheckoutService {
             if (part.component.isBundle) throw new BadRequestException("بسته داخل بسته مجاز نیست؛ اجزای بسته باید کالای ساده باشند.");
             const available = part.component.stock - part.component.reserved;
             if (available < part.quantity) throw new BadRequestException(`موجودی جزء ${part.component.name} از بستهٔ ${product.name} کافی نیست. موجودی آزاد: ${available}`);
+            componentById.set(part.component.id, part.component);
           }
           bundleComponents.set(productId, parts);
         } else {
@@ -109,6 +111,9 @@ export class CheckoutService {
           const serials = serialsByProduct.get(productId) || [];
           if (!serials.length) throw new BadRequestException(`برای «${product.name}» شمارهٔ سریال/IMEI هر دستگاه را وارد کنید.`);
           if (!Number.isInteger(quantity) || serials.length !== quantity) throw new BadRequestException(`تعداد سریال‌های «${product.name}» باید دقیقاً ${quantity} باشد.`);
+          // The same serial twice would pass the count check yet stand for one
+          // physical unit — stock would drop by `quantity` for a single device.
+          if (new Set(serials).size !== serials.length) throw new BadRequestException(`سریال تکراری در اقلام «${product.name}» هست؛ هر دستگاه را یک بار وارد کنید.`);
           const units = await tx.serialUnit.findMany({ where: { serial: { in: serials } } });
           const unitMap = new Map(units.map((unit) => [unit.serial, unit]));
           for (const serial of serials) {
@@ -117,6 +122,16 @@ export class CheckoutService {
             if (unit.status !== "IN_STOCK") throw new BadRequestException(`سریال ${serial} قبلاً فروخته یا برگشتی است.`);
           }
         }
+      }
+      // A component shared by two bundles (or repeated across lines) must be
+      // checked against its COMBINED demand: per-line checks alone would let
+      // 3 + 3 pass over a stock of 5 and drive the shelf negative.
+      const combined = new Map<string, number>();
+      for (const parts of bundleComponents.values()) for (const part of parts) combined.set(part.component.id, (combined.get(part.component.id) || 0) + part.quantity);
+      for (const [componentId, demand] of combined) {
+        const component = componentById.get(componentId)!;
+        const available = component.stock - component.reserved;
+        if (available < demand) throw new BadRequestException(`موجودی ${component.name} برای مجموع بسته‌های این فاکتور کافی نیست. موجودی آزاد: ${available}، لازم: ${demand}`);
       }
       let subtotal = 0;
       for (const [productId, quantity] of lines) {
@@ -213,25 +228,38 @@ export class CheckoutService {
       // Bundles deduct each component (movement + FEFO batches); simple
       // products deduct themselves. Reserved quantities are never touched
       // here — reservations are released by the order workflow itself.
+      // `runningStock` keeps movement rows honest when the same simple
+      // product appears as a component of several bundles: every decrement
+      // continues from where the previous one left the shelf.
+      const runningStock = new Map<string, number>();
+      const stockNow = (product: StockishProduct): number => {
+        const current = runningStock.has(product.id) ? runningStock.get(product.id)! : product.stock;
+        return current;
+      };
+      const deduct = async (product: StockishProduct, quantity: number, note?: string): Promise<void> => {
+        const stockAfter = stockNow(product) - quantity;
+        runningStock.set(product.id, stockAfter);
+        await tx.product.update({ where: { id: product.id }, data: { stock: { decrement: quantity } } });
+        await tx.inventoryMovement.create({ data: { productId: product.id, type: "SALE", quantity: -quantity, stockAfter, reference: receiptNo, note } });
+        // Best-effort FEFO batch deduction for expiry warnings; never gates
+        // the sale and silently stops when tracked batches run out.
+        let batchRemaining = quantity;
+        const batches = await tx.productBatch.findMany({ where: { productId: product.id, remainingQty: { gt: 0 } }, orderBy: { expiryDate: "asc" } });
+        for (const batch of batches) {
+          if (batchRemaining <= 0) break;
+          const take = Math.min(batch.remainingQty, batchRemaining);
+          await tx.productBatch.update({ where: { id: batch.id }, data: { remainingQty: { decrement: take } } });
+          batchRemaining -= take;
+        }
+      };
       for (const [productId, quantity] of lines) {
         const product = productMap.get(productId)!;
         const physical: Array<{ product: StockishProduct; quantity: number }> = product.isBundle
           ? bundleComponents.get(productId)!.map((part) => ({ product: part.component, quantity: part.quantity }))
           : [{ product, quantity }];
         for (const part of physical) {
-          const stockAfter = part.product.stock - part.quantity;
-          await tx.product.update({ where: { id: part.product.id }, data: { stock: { decrement: part.quantity } } });
-          await tx.inventoryMovement.create({ data: { productId: part.product.id, type: "SALE", quantity: -part.quantity, stockAfter, reference: receiptNo, note: product.isBundle ? `جزء بستهٔ ${product.name}` : undefined } });
-          // Best-effort FEFO batch deduction for expiry warnings; never gates
-          // the sale and silently stops when tracked batches run out.
-          let batchRemaining = part.quantity;
-          const batches = await tx.productBatch.findMany({ where: { productId: part.product.id, remainingQty: { gt: 0 } }, orderBy: { expiryDate: "asc" } });
-          for (const batch of batches) {
-            if (batchRemaining <= 0) break;
-            const take = Math.min(batch.remainingQty, batchRemaining);
-            await tx.productBatch.update({ where: { id: batch.id }, data: { remainingQty: { decrement: take } } });
-            batchRemaining -= take;
-          }
+          // Bundle lines name the bundle so the cardex shows why the shelf moved.
+          await deduct(part.product, part.quantity, product.isBundle ? `جزء بستهٔ ${product.name}` : undefined);
         }
         // Serialized units flip to SOLD and remember the sale item they left with.
         if (product.isSerialized) {

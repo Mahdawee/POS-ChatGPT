@@ -66,12 +66,16 @@ export class PurchasesController {
         },
         include: { items: true, supplier: true },
       });
-      for (const [productId, { quantity, unitCost, expiryDate, serials }] of lines) {
+      for (const [productId, { quantity, unitCost, expiryDate, serials: rawSerials }] of lines) {
         const product = productMap.get(productId)!;
+        // Serials are trimmed once and validated as a set: a duplicate inside
+        // the delivery would reach createMany and die as a raw 500 (P2002).
+        const serials = rawSerials.map((serial) => serial.trim()).filter(Boolean);
         // Serialized goods must declare one serial per unit — the tracked
         // units are what the POS will later insist on handing over.
         if (product.isSerialized) {
           if (!serials.length || serials.length !== Math.round(quantity)) throw new BadRequestException(`برای «${product.name}» تعداد سریال/IMEI باید دقیقاً ${Math.round(quantity)} باشد.`);
+          if (new Set(serials).size !== serials.length) throw new BadRequestException(`سریال تکراری در اقلام «${product.name}» هست؛ هر دستگاه را یک بار وارد کنید.`);
           const existing = await tx.serialUnit.findMany({ where: { serial: { in: serials } }, select: { serial: true } });
           if (existing.length) throw new BadRequestException(`سریال ${existing[0].serial} قبلاً ثبت شده است.`);
         } else if (serials.length) {
@@ -86,7 +90,7 @@ export class PurchasesController {
         }
         if (serials.length) {
           const purchaseItem = purchase.items.find((item) => item.productId === productId);
-          await tx.serialUnit.createMany({ data: serials.map((serial) => ({ productId, serial: serial.trim(), status: "IN_STOCK", purchaseItemId: purchaseItem?.id })) });
+          await tx.serialUnit.createMany({ data: serials.map((serial) => ({ productId, serial, status: "IN_STOCK", purchaseItemId: purchaseItem?.id })) });
         }
       }
       await tx.auditLog.create({ data: { actor: user.username, action: "CREATE_PURCHASE", entity: "Purchase", entityId: purchase.id, detail: String(total) } });
