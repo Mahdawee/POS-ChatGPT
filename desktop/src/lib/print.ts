@@ -40,9 +40,10 @@ const baseStyles = (width: string) => `
  * width is fixed to thermal-receipt paper (works on normal printers too —
  * choose "Microsoft Print to PDF" in the dialog to save a PDF).
  */
-export function printHtml(inner: string, options: { width?: string; title?: string } = {}): void {
+export function printHtml(inner: string, options: { width?: string; title?: string; copies?: number } = {}): void {
   const width = options.width || "72mm";
   const title = options.title || t("رسید فروش");
+  const copies = Math.min(3, Math.max(1, Math.round(options.copies || 1)));
   const html = `<!doctype html><html dir="${dir()}" lang="${lang()}"><head><meta charset="utf-8"><title>${esc(title)}</title><style>${baseStyles(width)}</style></head><body>${inner}</body></html>`;
   const frame = document.createElement("iframe");
   frame.setAttribute("aria-hidden", "true");
@@ -56,11 +57,18 @@ export function printHtml(inner: string, options: { width?: string; title?: stri
   };
   document.body.appendChild(frame);
   frame.srcdoc = html;
+  // Receipt copies: each copy is its own print document (thermal printers
+  // cannot duplicate a job), delivered back-to-back.
+  for (let copy = 1; copy < copies; copy += 1) {
+    window.setTimeout(() => printHtml(inner, { ...options, copies: undefined }), copy * 900);
+  }
 }
 
 /** Shop header shared by every printed document: logo (if configured) + name. */
 function shopHeader(shop: ShopSettings): string {
-  const logo = shop.logo?.trim();
+  // The "printLogo" setting (saved from Settings) can turn the logo off for
+  // receipts even when one is configured for the screen.
+  const logo = shop.printLogo === "0" ? undefined : shop.logo?.trim();
   return `${logo ? `<img class="shop-logo" src="${esc(logo)}" alt=""/>` : ""}<div class="receipt-brand">ROSHAN</div><p class="shop-name">${esc(shop.shopName?.trim() || t("فروشگاه من"))}</p>`;
 }
 

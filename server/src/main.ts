@@ -2,6 +2,7 @@ import "reflect-metadata";
 import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
+import { AllExceptionsFilter } from "./all-exceptions.filter";
 import { configureLocalStorage } from "./storage";
 
 async function bootstrap() {
@@ -12,6 +13,7 @@ async function bootstrap() {
   // origin is reflected (authentication still happens per-request via JWT).
   app.enableCors({ origin: true, methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"], allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"] });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+  app.useGlobalFilters(new AllExceptionsFilter());
   app.enableShutdownHooks();
   const port = Number(process.env.API_PORT || 4317);
   // The desktop app pins API_HOST=127.0.0.1; a machine shared as the LAN

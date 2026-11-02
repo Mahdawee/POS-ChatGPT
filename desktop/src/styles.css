@@ -45,3 +45,17 @@
 .metric-chip b{font-size:13px}
 .check-line{display:flex;align-items:center;gap:8px;font-size:11px;color:#4a5763;cursor:pointer}
 .check-line input{width:15px;height:15px;accent-color:#35825c}
+
+/* ── Settings tabs (round 8) ─────────────────────────────── */
+.settings-tabs{display:flex;flex-wrap:wrap;gap:4px}
+.settings-page>.settings-tabs{margin:0 0 14px}
+
+/* ── Scanner panel (round 8) ─────────────────────────────── */
+.scanner-panel{display:flex;flex-direction:column;gap:14px}
+.scan-result-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:10px}
+.scan-result-grid>div{border:1px solid #e2e9e4;border-radius:8px;padding:8px 10px;background:#fff;display:flex;flex-direction:column;gap:2px}
+.scan-result-grid span{font-size:10px;color:#7b8894}
+.scan-result-grid b{font-size:12px;word-break:break-all}
+.scan-status-icon{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600}
+.compact-field{display:flex;flex-direction:column;gap:4px}
+.grow{flex:1}
