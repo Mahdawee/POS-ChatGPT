@@ -7,7 +7,7 @@ class DashboardController {
   @Get("summary") async summary() {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
-    const [sales, productCount, lowStock, expiring, recentSales, purchasesToday, returnsToday, creditSalesTotal, creditReturnsTotal, paymentsTotal, stockValue] = await Promise.all([
+    const [sales, productCount, lowStock, expiring, recentSales, purchasesToday, returnsToday, creditSalesTotal, creditReturnsTotal, paymentsTotal, stockValue, salesByDay] = await Promise.all([
       this.prisma.sale.findMany({ where: { createdAt: { gte: start } }, select: { total: true } }),
       this.prisma.product.count({ where: { isActive: true } }),
       this.prisma.$queryRaw<Array<{ id: string; name: string; sku: string; stock: number; minStock: number }>>`SELECT id, name, sku, stock, minStock FROM Product WHERE isActive = 1 AND stock <= minStock ORDER BY stock ASC LIMIT 8`,
@@ -19,6 +19,7 @@ class DashboardController {
       this.prisma.saleReturn.aggregate({ _sum: { total: true }, where: { sale: { paymentMethod: "CREDIT" } } }),
       this.prisma.customerPayment.aggregate({ _sum: { amount: true } }),
       this.prisma.$queryRaw<Array<{ value: number | bigint }>>`SELECT COALESCE(SUM(stock * cost), 0) AS value FROM Product WHERE isActive = 1`,
+      this.prisma.$queryRaw<Array<{ day: string; total: number | bigint }>>`SELECT date(createdAt) AS day, COALESCE(SUM(total), 0) AS total FROM Sale WHERE createdAt >= datetime('now', '-13 days', 'start of day') GROUP BY day ORDER BY day ASC`,
     ]);
     return {
       todaySales: sales.reduce((sum, sale) => sum + sale.total, 0),
@@ -33,6 +34,9 @@ class DashboardController {
       expiringCount: expiring.length,
       expiring,
       recentSales,
+      // Daily totals for the last 14 days (dashboard chart). SQLite's
+      // date() uses UTC; day labels are re-localised on the client.
+      salesByDay: salesByDay.map((row) => ({ day: row.day, total: Number(row.total) })),
     };
   }
 }

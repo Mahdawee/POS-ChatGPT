@@ -1,4 +1,6 @@
-import { dateTime, dayLabel, dir, fullDate, lang, money, percent, t } from "../i18n";
+import QRCode from "qrcode";
+import { invoke } from "@tauri-apps/api/core";
+import { dateTime, dayLabel, dir, fullDate, lang, money, moneyPlain, percent, t } from "../i18n";
 import type { CustomerDetail, ProfitReport, Product, PurchaseReturn, Sale, SaleReturn, ShopSettings, ZReport } from "./api";
 
 /** Escapes user data before it is embedded into the print document. */
@@ -32,6 +34,12 @@ const baseStyles = (width: string) => `
   .price-label .label-name { font-size: 11px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .price-label .label-price { font-size: 13px; font-weight: 800; margin-top: 1mm; }
   .price-label svg { max-width: 100%; height: 11mm; }
+  .receipt-qr { display: block; margin: 6px auto 0; width: 22mm; height: 22mm; }
+  .qr-note { text-align: center; font-size: 10px; margin: 2px 0 0; }
+  .invoice-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8mm; }
+  .invoice-party { font-size: 12px; line-height: 1.8; }
+  .signature-row { display: flex; justify-content: space-around; margin-top: 18mm; }
+  .signature-row div { border-top: 1px solid #000; padding: 4px 14px; font-size: 11px; }
 `;
 
 /**
@@ -64,6 +72,103 @@ export function printHtml(inner: string, options: { width?: string; title?: stri
   frame.srcdoc = html;
 }
 
+// Payment QR (Settings → receipts): encoded once and cached per text, since
+// the setting rarely changes between receipts.
+let qrCache = new Map<string, string>();
+async function paymentQrImage(shop: ShopSettings): Promise<string> {
+  const text = shop.paymentQr?.trim();
+  if (!text) return "";
+  const cached = qrCache.get(text);
+  if (cached) return cached;
+  try {
+    const dataUrl = await QRCode.toDataURL(text, { margin: 1, width: 200, errorCorrectionLevel: "M" });
+    if (qrCache.size > 8) qrCache = new Map();
+    qrCache.set(text, dataUrl);
+    return dataUrl;
+  } catch { return ""; }
+}
+
+/**
+ * Plain-text receipt (about 40 columns) for the dialog-free quick print. Kept
+ * ASCII-numeral and simple on purpose: the spooler's Out-Printer renders it
+ * with the printer driver's default font, which varies between thermal
+ * models — anything fancier belongs to the HTML (dialog) mode.
+ */
+export function textReceipt(sale: Sale, shop: ShopSettings): string {
+  const line = (left: string, right: string) => `${left}${" ".repeat(Math.max(1, 40 - left.length - right.length))}${right}`;
+  const rows: string[] = [];
+  rows.push(shop.shopName?.trim() || "ROSHAN");
+  rows.push("=".repeat(40));
+  rows.push(line(t("رسید فروش"), sale.receiptNo));
+  rows.push(line(t("زمان"), new Date(sale.createdAt).toLocaleString("en-GB")));
+  rows.push(line(t("مشتری"), sale.customer?.name || t("مشتری گذری")));
+  rows.push("-".repeat(40));
+  for (const item of sale.items) rows.push(line(`${item.name} x${item.quantity}`, moneyPlain(item.lineTotal)));
+  rows.push("-".repeat(40));
+  rows.push(line(t("جمع کل"), moneyPlain(sale.total)));
+  if (sale.discount > 0) rows.push(line(t("تخفیف"), moneyPlain(sale.discount)));
+  rows.push(line(t("روش پرداخت"), payLabel(sale.paymentMethod)));
+  if (sale.paymentMethod === "CASH" && sale.change > 0) rows.push(line(t("باقی‌پول مشتری"), moneyPlain(sale.change)));
+  rows.push("-".repeat(40));
+  rows.push(shop.receiptFooter?.trim() || t("از خرید شما سپاس‌گزاریم"));
+  return rows.join("\r\n");
+}
+
+/** Formal A4 wholesale invoice with letterhead, item table and signatures. */
+export function invoiceHtml(sale: Sale, shop: ShopSettings): string {
+  const rows = sale.items.map((item, index) => `<tr><td class="num">${index + 1}</td><td>${esc(item.name)}</td><td class="num">${item.quantity}</td><td class="num">${money(item.unitPrice)}</td><td class="num">${money(item.lineTotal)}</td></tr>`).join("");
+  return `
+    <div class="invoice-head">
+      <div>${shop.printLogo === "0" ? "" : shop.logo?.trim() ? `<img class="shop-logo" style="margin:0" src="${esc(shop.logo)}" alt=""/>` : ""}<div class="receipt-brand">ROSHAN</div><p class="shop-name">${esc(shop.shopName?.trim() || t("فروشگاه من"))}</p></div>
+      <div class="invoice-party">
+        <div><b>${esc(t("فاکتور فروش"))}</b></div>
+        <div>${esc(t("شماره فاکتور"))}: <span class="num">${esc(sale.receiptNo)}</span></div>
+        <div>${esc(t("زمان"))}: ${esc(dateTime(sale.createdAt))}</div>
+        <div>${esc(t("مشتری"))}: ${esc(sale.customer?.name || t("مشتری گذری"))}</div>
+        ${sale.customer?.phone ? `<div>${esc(t("شماره تماس"))}: <span class="num">${esc(sale.customer.phone)}</span></div>` : ""}
+      </div>
+    </div>
+    <table style="margin-top:6mm"><thead><tr><th>#</th><th>${esc(t("کالا"))}</th><th>${esc(t("تعداد"))}</th><th>${esc(t("قیمت واحد"))}</th><th>${esc(t("مبلغ"))}</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="totals" style="margin-top:4mm"><span>${esc(t("جمع کل"))}</span><span class="num">${money(sale.total)}</span></div>
+    ${sale.discount > 0 ? `<div class="totals"><span>${esc(t("تخفیف"))}</span><span class="num">${money(sale.discount)}</span></div>` : ""}
+    <div class="totals"><span>${esc(t("روش پرداخت"))}</span><span class="num">${esc(payLabel(sale.paymentMethod))}</span></div>
+    <div class="signature-row"><div>${esc(t("امضای فروشنده"))}</div><div>${esc(t("امضای خریدار"))}</div></div>`;
+}
+
+/**
+ * Prints a sale receipt honouring the print mode from Settings:
+ * - "quick": plain text straight to the (default or named) printer with no
+ *   dialog, via the Tauri quick_print command (Windows spooler).
+ * - anything else: the normal HTML print dialog (with logo/QR/copies).
+ * If the quick path fails (e.g. non-Windows, missing printer), we fall back
+ * to the dialog and surface a notice through the darpos:print-fallback event.
+ */
+export async function printSaleReceipt(sale: Sale, shop: ShopSettings, options: { copies?: number } = {}): Promise<void> {
+  if (shop.printMode === "quick") {
+    try {
+      await invoke("quick_print", { printer: shop.quickPrinter || "", text: textReceipt(sale, shop) });
+      return;
+    } catch (error) {
+      console.error("quick print failed, falling back to the print dialog", error);
+      window.dispatchEvent(new CustomEvent("darpos:print-fallback"));
+    }
+  }
+  const qrData = await paymentQrImage(shop);
+  const qrHtml = qrData ? `<img class="receipt-qr" src="${qrData}" alt=""/><p class="qr-note">${esc(t("پرداخت با اسکن QR"))}</p>` : "";
+  printHtml(saleReceiptHtml(sale, shop, qrHtml), { copies: options.copies ?? (Number(shop.receiptCopies) || 1) });
+}
+
+/** Debt statement with the optional payment QR appended. */
+export async function printDebtReceipt(detail: CustomerDetail, shop: ShopSettings): Promise<void> {
+  const qr = await paymentQrImage(shop);
+  printHtml(debtReceiptHtml(detail, shop, qr ? `<img class="receipt-qr" src="${qr}" alt=""/><p class="qr-note">${esc(t("پرداخت با اسکن QR"))}</p>` : ""));
+}
+
+/** Smoke-tests the quick-print channel from the Settings page. */
+export async function testQuickPrint(shop: ShopSettings): Promise<void> {
+  await invoke("quick_print", { printer: shop.quickPrinter || "", text: ["ROSHAN — " + t("آزمون چاپ سریع"), "=".repeat(40), t("اگر این متن را می‌خوانید، چاپ سریع فعال است."), new Date().toLocaleString("en-GB")].join("\r\n") });
+}
+
 /** Shop header shared by every printed document: logo (if configured) + name. */
 function shopHeader(shop: ShopSettings): string {
   // The "printLogo" setting (saved from Settings) can turn the logo off for
@@ -85,7 +190,7 @@ function receiptShell(shop: ShopSettings, metaRows: Array<[string, string]>, ite
     <p class="receipt-thanks">${esc(footer?.trim() || shop.receiptFooter?.trim() || t("از خرید شما سپاس‌گزاریم"))}</p>`;
 }
 
-export function saleReceiptHtml(sale: Sale, shop: ShopSettings): string {
+export function saleReceiptHtml(sale: Sale, shop: ShopSettings, qrHtml = ""): string {
   const meta: Array<[string, string]> = [
     [t("شماره فاکتور"), sale.receiptNo],
     [t("زمان"), dateTime(sale.createdAt)],
@@ -96,7 +201,7 @@ export function saleReceiptHtml(sale: Sale, shop: ShopSettings): string {
   if (sale.discount > 0) totals.push([t("تخفیف"), money(sale.discount)]);
   totals.push([t("روش پرداخت"), payLabel(sale.paymentMethod)]);
   if (sale.paymentMethod === "CASH" && sale.change > 0) totals.push([t("باقی‌پول مشتری"), money(sale.change)]);
-  return receiptShell(shop, meta, items, totals);
+  return receiptShell(shop, meta, items, totals) + qrHtml;
 }
 
 export function returnSlipHtml(sale: Sale, record: SaleReturn, shop: ShopSettings): string {
@@ -154,7 +259,7 @@ export function purchaseReturnHtml(record: PurchaseReturn, shop: ShopSettings): 
   return receiptShell(shop, meta, items, totals, t("این برگشت در حساب تأمین‌کننده ثبت شد."));
 }
 
-export function debtReceiptHtml(detail: CustomerDetail, shop: ShopSettings): string {
+export function debtReceiptHtml(detail: CustomerDetail, shop: ShopSettings, qrHtml = ""): string {
   const meta: Array<[string, string]> = [
     [t("سند بدهی"), `DEBT-${detail.customer.id.slice(-6).toUpperCase()}`],
     [t("زمان"), dateTime(new Date())],
@@ -170,7 +275,7 @@ export function debtReceiptHtml(detail: CustomerDetail, shop: ShopSettings): str
     [t("فروش نسیه"), money(detail.creditSales)],
     [t("برگشتی + وصولی"), money(detail.creditReturns + detail.paymentsTotal)],
   ];
-  return receiptShell(shop, meta, items, totals, t("لطفاً مانده بدهی خود را در اولین فرصت تسویه کنید."));
+  return receiptShell(shop, meta, items, totals, t("لطفاً مانده بدهی خود را در اولین فرصت تسویه کنید.")) + qrHtml;
 }
 
 export function reportHtml(report: ProfitReport): string {

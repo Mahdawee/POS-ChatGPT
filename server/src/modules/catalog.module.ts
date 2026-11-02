@@ -22,7 +22,14 @@ class CategoriesController {
 @Controller("products")
 export class ProductsController {
   constructor(private readonly prisma: PrismaService) {}
-  @Get() list(@Query("archived") archived?: string) { return this.prisma.product.findMany({ where: { isActive: archived !== "1" }, include: { category: true }, orderBy: { name: "asc" } }); }
+  @Get() list(@Query("archived") archived?: string, @Query("q") q?: string) {
+    // Server-side search keeps product lists snappy in warehouses with
+    // thousands of rows; the POS still filters its own client-side copy.
+    const search = q?.trim();
+    const where: { isActive: boolean; OR?: Array<{ name: { contains: string } } | { sku: { contains: string } } | { barcode: { contains: string } }> } = { isActive: archived !== "1" };
+    if (search) where.OR = [{ name: { contains: search } }, { sku: { contains: search } }, { barcode: { contains: search } }];
+    return this.prisma.product.findMany({ where, include: { category: true }, orderBy: { name: "asc" } });
+  }
   @Post() async create(@Body() dto: ProductDto) {
     const stock = dto.stock ?? 0;
     const item = await this.prisma.$transaction(async (tx) => {

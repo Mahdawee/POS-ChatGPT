@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
+import { json } from "express";
 import { AppModule } from "./app.module";
 import { AllExceptionsFilter } from "./all-exceptions.filter";
 import { configureLocalStorage } from "./storage";
@@ -8,6 +9,9 @@ import { configureLocalStorage } from "./storage";
 async function bootstrap() {
   const dataDir = configureLocalStorage();
   const app = await NestFactory.create(AppModule, { logger: ["error", "warn", "log"] });
+  // Express defaults to a 100KB JSON body, which silently rejects larger
+  // receipt logos (data URLs up to ~300KB) and database restore payloads.
+  app.use(json({ limit: "64mb" }));
   app.setGlobalPrefix("api");
   // LAN mode: desktop clients on other machines connect to this API, so any
   // origin is reflected (authentication still happens per-request via JWT).

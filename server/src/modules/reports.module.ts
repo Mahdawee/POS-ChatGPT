@@ -40,7 +40,7 @@ export class ReportsController {
     const [sales, returns, purchasesAgg, expensesAgg, mix] = await Promise.all([
       // Hard cap protects memory on very long ranges; a small shop cannot
       // realistically reach 50k sales inside one report window.
-      this.prisma.sale.findMany({ where: { createdAt: range }, take: 50000, include: { items: true } }),
+      this.prisma.sale.findMany({ where: { createdAt: range }, take: 50000, include: { items: { include: { product: { select: { categoryId: true, category: { select: { name: true } } } } } } } }),
       this.prisma.saleReturn.findMany({ where: { createdAt: range }, include: { items: true } }),
       this.prisma.purchase.aggregate({ _sum: { total: true }, where: { createdAt: range } }),
       this.prisma.expense.aggregate({ _sum: { amount: true }, where: { createdAt: range } }),
@@ -53,6 +53,8 @@ export class ReportsController {
     let unknownCostRevenue = 0;
     const perDay = new Map<string, { revenue: number; profit: number }>();
     const perProduct = new Map<string, { productId: string; name: string; quantity: number; revenue: number; profit: number }>();
+    const perCategory = new Map<string, { category: string; revenue: number; profit: number; quantity: number }>();
+    const perHour = new Map<number, { hour: number; revenue: number; count: number }>();
     for (const sale of sales) {
       revenue += sale.total;
       let saleProfit = 0;
@@ -68,10 +70,24 @@ export class ReportsController {
         perProduct.set(item.productId, product);
       }
       const day = localDay(sale.createdAt);
-      const bucket = perDay.get(day) || { revenue: 0, profit: 0 };
-      bucket.revenue += sale.total;
-      bucket.profit += saleProfit;
-      perDay.set(day, bucket);
+      const dayBucket = perDay.get(day) || { revenue: 0, profit: 0 };
+      dayBucket.revenue += sale.total;
+      dayBucket.profit += saleProfit;
+      perDay.set(day, dayBucket);
+      const hourBucket = perHour.get(sale.createdAt.getHours()) || { hour: sale.createdAt.getHours(), revenue: 0, count: 0 };
+      hourBucket.revenue += sale.total;
+      hourBucket.count += 1;
+      perHour.set(hourBucket.hour, hourBucket);
+      for (const item of sale.items) {
+        const categoryName = item.product?.category?.name;
+        if (!categoryName) continue;
+        const categoryBucket = perCategory.get(categoryName) || { category: categoryName, revenue: 0, profit: 0, quantity: 0 };
+        const lineCost = item.unitCost * item.quantity;
+        categoryBucket.revenue += item.lineTotal;
+        categoryBucket.profit += item.lineTotal - lineCost;
+        categoryBucket.quantity += item.quantity;
+        perCategory.set(categoryName, categoryBucket);
+      }
     }
     for (const record of returns) {
       refunds += record.total;
@@ -114,6 +130,8 @@ export class ReportsController {
       purchasesTotal: purchasesAgg._sum.total || 0,
       byDay: [...perDay.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([day, value]) => ({ day, ...value })),
       topProducts: [...perProduct.values()].sort((a, b) => b.revenue - a.revenue).slice(0, 8),
+      byCategory: [...perCategory.values()].sort((a, b) => b.revenue - a.revenue),
+      byHour: [...perHour.values()].sort((a, b) => a.hour - b.hour),
       paymentMix: mix.map((row) => ({ method: row.paymentMethod as string, total: row._sum.total || 0, count: row._count })),
     };
   }

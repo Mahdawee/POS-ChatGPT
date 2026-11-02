@@ -142,3 +142,8 @@ export class PurchaseReturnDto {
   @IsOptional() @IsString() @MaxLength(300) note?: string;
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(200) @ValidateNested({ each: true }) @Type(() => PurchaseReturnLineDto) items!: PurchaseReturnLineDto[];
 }
+
+/** Base64 payload of a portable .db backup (Settings → restore). */
+export class RestoreBackupDto {
+  @IsString() @MinLength(16) data!: string;
+}

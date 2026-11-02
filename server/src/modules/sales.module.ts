@@ -7,11 +7,23 @@ import { PrismaService } from "../prisma.service";
 @Controller("sales")
 export class SalesController {
   constructor(private readonly prisma: PrismaService) {}
-  @Get() list(@Query("from") from?: string, @Query("to") to?: string) {
+  @Get() list(@Query("from") from?: string, @Query("to") to?: string, @Query("skip") skip?: string, @Query("take") take?: string) {
     const where: { createdAt?: { gte?: Date; lte?: Date } } = {};
     if (from) where.createdAt = { ...where.createdAt, gte: new Date(from) };
     if (to) where.createdAt = { ...where.createdAt, lte: new Date(to.length === 10 ? `${to}T23:59:59.999` : to) };
-    return this.prisma.sale.findMany({ where, take: 500, include: { customer: true, user: { select: { displayName: true } }, items: true, returns: { select: { id: true, total: true } } }, orderBy: { createdAt: "desc" } });
+    // Windowed listing ("load more"): each request is capped so a busy
+    // register never pulls its whole history at once.
+    const limit = Math.min(300, Math.max(1, Number(take) || 100));
+    const offset = Math.max(0, Number(skip) || 0);
+    return this.prisma.sale.findMany({ where, skip: offset, take: limit, include: { customer: true, user: { select: { displayName: true } }, items: true, returns: { select: { id: true, total: true } } }, orderBy: { createdAt: "desc" } });
+  }
+
+  /** آخرین فاکتور یک مشتری با اقلامش — برای «تکرار آخرین خرید» در صندوق. */
+  @Get("customer/:customerId/last")
+  async lastForCustomer(@Param("customerId") customerId: string) {
+    const sale = await this.prisma.sale.findFirst({ where: { customerId }, orderBy: { createdAt: "desc" }, include: { items: true } });
+    if (!sale) throw new NotFoundException("فروشی برای این مشتری ثبت نشده است.");
+    return sale;
   }
   @Get(":id") async detail(@Param("id") id: string) {
     const sale = await this.prisma.sale.findUnique({ where: { id }, include: { customer: true, user: { select: { displayName: true } }, items: true, returns: { include: { user: { select: { displayName: true } }, items: true }, orderBy: { createdAt: "desc" } } } });

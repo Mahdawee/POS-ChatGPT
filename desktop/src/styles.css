@@ -65,3 +65,80 @@
 .scan-status-icon{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600}
 .compact-field{display:flex;flex-direction:column;gap:4px}
 .grow{flex:1}
+
+/* ── Round 10: dashboard chart, quick-add badges, shortcuts, audit ── */
+.chart-card{padding-bottom:14px}
+.chart-bars{display:flex;align-items:flex-end;gap:6px;height:130px;padding:6px 4px 0}
+.chart-bar{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px;height:100%}
+.chart-bar small{font-size:9px;color:#98a2ab;direction:ltr}
+.chart-bar-value{font-size:9px;color:#6b7a86;white-space:nowrap;overflow:hidden;max-width:100%;text-overflow:ellipsis}
+.chart-bar-fill{width:100%;max-width:44px;border-radius:5px 5px 0 0;background:linear-gradient(180deg,#3d8f66,#2c6f4e);min-height:2px}
+.chart-bar:hover .chart-bar-fill{background:linear-gradient(180deg,#4aa577,#337f59)}
+.hour-bars{height:110px}
+.pos-quick-badge{position:absolute;inset-inline-start:7px;top:7px;z-index:2;background:#123f2c;color:#eaf4ed;border-radius:6px;font-size:9px;font-weight:700;padding:2px 6px;letter-spacing:.3px}
+.pos-product{position:relative}
+.shortcut-table{width:100%}
+.shortcut-table td{padding:8px 10px;font-size:11px}
+.shortcut-table td:first-child{width:110px}
+.load-more{display:flex;align-items:center;justify-content:center;gap:10px;padding:12px 0 2px}
+.radio-stack{display:flex;flex-direction:column;gap:9px;padding:4px 0}
+.backup-extra{display:flex;flex-direction:column;gap:6px;margin-top:14px;padding-top:14px;border-top:1px dashed #e4e9ec}
+.backup-extra small{font-size:10px;line-height:1.7}
+.backup-extra .import-file-button{justify-content:center}
+
+/* ── Round 10: customer display (second window) ── */
+.customer-display{display:flex;flex-direction:column;min-height:100vh;background:linear-gradient(160deg,#0e2a1e,#123f2c 55%,#0b2318);color:#eef6f1}
+.cd-head{display:flex;align-items:center;gap:14px;padding:20px 30px;border-bottom:1px solid #ffffff1f}
+.cd-head .brand-mark{width:42px;height:42px;font-size:15px}
+.cd-head strong{font-size:19px;display:block}
+.cd-head small{color:#a8c6b6;font-size:11px}
+.cd-body{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:30px;text-align:center}
+.cd-last{font-size:clamp(18px,3.2vw,30px);display:flex;flex-direction:column;gap:6px}
+.cd-last span{font-size:13px;color:#9fc0ae}
+.cd-last small{font-size:16px;color:#c9ded2;direction:ltr}
+.cd-total{display:flex;flex-direction:column;gap:8px}
+.cd-total span{font-size:15px;color:#9fc0ae}
+.cd-total b{font-size:clamp(34px,7vw,64px);font-weight:800;letter-spacing:-1px}
+.cd-count{font-size:14px;color:#bfd8cb}
+.cd-idle h2{font-size:clamp(26px,4.5vw,44px);margin:0 0 10px}
+.cd-idle p{color:#a8c6b6;font-size:16px;margin:0}
+.cd-foot{padding:14px 30px;font-size:11px;color:#87a897;border-top:1px solid #ffffff1f;text-align:center}
+
+/* ── Round 10: dark theme ──
+   Primary surfaces swap to a low-glare slate; the green brand stays. */
+html.dark{--ink:#dbe4e3;--muted:#7d8b92;--line:#2a343b;--green:#3d8f66;--green-dark:#2f7a54;--green-pale:#1b3a2c;--paper:#141b20;--canvas:#0f1519;--red:#d06b66;--amber:#cf9a4e;background:var(--canvas);color-scheme:dark}
+html.dark body{background:var(--canvas);color:var(--ink)}
+html.dark .surface,html.dark .topbar,html.dark .metric-card,html.dark .sidebar{background:#151d23;border-color:var(--line)}
+html.dark .main-area{background:var(--canvas)}
+html.dark thead th{background:#1a232a;color:#8b98a0;border-color:#232e35}
+html.dark tbody td{color:#c3ced3;border-color:#202a31}
+html.dark tbody tr:hover{background:#1a242b}
+html.dark input,html.dark select,html.dark textarea,html.dark .search-box,html.dark .date-filter input{background:#10171c;border-color:#2a343b;color:var(--ink)}
+html.dark .search-box{color:#7d8b92}
+html.dark .secondary-button{background:#1b252c;border-color:#2c373e;color:#c0ccd1}
+html.dark .secondary-button:hover{background:#22303a}
+html.dark .danger-button{background:#2c1c1b;border-color:#4a2d2b;color:#e0a09c}
+html.dark kbd{background:#1b252c;border-color:#2c373e;color:#9aa8ae}
+html.dark .sidebar .nav-item.active{background:#1c3227}
+html.dark .store-chip,html.dark .user-strip,html.dark .offline{background:#10171c;border-color:#222c33}
+html.dark .quick-actions{background:#122019;border-color:#1d3128}
+html.dark .quick-actions button{background:#16241d;border-color:#22392e;color:#a9cdb8}
+html.dark .segmented{background:#151d23;border-color:#2a343b}
+html.dark .segmented button.active{background:#1c3227;color:#8fd0ac}
+html.dark .toast{background:#1b252c;color:#dbe4e3;border-color:#2a343b;box-shadow:0 8px 26px #00000066}
+html.dark .hint-box{background:#152430;border-color:#1f3947;color:#b7cdd8}
+html.dark .form-error{background:#2c1c1b;color:#e6a5a1}
+html.dark .status-pill.paid{background:#1c3227;color:#79c298}
+html.dark .status-pill.warning{background:#33270f;color:#dcae5e}
+html.dark .status-pill.neutral{background:#222c33;color:#98a5ac}
+html.dark .category-label{background:#1d272e;color:#a4b3ba}
+html.dark .pos-product{background:#151d23;border-color:#253038}
+html.dark .pos-product:hover{border-color:#3d8f66}
+html.dark .pos-product-art{color:#eef6f1}
+html.dark .receipt-print{background:#fff;color:#000}
+html.dark .scan-status{background:#10171c}
+html.dark .empty{color:#7d8b92}
+html.dark .empty>div{background:#1b252c;color:#8896a0}
+html.dark .chart-bar-fill{background:linear-gradient(180deg,#4aa577,#2f7a54)}
+html.dark .icon-button:hover{background:#1b252c;color:#a9cdb8}
+html.dark .login-card,html.dark .lock-card{background:#151d23;border-color:#2a343b}

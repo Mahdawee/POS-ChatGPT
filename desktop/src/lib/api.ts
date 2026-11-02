@@ -77,8 +77,12 @@ export type ProfitReport = {
   unknownCostRevenue: number; invoiceCount: number; purchasesTotal: number; expenses: number; netProfit: number;
   byDay: { day: string; revenue: number; profit: number }[];
   topProducts: { productId: string; name: string; quantity: number; revenue: number; profit: number }[];
+  byCategory: { category: string; revenue: number; profit: number; quantity: number }[];
+  byHour: { hour: number; revenue: number; count: number }[];
   paymentMix: { method: string; total: number; count: number }[];
 };
+export type AuditEntry = { id: string; actor: string | null; action: string; entity: string; entityId: string | null; detail: string | null; createdAt: string };
+export type BackupExport = { filename: string; data: string };
 export type DebtorsReport = {
   customers: { id: string; name: string; phone: string | null; balance: number }[];
   customersTotal: number;

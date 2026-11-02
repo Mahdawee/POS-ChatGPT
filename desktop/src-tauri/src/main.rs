@@ -282,6 +282,128 @@ fn start_bundled_api(app: tauri::AppHandle, closing: Arc<AtomicBool>) {
     }
 }
 
+/// Minimal standard-library base64 (standard alphabet, padded) — used to
+/// move payloads through PowerShell's -EncodedCommand without depending on
+/// an external crate.
+fn base64_encode(data: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[(triple >> 18) as usize & 63] as char);
+        out.push(TABLE[(triple >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { TABLE[(triple >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { TABLE[triple as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+/// Decodes standard base64 (padding optional) for file payloads.
+fn base64_decode(text: &str) -> Result<Vec<u8>, String> {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut reverse = [255u8; 128];
+    for (index, symbol) in TABLE.iter().enumerate() {
+        reverse[*symbol as usize] = index as u8;
+    }
+    let mut out = Vec::new();
+    let mut accumulator: u32 = 0;
+    let mut bits = 0;
+    for byte in text.bytes().filter(|b| !b" \t\r\n".contains(b)) {
+        if byte == b'=' {
+            break;
+        }
+        let value = *reverse.get(byte as usize).unwrap_or(&255);
+        if value == 255 {
+            return Err(format!("invalid base64 byte {byte}"));
+        }
+        accumulator = (accumulator << 6) | value as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((accumulator >> bits) as u8);
+        }
+    }
+    Ok(out)
+}
+
+fn utf16le(text: &str) -> Vec<u8> {
+    text.encode_utf16().flat_map(|unit| unit.to_le_bytes()).collect()
+}
+
+/// Prints plain text straight to the Windows print spooler through
+/// PowerShell's `Out-Printer` — no print dialog. An empty `printer` targets
+/// the system default printer. The text travels inside an -EncodedCommand
+/// payload (base64 of UTF-16LE) so Dari/Pashto survives any console code
+/// page; the frontend falls back to the normal print dialog on any error.
+#[cfg(windows)]
+fn quick_print_impl(printer: &str, text: &str) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let name = printer.trim();
+    let printer_part = if name.is_empty() {
+        String::new()
+    } else {
+        format!(" -Name '{}'", name.replace('\'', "''"))
+    };
+    let script = format!(
+        "$t = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{}')); $t | Out-Printer{}",
+        base64_encode(text.as_bytes()),
+        printer_part
+    );
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &base64_encode(&utf16le(&script))])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|error| error.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(format!("print failed: {}", stderr))
+    }
+}
+
+#[cfg(not(windows))]
+fn quick_print_impl(printer: &str, text: &str) -> Result<(), String> {
+    let _ = (printer, text);
+    Err("quick print is only available on Windows".into())
+}
+
+#[tauri::command]
+fn quick_print(printer: String, text: String) -> Result<(), String> {
+    quick_print_impl(&printer, &text)
+}
+
+/// Writes a portable database backup (base64 payload from the API) into the
+/// user's Documents\DarPOS-Backups folder and returns the full path, so it
+/// can be copied to a USB stick or another machine.
+#[tauri::command]
+fn save_backup_file(filename: String, data_base64: String) -> Result<String, String> {
+    let safe: String = filename
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-' || *c == '_')
+        .collect();
+    if safe.is_empty() {
+        return Err("invalid backup file name".into());
+    }
+    let documents = std::env::var_os("USERPROFILE")
+        .map(|home| std::path::PathBuf::from(home).join("Documents"))
+        .or_else(|| std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join("Documents")))
+        .ok_or("could not resolve the Documents folder")?;
+    let dir = documents.join("DarPOS-Backups");
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let bytes = base64_decode(&data_base64)?;
+    if bytes.len() < 100 {
+        return Err("backup payload looks empty".into());
+    }
+    let target = dir.join(safe);
+    std::fs::write(&target, bytes).map_err(|error| error.to_string())?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
 fn main() {
     let child_state = ApiProcess(Arc::new(Mutex::new(None)));
     let state_for_exit = child_state.clone();
@@ -290,7 +412,7 @@ fn main() {
     let closing_for_exit = closing.clone();
     tauri::Builder::default()
         .manage(child_state)
-        .invoke_handler(tauri::generate_handler![set_network_mode, open_url])
+        .invoke_handler(tauri::generate_handler![set_network_mode, open_url, quick_print, save_backup_file])
         .setup(move |app| {
             #[cfg(not(debug_assertions))]
             {
