@@ -14,7 +14,9 @@ export function Modal({ title, onClose, children, wide = false }: { title: strin
   return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className={`modal ${wide ? "modal-wide" : ""}`}><header className="modal-head"><div><h2>{title}</h2><span>{t("اطلاعات در همین دستگاه ذخیره می‌شود")}</span></div><button className="icon-button" onClick={onClose}><X size={19}/></button></header>{children}</section></div>;
 }
 function Loading() { return <div className="loading"><RefreshCw size={18}/>{t("در حال بارگذاری اطلاعات…")}</div>; }
-function ErrorBox({ message }: { message: string }) { return <div className="error-box"><AlertTriangle size={17}/>{message}</div>; }
+// Server errors arrive as Dari sentences — t() translates them when a matching
+// entry exists and shows the original text otherwise.
+function ErrorBox({ message }: { message: string }) { return <div className="error-box"><AlertTriangle size={17}/>{t(message)}</div>; }
 function Empty({ title, text }: { title: string; text: string }) { return <div className="empty"><div><Package size={22}/></div><b>{title}</b><span>{text}</span></div>; }
 function SectionHead({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) { return <div className="section-head"><div><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</div>{action}</div>; }
 function Field({ label, children, full = false }: { label: string; children: ReactNode; full?: boolean }) { return <label className={`field ${full ? "full" : ""}`}><span>{label}</span>{children}</label>; }
