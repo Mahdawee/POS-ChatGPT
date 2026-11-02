@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import "./i18n-dictionaries";
+import { english, pashto } from "./i18n-dictionaries";
 
 /**
  * Three UI languages: Dari (fa, right-to-left), Pashto (ps, right-to-left)
@@ -30,16 +30,13 @@ let currentLang: Lang = readStoredLang();
 export const lang = (): Lang => currentLang;
 export const dir = (): "rtl" | "ltr" => (currentLang === "en" ? "ltr" : "rtl");
 
+// Dictionaries are imported (not required at runtime via a registry call) so
+// module initialization has no circular dependency.
 const dictionaries: Record<Lang, Record<string, string>> = {
   fa: {},
-  ps: {},
-  en: {},
+  ps: pashto,
+  en: english,
 };
-
-/** Loads a dictionary (used by i18n-dictionaries.ts at module init). */
-export function registerDictionary(which: Lang, entries: Record<string, string>): void {
-  dictionaries[which] = entries;
-}
 
 /** Translates `key` (a Dari sentence) into the active language, interpolating `{param}` placeholders. */
 export function t(key: string, params?: Record<string, string | number>): string {

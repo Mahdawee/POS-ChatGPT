@@ -4,9 +4,7 @@
  * untranslated sentence can never render as a raw key. Generated alongside
  * the UI — keep entries in sync when new strings are added.
  */
-import { registerDictionary } from "./i18n";
-
-const pashto: Record<string, string> = {
+export const pashto: Record<string, string> = {
   " (از صندوق باز کسر می‌شود)": " (له پرانیستل شوي صندوق څخه کمیږي)",
   "SQLite محلی": "سیمه‌ییز SQLite",
   "{count} سطر آمادهٔ ورود است.": "{count} کتارونه د واردولو چمتو دي.",
@@ -573,7 +571,7 @@ const pashto: Record<string, string> = {
   "۷ روز اخیر": "وروستې ۷ ورځې",
 };
 
-const english: Record<string, string> = {
+export const english: Record<string, string> = {
   " (از صندوق باز کسر می‌شود)": " (deducted from the open register)",
   "SQLite محلی": "Local SQLite",
   "{count} سطر آمادهٔ ورود است.": "{count} rows ready to import.",
@@ -1140,5 +1138,3 @@ const english: Record<string, string> = {
   "۷ روز اخیر": "Last 7 days",
 };
 
-registerDictionary("ps", pashto);
-registerDictionary("en", english);
