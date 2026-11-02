@@ -9,6 +9,8 @@ function setup(stock = 2) {
     product: { findMany: jest.fn().mockResolvedValue([{ ...product, stock }]), update: jest.fn().mockResolvedValue({}) },
     customer: { findUnique: jest.fn().mockResolvedValue(null) },
     cashSession: { findFirst: jest.fn().mockResolvedValue({ id: "cash-1" }) },
+    cashMovement: { create: jest.fn().mockResolvedValue({}) },
+    customerPayment: { create: jest.fn().mockResolvedValue({}) },
     sale: { create: jest.fn().mockResolvedValue({ id: "sale-1", receiptNo: "POS-1", items: [] }), findUnique: jest.fn().mockResolvedValue(null) },
     inventoryMovement: { create: jest.fn().mockResolvedValue({}) },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
@@ -44,6 +46,22 @@ describe("POS checkout", () => {
     expect(tx.product.update).toHaveBeenCalledWith({ where: { id: "product-1" }, data: { stock: { decrement: 2 } } });
     expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "SALE", quantity: -2, stockAfter: 3 }) }));
   });
+
+  it("settles a credit sale's down-payment as a customer payment and drawer IN", async () => {
+    const { controller, tx } = setup(5);
+    tx.customer.findUnique.mockResolvedValue({ id: "customer-1", name: "احمد" });
+    await controller.checkout({ items: [{ productId: "product-1", quantity: 2 }], paymentMethod: "CREDIT", amountPaid: 10, customerId: "customer-1" }, user);
+    expect(tx.customerPayment.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ customerId: "customer-1", amount: 10, cashSessionId: "cash-1" }) }));
+    expect(tx.cashMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "IN", amount: 10, cashSessionId: "cash-1" }) }));
+  });
+
+  it("keeps a full-credit sale bookkeeping-only (no payment, no drawer movement)", async () => {
+    const { controller, tx } = setup(5);
+    tx.customer.findUnique.mockResolvedValue({ id: "customer-1", name: "احمد" });
+    await controller.checkout({ items: [{ productId: "product-1", quantity: 2 }], paymentMethod: "CREDIT", amountPaid: 0, customerId: "customer-1" }, user);
+    expect(tx.customerPayment.create).not.toHaveBeenCalled();
+    expect(tx.cashMovement.create).not.toHaveBeenCalled();
+  });
 });
 
 const saleFixture = {
@@ -54,7 +72,7 @@ const saleFixture = {
   total: 25,
   paymentMethod: "CASH",
   items: [{ id: "item-1", productId: "product-1", name: "چای", sku: "T-1", quantity: 3, unitPrice: 10, unitCost: 6, lineTotal: 30 }],
-  returns: [] as { items: { productId: string; quantity: number }[] }[],
+  returns: [] as { total: number; items: { productId: string; quantity: number }[] }[],
 };
 
 function returnSetup(sale: typeof saleFixture = saleFixture) {
@@ -85,7 +103,7 @@ describe("Sale returns", () => {
   it("rejects returning more than what was sold, including already returned amounts", async () => {
     const { controller, tx } = returnSetup();
     await expect(controller.returnSale("sale-1", { items: [{ productId: "product-1", quantity: 4 }] }, user)).rejects.toBeInstanceOf(BadRequestException);
-    const partially = { ...saleFixture, returns: [{ items: [{ productId: "product-1", quantity: 2 }] }] };
+    const partially = { ...saleFixture, returns: [{ total: 20, items: [{ productId: "product-1", quantity: 2 }] }] };
     const second = returnSetup(partially);
     await expect(second.controller.returnSale("sale-1", { items: [{ productId: "product-1", quantity: 2 }] }, user)).rejects.toBeInstanceOf(BadRequestException);
     expect(tx.saleReturn.create).not.toHaveBeenCalled();
@@ -96,6 +114,26 @@ describe("Sale returns", () => {
     const record = await controller.returnSale("sale-1", { items: [{ productId: "product-1", quantity: 3 }] }, user);
     expect(record.total).toBe(25); // sale.total after discount, not 30
     expect(tx.cashMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "OUT", amount: 25, cashSessionId: "cash-1" }) }));
+  });
+
+  it("never refunds more than the customer paid across two returns of a discounted invoice", async () => {
+    // Invoice: subtotal 30, discount 5, paid 25. A partial return first
+    // refunds the undiscounted line price (10); the completing return must
+    // then refund only the remaining 15 — not the full 25 again.
+    const partially = { ...saleFixture, returns: [{ total: 10, items: [{ productId: "product-1", quantity: 1 }] }] };
+    const { controller } = returnSetup(partially);
+    const record = await controller.returnSale("sale-1", { items: [{ productId: "product-1", quantity: 2 }] }, user);
+    expect(record.total).toBe(15); // 25 paid − 10 already refunded
+  });
+
+  it("caps a partial return at what is still refundable of the paid amount", async () => {
+    // Subtotal 30 with a 15 discount = 15 paid. After a first partial refund
+    // of 10, the undiscounted price of the next item (10) would exceed the
+    // un-refunded remainder (5) — the cap wins.
+    const discounted = { ...saleFixture, discount: 15, total: 15, returns: [{ total: 10, items: [{ productId: "product-1", quantity: 1 }] }] };
+    const { controller } = returnSetup(discounted);
+    const record = await controller.returnSale("sale-1", { items: [{ productId: "product-1", quantity: 1 }] }, user);
+    expect(record.total).toBe(5);
   });
 
   it("rejects a product that was not on the original invoice", async () => {

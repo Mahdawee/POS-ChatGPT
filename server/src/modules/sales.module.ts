@@ -58,6 +58,13 @@ export class SalesController {
       // undiscounted line prices.
       const fullReturn = sale.items.every((item) => (returned.get(item.productId) || 0) + (requested.get(item.productId) || 0) >= item.quantity);
       if (fullReturn) total = sale.total;
+      // Whatever the combination of partial/full returns, a discounted
+      // invoice must never refund more than the customer actually paid:
+      // undiscounted line prices + the full-total shortcut could otherwise
+      // add up past sale.total across two returns (e.g. lines 60+40 with a
+      // 20 discount refunding 60 then 80 = 140 for an 80 payment).
+      const alreadyRefunded = sale.returns.reduce((sum, record) => sum + record.total, 0);
+      total = Math.min(total, Math.max(0, sale.total - alreadyRefunded));
       const products = await tx.product.findMany({ where: { id: { in: lines.map((line) => line.productId) } } });
       const productMap = new Map(products.map((product) => [product.id, product]));
       const returnNo = `RET-${Date.now()}-${randomBytes(2).toString("hex").toUpperCase()}`;
@@ -141,6 +148,16 @@ export class SalesController {
         const stockAfter = product.stock - quantity;
         await tx.product.update({ where: { id: productId }, data: { stock: { decrement: quantity } } });
         await tx.inventoryMovement.create({ data: { productId, type: "SALE", quantity: -quantity, stockAfter, reference: receiptNo } });
+      }
+      // A credit sale may collect part of the money up front (0 < amountPaid
+      // ≤ total is allowed by the API). That down-payment is a customer
+      // payment like any other — without this row it would never settle
+      // against the customer's balance and they would be billed for it
+      // again. Cash handed over with an open register also enters the drawer.
+      if (dto.paymentMethod === "CREDIT" && amountPaid > 0) {
+        const paySession = await tx.cashSession.findFirst({ where: { status: "OPEN" }, orderBy: { openedAt: "desc" } });
+        if (paySession) await tx.cashMovement.create({ data: { type: "IN", amount: amountPaid, description: `پیش‌پرداخت فاکتور ${receiptNo}`, cashSessionId: paySession.id } });
+        await tx.customerPayment.create({ data: { customerId: dto.customerId!, amount: amountPaid, note: `پیش‌پرداخت فاکتور ${receiptNo}`, cashSessionId: paySession?.id, userId: user.id } });
       }
       await tx.auditLog.create({ data: { actor: user.username, action: "CHECKOUT", entity: "Sale", entityId: sale.id, detail: `${receiptNo} / ${total}` } });
       return sale;

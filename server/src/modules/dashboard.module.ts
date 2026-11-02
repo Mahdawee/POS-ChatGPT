@@ -7,7 +7,9 @@ class DashboardController {
   @Get("summary") async summary() {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
-    const [sales, productCount, lowStock, expiring, recentSales, purchasesToday, returnsToday, creditSalesTotal, creditReturnsTotal, paymentsTotal, stockValue, salesByDay] = await Promise.all([
+    const chartStart = new Date(start);
+    chartStart.setDate(chartStart.getDate() - 13);
+    const [sales, productCount, lowStock, expiring, recentSales, purchasesToday, returnsToday, creditSalesTotal, creditReturnsTotal, paymentsTotal, stockValue, chartSales] = await Promise.all([
       this.prisma.sale.findMany({ where: { createdAt: { gte: start } }, select: { total: true } }),
       this.prisma.product.count({ where: { isActive: true } }),
       this.prisma.$queryRaw<Array<{ id: string; name: string; sku: string; stock: number; minStock: number }>>`SELECT id, name, sku, stock, minStock FROM Product WHERE isActive = 1 AND stock <= minStock ORDER BY stock ASC LIMIT 8`,
@@ -19,7 +21,7 @@ class DashboardController {
       this.prisma.saleReturn.aggregate({ _sum: { total: true }, where: { sale: { paymentMethod: "CREDIT" } } }),
       this.prisma.customerPayment.aggregate({ _sum: { amount: true } }),
       this.prisma.$queryRaw<Array<{ value: number | bigint }>>`SELECT COALESCE(SUM(stock * cost), 0) AS value FROM Product WHERE isActive = 1`,
-      this.prisma.$queryRaw<Array<{ day: string; total: number | bigint }>>`SELECT date(createdAt) AS day, COALESCE(SUM(total), 0) AS total FROM Sale WHERE createdAt >= datetime('now', '-13 days', 'start of day') GROUP BY day ORDER BY day ASC`,
+      this.prisma.sale.findMany({ where: { createdAt: { gte: chartStart } }, select: { createdAt: true, total: true } }),
     ]);
     return {
       todaySales: sales.reduce((sum, sale) => sum + sale.total, 0),
@@ -34,9 +36,19 @@ class DashboardController {
       expiringCount: expiring.length,
       expiring,
       recentSales,
-      // Daily totals for the last 14 days (dashboard chart). SQLite's
-      // date() uses UTC; day labels are re-localised on the client.
-      salesByDay: salesByDay.map((row) => ({ day: row.day, total: Number(row.total) })),
+      // Daily totals for the last 14 days (dashboard chart), bucketed by the
+      // machine's LOCAL day. SQLite's date() would bucket by UTC day, which
+      // shifts sales made after midnight (e.g. 00:00–04:30 in UTC+4:30) into
+      // the previous day's bar and desyncs the chart from the "today" cards.
+      salesByDay: Object.entries(
+        chartSales.reduce((perDay: Record<string, number>, sale) => {
+          const day = `${sale.createdAt.getFullYear()}-${String(sale.createdAt.getMonth() + 1).padStart(2, "0")}-${String(sale.createdAt.getDate()).padStart(2, "0")}`;
+          perDay[day] = (perDay[day] || 0) + sale.total;
+          return perDay;
+        }, {}),
+      )
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([day, total]) => ({ day, total })),
     };
   }
 }

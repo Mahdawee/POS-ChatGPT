@@ -42,7 +42,15 @@ export class ProductsController {
   }
   @Patch(":id") async update(@Param("id") id: string, @Body() dto: ProductDto) {
     const { stock: _stock, ...fields } = dto;
-    const item = await this.prisma.product.update({ where: { id }, data: { ...fields, sku: fields.sku.trim(), barcode: fields.barcode?.trim() || null, name: fields.name.trim(), categoryId: fields.categoryId || null } });
+    const item = await this.prisma.product.update({ where: { id }, data: {
+      ...fields,
+      sku: fields.sku.trim(), barcode: fields.barcode?.trim() || null, name: fields.name.trim(), categoryId: fields.categoryId || null,
+      // Same normalisation as create: an absent key leaves the date untouched,
+      // null clears it (the product form sends null when the field is emptied),
+      // and "YYYY-MM-DD" sets it. Passing the raw string through used to work
+      // only by Prisma's good graces and could never clear a date.
+      expiryDate: fields.expiryDate === undefined ? undefined : fields.expiryDate ? new Date(`${fields.expiryDate}T00:00:00.000Z`) : null,
+    } });
     await this.prisma.auditLog.create({ data: { action: "UPDATE", entity: "Product", entityId: id, detail: item.sku } });
     return item;
   }
@@ -71,13 +79,20 @@ export class ProductsController {
           }
           const expiryDate = row.expiryDate ? new Date(`${row.expiryDate}T00:00:00.000Z`) : null;
           if (existing) {
+            const nextStock = row.stock ?? existing.stock;
             await tx.product.update({ where: { id: existing.id }, data: {
               price: row.price ?? existing.price, cost: row.cost ?? existing.cost,
-              minStock: row.minStock ?? existing.minStock, stock: row.stock ?? existing.stock,
+              minStock: row.minStock ?? existing.minStock, stock: nextStock,
               unit: row.unit || existing.unit, isWeighted: row.isWeighted ?? existing.isWeighted,
               expiryDate: row.expiryDate === undefined ? existing.expiryDate : expiryDate,
               categoryId: categoryId || existing.categoryId,
             } });
+            // Keep the cardex honest: a stock change coming from the import
+            // file is an adjustment like any other, so it gets a movement row
+            // too (without it the stock figure and the movement history
+            // silently disagreed after an import).
+            const stockDelta = nextStock - existing.stock;
+            if (stockDelta !== 0) await tx.inventoryMovement.create({ data: { productId: existing.id, type: stockDelta > 0 ? "ADJUSTMENT_IN" : "ADJUSTMENT_OUT", quantity: stockDelta, stockAfter: nextStock, note: "ورود از فایل" } });
             updated += 1;
           } else {
             const sku = row.sku?.trim() || `IMP-${Date.now()}-${index}`;

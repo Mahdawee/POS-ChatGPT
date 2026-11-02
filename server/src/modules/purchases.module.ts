@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Module, Post } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Module, Post, Query } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
 import { CurrentUser, SessionUser } from "../auth";
 import { PurchaseDto, PurchaseReturnDto } from "../dto";
@@ -10,9 +10,14 @@ export class PurchasesController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get()
-  list() {
+  list(@Query("skip") skip?: string, @Query("take") take?: string) {
+    // Windowed listing like /sales: a shop that has been buying for years
+    // must still be able to page back to its oldest receipts.
+    const limit = Math.min(300, Math.max(1, Number(take) || 50));
+    const offset = Math.max(0, Number(skip) || 0);
     return this.prisma.purchase.findMany({
-      take: 50,
+      skip: offset,
+      take: limit,
       include: { supplier: true, user: { select: { displayName: true } }, items: true },
       orderBy: { createdAt: "desc" },
     });
@@ -76,9 +81,12 @@ export class PurchaseReturnsController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get("returns")
-  listReturns() {
+  listReturns(@Query("skip") skip?: string, @Query("take") take?: string) {
+    const limit = Math.min(300, Math.max(1, Number(take) || 100));
+    const offset = Math.max(0, Number(skip) || 0);
     return this.prisma.purchaseReturn.findMany({
-      take: 100,
+      skip: offset,
+      take: limit,
       include: { supplier: true, user: { select: { displayName: true } }, purchase: { select: { invoiceNo: true } }, items: true },
       orderBy: { createdAt: "desc" },
     });
