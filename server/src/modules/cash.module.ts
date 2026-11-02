@@ -61,7 +61,15 @@ class CashController {
         tx.sale.count({ where: { cashSessionId: session.id } }),
       ]);
       const expected = session.openingCash + (cashIn._sum.amount || 0) - (cashOut._sum.amount || 0) + (cashSales._sum.total || 0);
-      const updated = await tx.cashSession.update({ where: { id: session.id }, data: { status: "CLOSED", expectedCash: expected, countedCash: dto.countedCash, note: dto.note?.trim() || session.note, closedAt: new Date() } });
+      // expectedCash is stored as a 32-bit integer. A mistyped entry (e.g. a
+      // manual "IN" movement with too many zeros) can push the sum past that
+      // limit, and the overflowing update used to fail with Prisma P2023 —
+      // which rolled the transaction back and left the shift PERMANENTLY
+      // unclosable ("internal server error" on every attempt). The stored
+      // value is clamped instead so the shift can always be closed; the Z
+      // report below still carries the true computed number.
+      const storedExpected = Math.max(-2147483648, Math.min(2147483647, Math.round(expected)));
+      const updated = await tx.cashSession.update({ where: { id: session.id }, data: { status: "CLOSED", expectedCash: storedExpected, countedCash: dto.countedCash, note: dto.note?.trim() || session.note, closedAt: new Date() } });
       await tx.auditLog.create({ data: { actor: user.username, action: "CLOSE_CASH", entity: "CashSession", entityId: session.id, detail: `expected=${expected}; counted=${dto.countedCash}` } });
       const methodTotal = (method: "CASH" | "MOBILE" | "CREDIT") => byMethod.find((row) => row.paymentMethod === method)?._sum.total || 0;
       // End-of-shift (Z) report payload: everything the printed slip needs.

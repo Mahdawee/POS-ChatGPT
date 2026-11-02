@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, Get, Module, Post, Put } from "@nestjs/common";
-import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AdminOnly, CurrentUser, SessionUser } from "../auth";
 import { createBackup } from "../backup";
@@ -25,6 +25,31 @@ class SettingsController {
     const filePath = await createBackup(this.prisma);
     await this.prisma.auditLog.create({ data: { actor: user.username, action: "CREATE_BACKUP", entity: "Database", detail: filePath } });
     return { path: filePath, createdAt: new Date().toISOString() };
+  }
+
+  /**
+   * Support diagnostics: the recent `[unhandled E…]` blocks from api.log,
+   * matched to the reference codes shown on screen, so an error report can be
+   * copied straight out of the app without hunting for the file on disk.
+   */
+  @AdminOnly() @Get("diagnostics")
+  async diagnostics() {
+    const dataDir = configureLocalStorage();
+    const logPath = join(dataDir, "api.log");
+    try {
+      const size = statSync(logPath).size;
+      // Only the tail is relevant (and bounded): read at most the last 256KB.
+      const length = Math.min(size, 256 * 1024);
+      const buffer = Buffer.alloc(length);
+      const handle = openSync(logPath, "r");
+      try { readSync(handle, buffer, 0, length, Math.max(0, size - length)); } finally { closeSync(handle); }
+      const text = buffer.toString("utf8");
+      const blocks = [...text.matchAll(/\[unhandled (E[0-9A-Z]+)\][^\[]*/g)].map((match) => ({ code: match[1], text: match[0].trim().slice(0, 2400) }));
+      return { logPath, logSize: size, errors: blocks.slice(-20).reverse() };
+    } catch {
+      // No log yet (fresh install) or it is momentarily unreadable.
+      return { logPath, logSize: 0, errors: [] };
+    }
   }
 
   /** Portable snapshot (the whole SQLite file, base64) for USB transfer or

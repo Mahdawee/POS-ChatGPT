@@ -142,3 +142,10 @@ html.dark .empty>div{background:#1b252c;color:#8896a0}
 html.dark .chart-bar-fill{background:linear-gradient(180deg,#4aa577,#2f7a54)}
 html.dark .icon-button:hover{background:#1b252c;color:#a9cdb8}
 html.dark .login-card,html.dark .lock-card{background:#151d23;border-color:#2a343b}
+/* Server diagnostics panel (Settings → System) */
+.diag-block{border:1px solid #e4e9ec;border-radius:8px;background:#fff;overflow:hidden}
+.diag-block summary{cursor:pointer;padding:8px 12px;font-size:11px;font-weight:700;color:#4d8b69;list-style:none}
+.diag-block summary::-webkit-details-marker{display:none}
+.diag-block[open] summary{border-bottom:1px solid #edf0f0}
+.diag-block pre{margin:0;padding:10px 12px;font-size:9px;line-height:1.6;color:#687580;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;background:#fbfcfc}
+.error-box span{min-width:0;flex:1}

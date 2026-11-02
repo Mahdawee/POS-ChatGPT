@@ -62,4 +62,44 @@ describe("All-exceptions filter", () => {
     const payload = json.mock.calls[0][0] as { message: string };
     expect(payload.message).toContain("دوباره تلاش");
   });
+
+  it("maps int-overflow / inconsistent-column errors (P2023 — the cash-close brick) to a readable 400", () => {
+    const error = new Prisma.PrismaClientKnownRequestError("Inconsistent column data: number too large to fit in target type", { code: "P2023", clientVersion: "test" });
+    const { status, json } = run(error);
+    expect(status).toHaveBeenCalledWith(HttpStatus.BAD_REQUEST);
+    const payload = json.mock.calls[0][0] as { message: string };
+    expect(payload.message).toContain("محدودهٔ مجاز");
+  });
+
+  it("maps a missing database column (P2022 — stale local database) to a 503 with an update hint", () => {
+    const error = new Prisma.PrismaClientKnownRequestError("Column does not exist", { code: "P2022", clientVersion: "test" });
+    const { status, json } = run(error);
+    expect(status).toHaveBeenCalledWith(HttpStatus.SERVICE_UNAVAILABLE);
+    const payload = json.mock.calls[0][0] as { message: string };
+    expect(payload.message).toContain("هماهنگ نیست");
+  });
+
+  it("never leaves an unmapped Prisma code as a bare 500: it names the code", () => {
+    const error = new Prisma.PrismaClientKnownRequestError("Something exotic", { code: "P2999", clientVersion: "test" });
+    const { status, json } = run(error);
+    expect(status).toHaveBeenCalledWith(HttpStatus.BAD_REQUEST);
+    const payload = json.mock.calls[0][0] as { message: string };
+    expect(payload.message).toContain("P2999");
+  });
+
+  it("attaches a technical detail line (exception + route) to 5xx replies so screenshots pinpoint the cause", () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const { json } = run(new TypeError("Cannot read properties of undefined (reading 'id')"));
+    const payload = json.mock.calls[0][0] as { detail?: string };
+    expect(payload.detail).toContain("TypeError");
+    expect(payload.detail).toContain("Cannot read properties");
+    spy.mockRestore();
+  });
+
+  it("logs the failing route next to the reference code", () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    run(new Error("boom"));
+    expect(spy.mock.calls[0].join(" ")).toMatch(/\[unhandled E[0-9A-Z]+\]/);
+    spy.mockRestore();
+  });
 });

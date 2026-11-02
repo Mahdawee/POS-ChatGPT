@@ -6,6 +6,14 @@
  * when new strings are added.
  */
 export const pashto: Record<string, string> = {
+  "خطاهای اخیر سرور": "د سرور وروستي تېروتنې",
+  "برای پشتیبانی — جزئیات خطاهای ثبت‌شده در api.log": "د ملاتړ لپاره — په api.log کې ثبت شوو تېروتنو تفصیل",
+  "نمایش خطاهای اخیر": "وروستي تېروتنې وګورئ",
+  "در حال خواندن…": "لوستل کیږي…",
+  "{count} خطای اخیر پیدا شد؛ برای ارسال به پشتیبانی کپی کنید.": "{count} وروستي تېروتنې پیدا شوې؛ د ملاتړ لپاره یې کاپي کړئ.",
+  "خطایی ثبت نشده است.": "هڅه تېروتنه ثبت نه ده شوې.",
+  "کپی جزئیات برای پشتیبانی": "د ملاتړ لپاره تفصیل کاپي کړئ",
+  "جزئیات خطاها کپی شد.": "د تېروتنو تفصیل کاپي شو.",
   " (از صندوق باز کسر می‌شود)": " (له پرانیستل شوي صندوق څخه کمیږي)",
   "1D (بارکد خطی)": "1D (خطي بارکوډ)",
   "1D / 2D": "1D / 2D",
@@ -832,6 +840,14 @@ export const pashto: Record<string, string> = {
 };
 
 export const english: Record<string, string> = {
+  "خطاهای اخیر سرور": "Recent server errors",
+  "برای پشتیبانی — جزئیات خطاهای ثبت‌شده در api.log": "For support — details of errors logged in api.log",
+  "نمایش خطاهای اخیر": "Show recent errors",
+  "در حال خواندن…": "Reading…",
+  "{count} خطای اخیر پیدا شد؛ برای ارسال به پشتیبانی کپی کنید.": "{count} recent errors found; copy them to send to support.",
+  "خطایی ثبت نشده است.": "No errors recorded.",
+  "کپی جزئیات برای پشتیبانی": "Copy details for support",
+  "جزئیات خطاها کپی شد.": "Error details copied.",
   " (از صندوق باز کسر می‌شود)": " (deducted from the open register)",
   "1D (بارکد خطی)": "1D (linear barcode)",
   "1D / 2D": "1D / 2D",

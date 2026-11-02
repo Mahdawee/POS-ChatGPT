@@ -39,6 +39,10 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     try {
       const body = await response.json();
       message = Array.isArray(body.message) ? body.message.join(t("، ")) : body.message || message;
+      // 5xx bodies carry a one-line technical `detail` (exception + route).
+      // Keep it under the readable message so a cashier's screenshot already
+      // tells support exactly which request failed and why.
+      if (typeof body.detail === "string" && body.detail) message = `${message}\n${body.detail}`;
     } catch { /* keep a readable fallback */ }
     throw new Error(message);
   }

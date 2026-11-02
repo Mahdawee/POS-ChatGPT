@@ -52,16 +52,20 @@ export class InventoryAdjustmentDto {
   @IsOptional() @IsString() @MaxLength(300) note?: string;
 }
 export class OpenCashDto {
-  @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) openingCash!: number;
+  // Cash amounts are capped far below the 32-bit integer limit (≈2.1 billion)
+  // so that opening cash + movements + cash sales can never overflow the
+  // stored expectedCash column (Prisma P2023) even with several entries.
+  @Type(() => Number) @IsInt() @Min(0) @Max(999999999) openingCash!: number;
   @IsOptional() @IsString() @MaxLength(300) note?: string;
 }
 export class CashMovementDto {
   @IsEnum(["IN", "OUT"]) type!: "IN" | "OUT";
-  @Type(() => Number) @IsInt() @Min(1) @Max(2147483647) amount!: number;
+  // 999,999,999 Afghani (~$14M) is far beyond any real drawer; see OpenCashDto.
+  @Type(() => Number) @IsInt() @Min(1) @Max(999999999) amount!: number;
   @IsString() @MinLength(1) @MaxLength(120) description!: string;
 }
 export class CloseCashDto {
-  @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) countedCash!: number;
+  @Type(() => Number) @IsInt() @Min(0) @Max(999999999) countedCash!: number;
   @IsOptional() @IsString() @MaxLength(300) note?: string;
 }
 export class UserDto {
