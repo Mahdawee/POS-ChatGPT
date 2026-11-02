@@ -1,3 +1,4 @@
+import { BadRequestException } from "@nestjs/common";
 import { CustomersController, SuppliersController } from "./contacts.module";
 
 function setup() {
@@ -16,8 +17,8 @@ function setup() {
         { id: "customer-2", name: "زبیده", isActive: true },
       ]),
     },
-    sale: { groupBy: jest.fn().mockResolvedValue([{ customerId: "customer-1", _sum: { total: 500 } }]) },
-    saleReturn: { findMany: jest.fn().mockResolvedValue([{ total: 100, sale: { customerId: "customer-1" } }]) },
+    sale: { groupBy: jest.fn().mockResolvedValue([{ customerId: "customer-1", _sum: { creditPart: 500 } }]) },
+    saleReturn: { findMany: jest.fn().mockResolvedValue([{ creditRelief: 100, sale: { customerId: "customer-1" } }]) },
     customerPayment: { groupBy: jest.fn().mockResolvedValue([{ customerId: "customer-1", _sum: { amount: 150 } }]) },
   };
   return { controller: new CustomersController(prisma as never), tx, prisma };
@@ -46,6 +47,8 @@ describe("Customer credit balances", () => {
 function supplierSetup() {
   const tx = {
     supplier: { findUnique: jest.fn().mockResolvedValue({ id: "supplier-1", name: "تأمین‌کننده نمونه", isActive: true }) },
+    cashSession: { findFirst: jest.fn().mockResolvedValue({ id: "cash-1" }) },
+    cashMovement: { create: jest.fn().mockResolvedValue({}) },
     supplierPayment: { create: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ id: "payment-1", ...data })) },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
   };
@@ -72,6 +75,21 @@ describe("Supplier balances", () => {
     await controller.pay("supplier-1", { amount: 150 }, user);
     expect(tx.supplierPayment.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ supplierId: "supplier-1", amount: 150, userId: user.id }) }));
     expect(tx.auditLog.create).toHaveBeenCalled();
-    expect(tx).not.toHaveProperty("cashMovement");
+    expect(tx.cashMovement.create).not.toHaveBeenCalled();
+  });
+
+  it("pays a supplier out of the open register when fromCash is set", async () => {
+    const { controller, tx } = supplierSetup();
+    const user = { id: "user-1", username: "admin", displayName: "Admin", role: "ADMIN" as const };
+    await controller.pay("supplier-1", { amount: 150, fromCash: true }, user);
+    expect(tx.cashMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "OUT", amount: 150, cashSessionId: "cash-1" }) }));
+  });
+
+  it("refuses a fromCash payment when no register is open", async () => {
+    const { controller, tx } = supplierSetup();
+    const user = { id: "user-1", username: "admin", displayName: "Admin", role: "ADMIN" as const };
+    tx.cashSession.findFirst.mockResolvedValue(null);
+    await expect(controller.pay("supplier-1", { amount: 150, fromCash: true }, user)).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.supplierPayment.create).not.toHaveBeenCalled();
   });
 });

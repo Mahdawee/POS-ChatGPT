@@ -18,7 +18,59 @@ const COLUMN_MIGRATIONS: Array<{ table: string; column: string; ddl: string }> =
   { table: "Product", column: "expiryDate", ddl: `ALTER TABLE "Product" ADD COLUMN "expiryDate" DATETIME` },
   { table: "Product", column: "wholesalePrice", ddl: `ALTER TABLE "Product" ADD COLUMN "wholesalePrice" INTEGER` },
   { table: "Product", column: "wholesaleMinQty", ddl: `ALTER TABLE "Product" ADD COLUMN "wholesaleMinQty" REAL` },
+  { table: "Product", column: "backstock", ddl: `ALTER TABLE "Product" ADD COLUMN "backstock" REAL NOT NULL DEFAULT 0` },
+  { table: "Customer", column: "creditLimit", ddl: `ALTER TABLE "Customer" ADD COLUMN "creditLimit" INTEGER NOT NULL DEFAULT 0` },
+  { table: "Sale", column: "cashPart", ddl: `ALTER TABLE "Sale" ADD COLUMN "cashPart" INTEGER NOT NULL DEFAULT 0` },
+  { table: "Sale", column: "mobilePart", ddl: `ALTER TABLE "Sale" ADD COLUMN "mobilePart" INTEGER NOT NULL DEFAULT 0` },
+  { table: "Sale", column: "creditPart", ddl: `ALTER TABLE "Sale" ADD COLUMN "creditPart" INTEGER NOT NULL DEFAULT 0` },
+  { table: "Sale", column: "invoiceNo", ddl: `ALTER TABLE "Sale" ADD COLUMN "invoiceNo" TEXT` },
+  { table: "SaleItem", column: "discount", ddl: `ALTER TABLE "SaleItem" ADD COLUMN "discount" INTEGER NOT NULL DEFAULT 0` },
+  { table: "SaleReturn", column: "creditRelief", ddl: `ALTER TABLE "SaleReturn" ADD COLUMN "creditRelief" INTEGER NOT NULL DEFAULT 0` },
+  { table: "SaleReturn", column: "cashAmount", ddl: `ALTER TABLE "SaleReturn" ADD COLUMN "cashAmount" INTEGER NOT NULL DEFAULT 0` },
+  { table: "PurchaseItem", column: "expiryDate", ddl: `ALTER TABLE "PurchaseItem" ADD COLUMN "expiryDate" DATETIME` },
 ];
+
+/**
+ * One-time data migration for databases created before payment "parts"
+ * (cashPart/mobilePart/creditPart) existed: derive the parts from the legacy
+ * paymentMethod/amountPaid columns. Idempotent — rows already carrying a
+ * non-zero part are left alone, and re-running produces the same values.
+ * Sales written by the short-lived round-14 down-payment path (they carry a
+ * customerPayment whose note references the receipt) keep their full total
+ * as creditPart so the payment row keeps settling it, exactly as before.
+ */
+export async function backfillPaymentParts(db: {
+  $queryRawUnsafe(sql: string): Promise<unknown>;
+  $executeRawUnsafe(sql: string): Promise<unknown>;
+}): Promise<void> {
+  // Cash sales: everything was cash (change was already handed back).
+  await db.$executeRawUnsafe(
+    `UPDATE "Sale" SET "cashPart" = "total" WHERE "cashPart" = 0 AND "mobilePart" = 0 AND "creditPart" = 0 AND "paymentMethod" = 'CASH'`,
+  );
+  // Mobile sales: everything was settled by mobile money.
+  await db.$executeRawUnsafe(
+    `UPDATE "Sale" SET "mobilePart" = "total" WHERE "cashPart" = 0 AND "mobilePart" = 0 AND "creditPart" = 0 AND "paymentMethod" = 'MOBILE'`,
+  );
+  // Credit sales without a down-payment row: the paid part is amountPaid.
+  await db.$executeRawUnsafe(
+    `UPDATE "Sale" SET "creditPart" = "total" - "amountPaid" WHERE "cashPart" = 0 AND "mobilePart" = 0 AND "creditPart" = 0 AND "paymentMethod" = 'CREDIT'
+     AND "amountPaid" <= "total" AND NOT EXISTS (SELECT 1 FROM "CustomerPayment" p WHERE p."note" LIKE '%فاکتور ' || "Sale"."receiptNo")`,
+  );
+  // Round-14 style down-payments already sit in a payment row: the whole
+  // invoice total stays credit so the payment keeps settling it.
+  await db.$executeRawUnsafe(
+    `UPDATE "Sale" SET "creditPart" = "total" WHERE "cashPart" = 0 AND "mobilePart" = 0 AND "creditPart" = 0 AND "paymentMethod" = 'CREDIT'
+     AND EXISTS (SELECT 1 FROM "CustomerPayment" p WHERE p."note" LIKE '%فاکتور ' || "Sale"."receiptNo")`,
+  );
+  // Old returns: cash sales refunded from the drawer; credit returns were
+  // debt relief. Mirrors what the balance formulas used before parts existed.
+  await db.$executeRawUnsafe(
+    `UPDATE "SaleReturn" SET "cashAmount" = "total" WHERE "cashAmount" = 0 AND "creditRelief" = 0 AND "saleId" IN (SELECT "id" FROM "Sale" WHERE "paymentMethod" = 'CASH')`,
+  );
+  await db.$executeRawUnsafe(
+    `UPDATE "SaleReturn" SET "creditRelief" = "total" WHERE "cashAmount" = 0 AND "creditRelief" = 0 AND "saleId" IN (SELECT "id" FROM "Sale" WHERE "paymentMethod" = 'CREDIT')`,
+  );
+}
 
 export async function ensureColumnMigrations(db: { $queryRawUnsafe(sql: string): Promise<unknown> }): Promise<void> {
   for (const { table, column, ddl } of COLUMN_MIGRATIONS) {
@@ -53,6 +105,7 @@ const REQUIRED_MODELS = [
   "customerPayment", "supplierPayment",
   "inventoryMovement", "cashSession", "cashMovement",
   "expense", "auditLog",
+  "stocktake", "stocktakeLine", "quote", "quoteItem", "productBatch",
 ] as const;
 
 @Injectable()
@@ -77,6 +130,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     const schema = readFileSync(schemaPath, "utf8");
     for (const statement of schema.split(";").map((sql) => sql.trim()).filter(Boolean)) await this.$executeRawUnsafe(statement);
     await ensureColumnMigrations(this);
+    await backfillPaymentParts(this);
     await ensureInitialData(this);
     this.optimizeTimer = setInterval(() => {
       this.$queryRawUnsafe("PRAGMA optimize").catch(() => undefined);

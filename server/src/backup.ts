@@ -10,7 +10,18 @@ import { configureLocalStorage } from "./storage";
  */
 export async function createBackup(prisma: PrismaService, prefix = "dar-pos"): Promise<string> {
   const dataDir = configureLocalStorage();
-  const backupDir = join(dataDir, "backups");
+  // Optional custom backup folder (Settings). Read at backup time — not
+  // boot — so changing it applies immediately without a restart; blank or
+  // unreadable values fall back to the standard local folder.
+  let backupDir = join(dataDir, "backups");
+  try {
+    const setting = await prisma.setting.findUnique({ where: { key: "backupDir" } });
+    const custom = setting?.value?.trim();
+    if (custom) {
+      mkdirSync(custom, { recursive: true });
+      backupDir = custom;
+    }
+  } catch { /* keep default */ }
   mkdirSync(backupDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const filePath = join(backupDir, `${prefix}-${stamp}.db`).replace(/\\/g, "/");

@@ -55,6 +55,8 @@ model Product {
   cost        Int                 @default(0)
   stock       Float               @default(0)
   minStock    Float               @default(0)
+  /// Backroom quantity - goods stored away from the sales shelf.
+  backstock   Float               @default(0)
   isActive    Boolean             @default(true)
   categoryId  String?
   category    Category?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
@@ -63,6 +65,9 @@ model Product {
   purchaseItems PurchaseItem[]
   returnItems   SaleReturnItem[]
   purchaseReturnItems PurchaseReturnItem[]
+  batches             ProductBatch[]
+  stocktakeLines      StocktakeLine[]
+  quoteItems          QuoteItem[]
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
   @@index([name])
@@ -70,14 +75,17 @@ model Product {
 }
 
 model Customer {
-  id        String   @id @default(cuid())
-  name      String
-  phone     String?
-  address   String?
-  note      String?
-  isActive  Boolean  @default(true)
+  id          String  @id @default(cuid())
+  name        String
+  phone       String?
+  address     String?
+  note        String?
+  /// 0 = no credit-limit check.
+  creditLimit Int     @default(0)
+  isActive    Boolean @default(true)
   sales     Sale[]
   payments  CustomerPayment[]
+  quotes    Quote[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@index([name])
@@ -114,6 +122,8 @@ model User {
   purchaseReturns PurchaseReturn[]
   customerPayments CustomerPayment[]
   supplierPayments SupplierPayment[]
+  stocktakes        Stocktake[]
+  quotes            Quote[]
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 }
@@ -133,6 +143,12 @@ model Sale {
   total          Int
   amountPaid     Int
   change         Int           @default(0)
+  /// How the total was settled; backfilled for old rows from paymentMethod.
+  cashPart       Int           @default(0)
+  mobilePart     Int           @default(0)
+  creditPart     Int           @default(0)
+  /// Daily sequential number for printed invoices (INV-YYYYMMDD-NNNN).
+  invoiceNo      String?       @unique
   paymentMethod  PaymentMethod
   note           String?
   customerId     String?
@@ -143,6 +159,7 @@ model Sale {
   cashSession    CashSession?  @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
   items          SaleItem[]
   returns        SaleReturn[]
+  quotes         Quote[]
   createdAt      DateTime      @default(now())
   @@index([createdAt])
   @@index([customerId])
@@ -159,6 +176,8 @@ model SaleItem {
   quantity  Float
   unitPrice Int
   unitCost  Int     @default(0)
+  /// Manual per-line discount in whole afghani.
+  discount  Int     @default(0)
   lineTotal Int
   @@index([saleId])
 }
@@ -228,6 +247,7 @@ model Purchase {
   paidAmount Int            @default(0)
   items      PurchaseItem[]
   purchaseReturns PurchaseReturn[]
+  batches         ProductBatch[]
   createdAt  DateTime       @default(now())
   @@index([createdAt])
   @@index([supplierId])
@@ -244,6 +264,8 @@ model PurchaseItem {
   quantity   Float
   unitCost   Int
   lineTotal  Int
+  /// Optional batch/lot expiry for this delivery (feeds ProductBatch).
+  expiryDate DateTime?
   @@index([purchaseId])
 }
 
@@ -253,6 +275,10 @@ model SaleReturn {
   saleId    String
   sale      Sale            @relation(fields: [saleId], references: [id])
   total     Int
+  /// Portion of the customer's credit debt forgiven by this return.
+  creditRelief Int          @default(0)
+  /// Portion of `total` that was paid out of the drawer in cash.
+  cashAmount Int            @default(0)
   note      String?
   userId    String
   user      User            @relation(fields: [userId], references: [id])
@@ -347,4 +373,81 @@ model SupplierPayment {
   user       User     @relation(fields: [userId], references: [id])
   createdAt  DateTime @default(now())
   @@index([supplierId, createdAt])
+}
+
+
+/// A physical stock count: expected vs counted per product, applied as
+/// adjustments either immediately or later from the history.
+model Stocktake {
+  id        String          @id @default(cuid())
+  name      String?
+  note      String?
+  status    String          @default("OPEN") // OPEN | APPLIED | VOID
+  userId    String
+  user      User            @relation(fields: [userId], references: [id])
+  lines     StocktakeLine[]
+  createdAt DateTime        @default(now())
+  appliedAt DateTime?
+  @@index([createdAt])
+}
+
+model StocktakeLine {
+  id          String    @id @default(cuid())
+  stocktakeId String
+  stocktake   Stocktake @relation(fields: [stocktakeId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id])
+  expected    Float
+  counted     Float
+  diff        Float
+  @@index([stocktakeId])
+}
+
+/// A saved pre-invoice: a cart frozen server-side that can be printed,
+/// voided, or converted into a real sale.
+model Quote {
+  id          String      @id @default(cuid())
+  quoteNo     String      @unique
+  customerId  String?
+  customer    Customer?   @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  userId      String
+  user        User        @relation(fields: [userId], references: [id])
+  note        String?
+  total       Int
+  status      String      @default("OPEN") // OPEN | CONVERTED | VOID
+  saleId      String?
+  sale        Sale?       @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  items       QuoteItem[]
+  createdAt   DateTime    @default(now())
+  convertedAt DateTime?
+  @@index([status, createdAt])
+}
+
+model QuoteItem {
+  id        String  @id @default(cuid())
+  quoteId   String
+  quote     Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  name      String
+  sku       String
+  quantity  Float
+  unitPrice Int
+  lineTotal Int
+  @@index([quoteId])
+}
+
+/// Batch/lot overlay for expiry tracking: quantities are deducted FEFO on
+/// sale (best effort) and never gate the money/stock math.
+model ProductBatch {
+  id           String    @id @default(cuid())
+  productId    String
+  product      Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  expiryDate   DateTime
+  initialQty   Float
+  remainingQty Float
+  purchaseId   String?
+  purchase     Purchase? @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+  createdAt    DateTime  @default(now())
+  @@index([productId, expiryDate])
 }

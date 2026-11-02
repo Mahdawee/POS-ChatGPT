@@ -26,10 +26,10 @@ export class PurchasesController {
   @Post()
   async create(@Body() dto: PurchaseDto, @CurrentUser() user: SessionUser) {
     // Merge duplicated product lines before touching the database.
-    const merged = new Map<string, { quantity: number; unitCost: number }>();
+    const merged = new Map<string, { quantity: number; unitCost: number; expiryDate?: string }>();
     for (const line of dto.items) {
       const current = merged.get(line.productId);
-      merged.set(line.productId, { quantity: (current?.quantity || 0) + line.quantity, unitCost: line.unitCost ?? current?.unitCost ?? 0 });
+      merged.set(line.productId, { quantity: (current?.quantity || 0) + line.quantity, unitCost: line.unitCost ?? current?.unitCost ?? 0, expiryDate: line.expiryDate ?? current?.expiryDate });
     }
     const lines = [...merged.entries()];
     return this.prisma.$transaction(async (tx) => {
@@ -56,18 +56,23 @@ export class PurchasesController {
           total,
           paidAmount,
           items: {
-            create: lines.map(([productId, { quantity, unitCost }]) => {
+            create: lines.map(([productId, { quantity, unitCost, expiryDate }]) => {
               const product = productMap.get(productId)!;
-              return { productId, name: product.name, sku: product.sku, quantity, unitCost, lineTotal: Math.round(quantity * unitCost) };
+              return { productId, name: product.name, sku: product.sku, quantity, unitCost, lineTotal: Math.round(quantity * unitCost), expiryDate: expiryDate ? new Date(`${expiryDate}T00:00:00.000Z`) : null };
             }),
           },
         },
         include: { items: true, supplier: true },
       });
-      for (const [productId, { quantity, unitCost }] of lines) {
+      for (const [productId, { quantity, unitCost, expiryDate }] of lines) {
         const product = productMap.get(productId)!;
         await tx.product.update({ where: { id: productId }, data: { stock: { increment: quantity }, cost: unitCost } });
         await tx.inventoryMovement.create({ data: { productId, type: "PURCHASE", quantity, stockAfter: product.stock + quantity, reference: purchase.id, note: "ورود خرید" } });
+        // Deliveries with their own expiry date are tracked as batches so the
+        // dashboard can warn per-lot (FEFO) instead of per-product.
+        if (expiryDate) {
+          await tx.productBatch.create({ data: { productId, expiryDate: new Date(`${expiryDate}T00:00:00.000Z`), initialQty: quantity, remainingQty: quantity, purchaseId: purchase.id } });
+        }
       }
       await tx.auditLog.create({ data: { actor: user.username, action: "CREATE_PURCHASE", entity: "Purchase", entityId: purchase.id, detail: String(total) } });
       return purchase;
