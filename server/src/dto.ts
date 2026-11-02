@@ -1,5 +1,5 @@
 import { Type } from "class-transformer";
-import { ArrayMinSize, IsArray, IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength, ValidateNested } from "class-validator";
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsEnum, IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength, ValidateNested } from "class-validator";
 
 export class LoginDto {
   @IsString() @MinLength(1) @MaxLength(40) username!: string;
@@ -18,6 +18,8 @@ export class ProductDto {
   @IsOptional() @IsString() @MaxLength(80) barcode?: string;
   @IsString() @MinLength(1) @MaxLength(120) name!: string;
   @IsOptional() @IsString() @MaxLength(24) unit?: string;
+  @IsOptional() @IsBoolean() isWeighted?: boolean;
+  @IsOptional() @IsString() @MaxLength(10) expiryDate?: string;
   @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) price!: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) cost?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) stock?: number;
@@ -32,7 +34,7 @@ export class ContactDto {
 }
 export class SaleLineDto {
   @IsString() productId!: string;
-  @Type(() => Number) @IsInt() @Min(1) @Max(1000000) quantity!: number;
+  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001) @Max(1000000) quantity!: number;
 }
 export class SaleDto {
   @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => SaleLineDto) items!: SaleLineDto[];
@@ -44,7 +46,7 @@ export class SaleDto {
 }
 export class InventoryAdjustmentDto {
   @IsString() productId!: string;
-  @Type(() => Number) @IsInt() @Max(2147483647) @Min(-2147483647) quantity!: number;
+  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Max(2147483647) @Min(-2147483647) quantity!: number;
   @IsOptional() @IsString() @MaxLength(300) note?: string;
 }
 export class OpenCashDto {
@@ -68,11 +70,12 @@ export class UserDto {
 }
 export class SettingDto {
   @IsString() @MinLength(1) @MaxLength(60) key!: string;
-  @IsString() @MaxLength(500) value!: string;
+  // Logos are stored as compact data URLs, so values may be large.
+  @IsString() @MaxLength(300000) value!: string;
 }
 export class PurchaseLineDto {
   @IsString() productId!: string;
-  @Type(() => Number) @IsInt() @Min(1) @Max(1000000) quantity!: number;
+  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001) @Max(1000000) quantity!: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) unitCost?: number;
 }
 export class PurchaseDto {
@@ -84,7 +87,7 @@ export class PurchaseDto {
 }
 export class ReturnLineDto {
   @IsString() productId!: string;
-  @Type(() => Number) @IsInt() @Min(1) @Max(1000000) quantity!: number;
+  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001) @Max(1000000) quantity!: number;
 }
 export class SaleReturnDto {
   @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => ReturnLineDto) items!: ReturnLineDto[];
@@ -100,4 +103,21 @@ export class SupplierPaymentDto {
 }
 export class ResetPasswordDto {
   @IsString() @MinLength(8) @MaxLength(100) newPassword!: string;
+}
+
+export class ImportProductRowDto {
+  @IsString() @MinLength(1) @MaxLength(120) name!: string;
+  @IsOptional() @IsString() @MaxLength(40) sku?: string;
+  @IsOptional() @IsString() @MaxLength(80) barcode?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) price?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) cost?: number;
+  @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0) @Max(2147483647) stock?: number;
+  @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0) @Max(2147483647) minStock?: number;
+  @IsOptional() @IsString() @MaxLength(24) unit?: string;
+  @IsOptional() @IsBoolean() isWeighted?: boolean;
+  @IsOptional() @IsString() @MaxLength(10) expiryDate?: string;
+  @IsOptional() @IsString() @MaxLength(60) category?: string;
+}
+export class ProductImportDto {
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(5000) @ValidateNested({ each: true }) @Type(() => ImportProductRowDto) rows!: ImportProductRowDto[];
 }

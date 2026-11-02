@@ -146,6 +146,18 @@ fn start_bundled_api(app: tauri::AppHandle, closing: Arc<AtomicBool>) {
         return;
     }
     cap_log(&api_log);
+    // LAN modes (written by the Settings page via set_network_mode):
+    // an http(s) URL means this machine is a network client — the bundled
+    // API must not start; "server" binds 0.0.0.0 so other machines connect.
+    let network_mode = std::fs::read_to_string(data_dir.join("network-mode"))
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if network_mode.starts_with("http") {
+        append_log(&api_log, &format!("Network client mode: using remote server {network_mode}; the bundled API is not started."));
+        return;
+    }
+    let api_host = if network_mode == "server" { "0.0.0.0" } else { "127.0.0.1" };
     append_log(&api_log, "Starting the bundled local POS API.");
 
     let runtime = match app.path().resolve("runtime", tauri::path::BaseDirectory::Resource) {
@@ -196,7 +208,7 @@ fn start_bundled_api(app: tauri::AppHandle, closing: Arc<AtomicBool>) {
     command
         .arg(&entry)
         .env("POS_DATA_DIR", &data_dir)
-        .env("API_HOST", "127.0.0.1")
+        .env("API_HOST", api_host)
         .env("API_PORT", "4317")
         .current_dir(&server_dir)
         .stdin(Stdio::null())
@@ -278,6 +290,7 @@ fn main() {
     let closing_for_exit = closing.clone();
     tauri::Builder::default()
         .manage(child_state)
+        .invoke_handler(tauri::generate_handler![set_network_mode, open_url])
         .setup(move |app| {
             #[cfg(not(debug_assertions))]
             {
@@ -299,4 +312,62 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("failed to run Dar POS");
+}
+
+/// Shared data directory (same resolution logic as the bundled API spawn:
+/// %APPDATA%\DarPOSERP, with Tauri's app data dir as a fallback).
+fn app_data_directory(app: &tauri::AppHandle) -> std::path::PathBuf {
+    let base = match std::env::var_os("APPDATA") {
+        Some(value) => std::path::PathBuf::from(value),
+        None => app
+            .path()
+            .app_data_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from(".")),
+    };
+    base.join("DarPOSERP")
+}
+
+/// Persists the LAN mode for the next start:
+/// - "" / "local": bundled API on 127.0.0.1 (default, single machine)
+/// - "server": bundled API on 0.0.0.0 so other registers can connect
+/// - "http://…": client mode — do not start a local API at all
+#[tauri::command]
+fn set_network_mode(app: tauri::AppHandle, mode: String) -> Result<(), String> {
+    let dir = app_data_directory(&app);
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let normalized = mode.trim();
+    if !(normalized.is_empty() || normalized == "local" || normalized == "server" || normalized.starts_with("http")) {
+        return Err("unsupported network mode".into());
+    }
+    std::fs::write(dir.join("network-mode"), normalized).map_err(|error| error.to_string())
+}
+
+/// Opens a URL in the system browser (used for release downloads).
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("unsupported url".into());
+    }
+    #[cfg(windows)]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", url.as_str()])
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }

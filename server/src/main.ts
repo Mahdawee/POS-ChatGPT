@@ -8,12 +8,17 @@ async function bootstrap() {
   const dataDir = configureLocalStorage();
   const app = await NestFactory.create(AppModule, { logger: ["error", "warn", "log"] });
   app.setGlobalPrefix("api");
-  app.enableCors({ origin: ["http://127.0.0.1:1420", "http://localhost:1420", "http://tauri.localhost", "https://tauri.localhost"], methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"], allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"] });
+  // LAN mode: desktop clients on other machines connect to this API, so any
+  // origin is reflected (authentication still happens per-request via JWT).
+  app.enableCors({ origin: true, methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"], allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"] });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   app.enableShutdownHooks();
   const port = Number(process.env.API_PORT || 4317);
-  await app.listen(port, "127.0.0.1");
-  console.log(`Dar POS API listening on 127.0.0.1:${port}; local data: ${dataDir}`);
+  // The desktop app pins API_HOST=127.0.0.1; a machine shared as the LAN
+  // server is started with API_HOST=0.0.0.0 so other registers can connect.
+  const host = process.env.API_HOST || "127.0.0.1";
+  await app.listen(port, host);
+  console.log(`Dar POS API listening on ${host}:${port}; local data: ${dataDir}`);
 }
 
 bootstrap();

@@ -32,7 +32,7 @@ export class PurchasesController {
       const productMap = new Map(products.map((product) => [product.id, product]));
       let total = 0;
       for (const [, { quantity, unitCost }] of lines) {
-        const lineTotal = quantity * unitCost;
+        const lineTotal = Math.round(quantity * unitCost);
         if (!Number.isSafeInteger(lineTotal) || lineTotal > 2147483647) throw new BadRequestException("مبلغ یک قلم از سقف مجاز بیشتر است.");
         total += lineTotal;
         if (total > 2147483647) throw new BadRequestException("جمع رسید خرید از سقف مجاز بیشتر است.");
@@ -52,7 +52,7 @@ export class PurchasesController {
           items: {
             create: lines.map(([productId, { quantity, unitCost }]) => {
               const product = productMap.get(productId)!;
-              return { productId, name: product.name, sku: product.sku, quantity, unitCost, lineTotal: quantity * unitCost };
+              return { productId, name: product.name, sku: product.sku, quantity, unitCost, lineTotal: Math.round(quantity * unitCost) };
             }),
           },
         },

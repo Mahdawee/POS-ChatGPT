@@ -46,10 +46,12 @@ model Product {
   barcode     String?             @unique
   name        String
   unit        String              @default("عدد")
+  isWeighted  Boolean             @default(false)
+  expiryDate  DateTime?
   price       Int
   cost        Int                 @default(0)
-  stock       Int                 @default(0)
-  minStock    Int                 @default(0)
+  stock       Float               @default(0)
+  minStock    Float               @default(0)
   isActive    Boolean             @default(true)
   categoryId  String?
   category    Category?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
@@ -147,7 +149,7 @@ model SaleItem {
   product   Product @relation(fields: [productId], references: [id])
   name      String
   sku       String
-  quantity  Int
+  quantity  Float
   unitPrice Int
   unitCost  Int     @default(0)
   lineTotal Int
@@ -159,8 +161,8 @@ model InventoryMovement {
   productId String
   product   Product     @relation(fields: [productId], references: [id])
   type      MovementType
-  quantity  Int
-  stockAfter Int
+  quantity  Float
+  stockAfter Float
   reference String?
   note      String?
   createdAt DateTime     @default(now())
@@ -230,7 +232,7 @@ model PurchaseItem {
   product    Product  @relation(fields: [productId], references: [id])
   name       String
   sku        String
-  quantity   Int
+  quantity   Float
   unitCost   Int
   lineTotal  Int
   @@index([purchaseId])
@@ -259,7 +261,7 @@ model SaleReturnItem {
   product      Product    @relation(fields: [productId], references: [id])
   name         String
   sku          String
-  quantity     Int
+  quantity     Float
   unitPrice    Int
   unitCost     Int        @default(0)
   lineTotal    Int
