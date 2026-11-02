@@ -14,10 +14,12 @@ CREATE TABLE IF NOT EXISTS "Product" (
     "barcode" TEXT,
     "name" TEXT NOT NULL,
     "unit" TEXT NOT NULL DEFAULT 'عدد',
+    "isWeighted" BOOLEAN NOT NULL DEFAULT false,
+    "expiryDate" DATETIME,
     "price" INTEGER NOT NULL,
     "cost" INTEGER NOT NULL DEFAULT 0,
-    "stock" INTEGER NOT NULL DEFAULT 0,
-    "minStock" INTEGER NOT NULL DEFAULT 0,
+    "stock" REAL NOT NULL DEFAULT 0,
+    "minStock" REAL NOT NULL DEFAULT 0,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "categoryId" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -96,7 +98,7 @@ CREATE TABLE IF NOT EXISTS "SaleItem" (
     "productId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "sku" TEXT NOT NULL,
-    "quantity" INTEGER NOT NULL,
+    "quantity" REAL NOT NULL,
     "unitPrice" INTEGER NOT NULL,
     "unitCost" INTEGER NOT NULL DEFAULT 0,
     "lineTotal" INTEGER NOT NULL,
@@ -109,8 +111,8 @@ CREATE TABLE IF NOT EXISTS "InventoryMovement" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "productId" TEXT NOT NULL,
     "type" TEXT NOT NULL,
-    "quantity" INTEGER NOT NULL,
-    "stockAfter" INTEGER NOT NULL,
+    "quantity" REAL NOT NULL,
+    "stockAfter" REAL NOT NULL,
     "reference" TEXT,
     "note" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -174,7 +176,7 @@ CREATE TABLE IF NOT EXISTS "PurchaseItem" (
     "productId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "sku" TEXT NOT NULL,
-    "quantity" INTEGER NOT NULL,
+    "quantity" REAL NOT NULL,
     "unitCost" INTEGER NOT NULL,
     "lineTotal" INTEGER NOT NULL,
     CONSTRAINT "PurchaseItem_purchaseId_fkey" FOREIGN KEY ("purchaseId") REFERENCES "Purchase" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
@@ -201,7 +203,7 @@ CREATE TABLE IF NOT EXISTS "SaleReturnItem" (
     "productId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "sku" TEXT NOT NULL,
-    "quantity" INTEGER NOT NULL,
+    "quantity" REAL NOT NULL,
     "unitPrice" INTEGER NOT NULL,
     "unitCost" INTEGER NOT NULL DEFAULT 0,
     "lineTotal" INTEGER NOT NULL,
@@ -306,3 +308,12 @@ CREATE INDEX IF NOT EXISTS "CustomerPayment_customerId_createdAt_idx" ON "Custom
 
 -- CreateIndex
 CREATE INDEX IF NOT EXISTS "SupplierPayment_supplierId_createdAt_idx" ON "SupplierPayment"("supplierId", "createdAt");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "SaleItem_saleId_idx" ON "SaleItem"("saleId");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "Sale_customerId_idx" ON "Sale"("customerId");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "CashMovement_cashSessionId_idx" ON "CashMovement"("cashSessionId");

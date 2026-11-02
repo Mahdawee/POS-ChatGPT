@@ -1,5 +1,6 @@
 import { Controller, Get, Module, Query } from "@nestjs/common";
 import { AdminOnly } from "../auth";
+import { customerBalances, supplierBalances } from "../balances";
 import { PrismaService } from "../prisma.service";
 
 const localDay = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -10,6 +11,25 @@ const localDay = (date: Date) => `${date.getFullYear()}-${String(date.getMonth()
 export class ReportsController {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** فهرست بدهی‌داران (مشتریان) و بدهی‌ها (تأمین‌کنندگان) با ماندهٔ کل */
+  @Get("debtors")
+  async debtors() {
+    const [customers, suppliers, customerMap, supplierMap] = await Promise.all([
+      this.prisma.customer.findMany({ select: { id: true, name: true, phone: true }, orderBy: { name: "asc" } }),
+      this.prisma.supplier.findMany({ select: { id: true, name: true, phone: true }, orderBy: { name: "asc" } }),
+      customerBalances(this.prisma),
+      supplierBalances(this.prisma),
+    ]);
+    const debtorCustomers = customers.map((customer) => ({ ...customer, balance: customerMap.get(customer.id) || 0 })).filter((customer) => customer.balance > 0).sort((a, b) => b.balance - a.balance);
+    const debtorSuppliers = suppliers.map((supplier) => ({ ...supplier, balance: supplierMap.get(supplier.id) || 0 })).filter((supplier) => supplier.balance > 0).sort((a, b) => b.balance - a.balance);
+    return {
+      customers: debtorCustomers,
+      customersTotal: debtorCustomers.reduce((sum, customer) => sum + customer.balance, 0),
+      suppliers: debtorSuppliers,
+      suppliersTotal: debtorSuppliers.reduce((sum, supplier) => sum + supplier.balance, 0),
+    };
+  }
+
   @Get("profit")
   async profit(@Query("from") from?: string, @Query("to") to?: string) {
     const end = to ? new Date(to.length === 10 ? `${to}T23:59:59.999` : to) : new Date();
@@ -18,7 +38,9 @@ export class ReportsController {
     if (!from) start.setHours(0, 0, 0, 0);
     const range = { gte: start, lte: end };
     const [sales, returns, purchasesAgg, mix] = await Promise.all([
-      this.prisma.sale.findMany({ where: { createdAt: range }, include: { items: true } }),
+      // Hard cap protects memory on very long ranges; a small shop cannot
+      // realistically reach 50k sales inside one report window.
+      this.prisma.sale.findMany({ where: { createdAt: range }, take: 50000, include: { items: true } }),
       this.prisma.saleReturn.findMany({ where: { createdAt: range }, include: { items: true } }),
       this.prisma.purchase.aggregate({ _sum: { total: true }, where: { createdAt: range } }),
       this.prisma.sale.groupBy({ by: ["paymentMethod"], _sum: { total: true }, _count: true, where: { createdAt: range } }),

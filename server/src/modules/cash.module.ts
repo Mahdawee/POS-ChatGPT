@@ -52,15 +52,37 @@ class CashController {
     const result = await this.prisma.$transaction(async (tx) => {
       const session = await tx.cashSession.findFirst({ where: { status: "OPEN" } });
       if (!session) throw new BadRequestException("صندوق باز وجود ندارد.");
-      const [cashIn, cashOut, cashSales] = await Promise.all([
+      const [cashIn, cashOut, cashSales, byMethod, returnsAgg, invoiceCount] = await Promise.all([
         tx.cashMovement.aggregate({ where: { cashSessionId: session.id, type: "IN" }, _sum: { amount: true } }),
         tx.cashMovement.aggregate({ where: { cashSessionId: session.id, type: "OUT" }, _sum: { amount: true } }),
         tx.sale.aggregate({ where: { cashSessionId: session.id, paymentMethod: "CASH" }, _sum: { total: true } }),
+        tx.sale.groupBy({ by: ["paymentMethod"], _sum: { total: true }, _count: true, where: { cashSessionId: session.id } }),
+        tx.saleReturn.aggregate({ _sum: { total: true }, where: { sale: { cashSessionId: session.id } } }),
+        tx.sale.count({ where: { cashSessionId: session.id } }),
       ]);
       const expected = session.openingCash + (cashIn._sum.amount || 0) - (cashOut._sum.amount || 0) + (cashSales._sum.total || 0);
       const updated = await tx.cashSession.update({ where: { id: session.id }, data: { status: "CLOSED", expectedCash: expected, countedCash: dto.countedCash, note: dto.note?.trim() || session.note, closedAt: new Date() } });
       await tx.auditLog.create({ data: { actor: user.username, action: "CLOSE_CASH", entity: "CashSession", entityId: session.id, detail: `expected=${expected}; counted=${dto.countedCash}` } });
-      return { ...updated, difference: dto.countedCash - expected };
+      const methodTotal = (method: "CASH" | "MOBILE" | "CREDIT") => byMethod.find((row) => row.paymentMethod === method)?._sum.total || 0;
+      // End-of-shift (Z) report payload: everything the printed slip needs.
+      const z = {
+        sessionId: session.id,
+        cashier: user.displayName,
+        openedAt: session.openedAt,
+        closedAt: updated.closedAt,
+        openingCash: session.openingCash,
+        cashIn: cashIn._sum.amount || 0,
+        cashOut: cashOut._sum.amount || 0,
+        cashSales: cashSales._sum.total || 0,
+        mobileSales: methodTotal("MOBILE"),
+        creditSales: methodTotal("CREDIT"),
+        invoiceCount,
+        returnsTotal: returnsAgg._sum.total || 0,
+        expected,
+        counted: dto.countedCash,
+        difference: dto.countedCash - expected,
+      };
+      return { ...updated, difference: z.difference, z };
     });
     // Automatic safety snapshot whenever a shift is closed. A backup failure
     // must never invalidate the already-committed close, so it is best effort.

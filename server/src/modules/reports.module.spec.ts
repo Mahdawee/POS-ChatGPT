@@ -54,3 +54,31 @@ describe("Profit report", () => {
     ]);
   });
 });
+
+function debtorsSetup() {
+  const prisma = {
+    customer: { findMany: jest.fn().mockResolvedValue([
+      { id: "c1", name: "احمد", phone: null },
+      { id: "c2", name: "زبیده", phone: "070" },
+      { id: "c3", name: "نادر", phone: null },
+    ]) },
+    supplier: { findMany: jest.fn().mockResolvedValue([{ id: "s1", name: "تأمین‌کننده", phone: null }]) },
+    sale: { groupBy: jest.fn().mockResolvedValue([{ customerId: "c1", _sum: { total: 500 } }]) },
+    saleReturn: { findMany: jest.fn().mockResolvedValue([{ total: 100, sale: { customerId: "c1" } }]) },
+    customerPayment: { groupBy: jest.fn().mockResolvedValue([{ customerId: "c1", _sum: { amount: 150 } }]) },
+    purchase: { groupBy: jest.fn().mockResolvedValue([{ supplierId: "s1", _sum: { total: 800, paidAmount: 500 } }]) },
+    supplierPayment: { groupBy: jest.fn().mockResolvedValue([{ supplierId: "s1", _sum: { amount: 100 } }]) },
+  };
+  return { controller: new ReportsController(prisma as never), prisma };
+}
+
+describe("Debtors report", () => {
+  it("lists only customers and suppliers with a positive balance, sorted by debt", async () => {
+    const { controller } = debtorsSetup();
+    const report = await controller.debtors();
+    expect(report.customers).toEqual([{ id: "c1", name: "احمد", phone: null, balance: 250 }]);
+    expect(report.customersTotal).toBe(250);
+    expect(report.suppliers).toEqual([{ id: "s1", name: "تأمین‌کننده", phone: null, balance: 200 }]);
+    expect(report.suppliersTotal).toBe(200);
+  });
+});
