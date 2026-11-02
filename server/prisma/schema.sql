@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS "Product" (
     "isWeighted" BOOLEAN NOT NULL DEFAULT false,
     "expiryDate" DATETIME,
     "price" INTEGER NOT NULL,
+    "wholesalePrice" INTEGER,
+    "wholesaleMinQty" REAL,
     "cost" INTEGER NOT NULL DEFAULT 0,
     "stock" REAL NOT NULL DEFAULT 0,
     "minStock" REAL NOT NULL DEFAULT 0,
@@ -317,3 +319,52 @@ CREATE INDEX IF NOT EXISTS "Sale_customerId_idx" ON "Sale"("customerId");
 
 -- CreateIndex
 CREATE INDEX IF NOT EXISTS "CashMovement_cashSessionId_idx" ON "CashMovement"("cashSessionId");
+
+-- CreateTable (v0.6.0)
+CREATE TABLE IF NOT EXISTS "Expense" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "title" TEXT NOT NULL,
+    "amount" INTEGER NOT NULL,
+    "category" TEXT,
+    "note" TEXT,
+    "fromCash" BOOLEAN NOT NULL DEFAULT false,
+    "cashSessionId" TEXT,
+    "userId" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "Expense_cashSessionId_fkey" FOREIGN KEY ("cashSessionId") REFERENCES "CashSession" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT "Expense_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+CREATE INDEX IF NOT EXISTS "Expense_createdAt_idx" ON "Expense"("createdAt");
+
+-- CreateTable (v0.6.0)
+CREATE TABLE IF NOT EXISTS "PurchaseReturn" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "returnNo" TEXT NOT NULL,
+    "purchaseId" TEXT,
+    "supplierId" TEXT,
+    "total" INTEGER NOT NULL,
+    "note" TEXT,
+    "userId" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "PurchaseReturn_returnNo_key" UNIQUE ("returnNo"),
+    CONSTRAINT "PurchaseReturn_purchaseId_fkey" FOREIGN KEY ("purchaseId") REFERENCES "Purchase" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT "PurchaseReturn_supplierId_fkey" FOREIGN KEY ("supplierId") REFERENCES "Supplier" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT "PurchaseReturn_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+CREATE INDEX IF NOT EXISTS "PurchaseReturn_createdAt_idx" ON "PurchaseReturn"("createdAt");
+CREATE INDEX IF NOT EXISTS "PurchaseReturn_supplierId_idx" ON "PurchaseReturn"("supplierId");
+
+-- CreateTable (v0.6.0)
+CREATE TABLE IF NOT EXISTS "PurchaseReturnItem" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "purchaseReturnId" TEXT NOT NULL,
+    "productId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "sku" TEXT NOT NULL,
+    "quantity" REAL NOT NULL,
+    "unitCost" INTEGER NOT NULL,
+    "lineTotal" INTEGER NOT NULL,
+    CONSTRAINT "PurchaseReturnItem_purchaseReturnId_fkey" FOREIGN KEY ("purchaseReturnId") REFERENCES "PurchaseReturn" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "PurchaseReturnItem_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+CREATE INDEX IF NOT EXISTS "PurchaseReturnItem_purchaseReturnId_idx" ON "PurchaseReturnItem"("purchaseReturnId");

@@ -1,6 +1,7 @@
 import { BadRequestException, Body, Controller, Get, Module, Post } from "@nestjs/common";
+import { randomBytes } from "node:crypto";
 import { CurrentUser, SessionUser } from "../auth";
-import { PurchaseDto } from "../dto";
+import { PurchaseDto, PurchaseReturnDto } from "../dto";
 import { PrismaService } from "../prisma.service";
 
 /** ثبت خرید و ورود کالا به انبار */
@@ -69,5 +70,65 @@ export class PurchasesController {
   }
 }
 
-@Module({ controllers: [PurchasesController] })
+/** ثبت برگشت خرید: کالا به تأمین‌کننده برمی‌گردد و مانده حساب او کم می‌شود. */
+@Controller("purchases")
+export class PurchaseReturnsController {
+  constructor(private readonly prisma: PrismaService) {}
+
+  @Get("returns")
+  listReturns() {
+    return this.prisma.purchaseReturn.findMany({
+      take: 100,
+      include: { supplier: true, user: { select: { displayName: true } }, purchase: { select: { invoiceNo: true } }, items: true },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
+  @Post("returns")
+  async createReturn(@Body() dto: PurchaseReturnDto, @CurrentUser() user: SessionUser) {
+    // Merge duplicated product lines before touching the database.
+    const merged = new Map<string, number>();
+    for (const line of dto.items) merged.set(line.productId, (merged.get(line.productId) || 0) + line.quantity);
+    const lines = [...merged.entries()];
+    return this.prisma.$transaction(async (tx) => {
+      const products = await tx.product.findMany({ where: { id: { in: lines.map(([id]) => id) } } });
+      if (products.length !== lines.length) throw new BadRequestException("کالا پیدا نشد.");
+      const productMap = new Map(products.map((product) => [product.id, product]));
+      let supplierId = dto.supplierId || null;
+      if (dto.purchaseId) {
+        const purchase = await tx.purchase.findUnique({ where: { id: dto.purchaseId }, select: { supplierId: true } });
+        if (!purchase) throw new BadRequestException("رسید خرید پیدا نشد.");
+        supplierId = supplierId || purchase.supplierId;
+      }
+      if (supplierId && !(await tx.supplier.findUnique({ where: { id: supplierId } }))) throw new BadRequestException("تأمین‌کننده پیدا نشد.");
+      let total = 0;
+      const rows: Array<{ productId: string; name: string; sku: string; quantity: number; unitCost: number; lineTotal: number }> = [];
+      for (const [productId, quantity] of lines) {
+        const product = productMap.get(productId)!;
+        // Goods must physically be in stock to go back to the supplier.
+        if (quantity > product.stock) throw new BadRequestException("موجودی انبار برای برگشت این کالا کافی نیست.");
+        const unitCost = dto.items.find((line) => line.productId === productId)?.unitCost ?? product.cost;
+        const lineTotal = Math.round(quantity * unitCost);
+        if (!Number.isSafeInteger(lineTotal) || lineTotal > 2147483647) throw new BadRequestException("مبلغ یک قلم از سقف مجاز بیشتر است.");
+        total += lineTotal;
+        if (total > 2147483647) throw new BadRequestException("جمع برگشت خرید از سقف مجاز بیشتر است.");
+        rows.push({ productId, name: product.name, sku: product.sku, quantity, unitCost, lineTotal });
+      }
+      const returnNo = `PRet-${Date.now()}-${randomBytes(2).toString("hex").toUpperCase()}`;
+      const record = await tx.purchaseReturn.create({
+        data: { returnNo, purchaseId: dto.purchaseId || null, supplierId, total, note: dto.note?.trim() || null, userId: user.id, items: { create: rows } },
+        include: { items: true, supplier: true, user: { select: { displayName: true } }, purchase: { select: { invoiceNo: true } } },
+      });
+      for (const row of rows) {
+        const product = productMap.get(row.productId)!;
+        await tx.product.update({ where: { id: row.productId }, data: { stock: { decrement: row.quantity } } });
+        await tx.inventoryMovement.create({ data: { productId: row.productId, type: "PURCHASE_RETURN", quantity: row.quantity, stockAfter: product.stock - row.quantity, reference: returnNo, note: "برگشت خرید" } });
+      }
+      await tx.auditLog.create({ data: { actor: user.username, action: "PURCHASE_RETURN", entity: "PurchaseReturn", entityId: record.id, detail: `${returnNo} / ${total}` } });
+      return record;
+    });
+  }
+}
+
+@Module({ controllers: [PurchasesController, PurchaseReturnsController] })
 export class PurchasesModule {}

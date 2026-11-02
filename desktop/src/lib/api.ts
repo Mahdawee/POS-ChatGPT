@@ -52,10 +52,11 @@ export const get = <T,>(path: string) => request<T>(path);
 export const post = <T,>(path: string, body: unknown, headers?: Record<string, string>) => request<T>(path, { method: "POST", body: JSON.stringify(body), headers });
 export const put = <T,>(path: string, body: unknown) => request<T>(path, { method: "PUT", body: JSON.stringify(body) });
 export const patch = <T,>(path: string, body: unknown) => request<T>(path, { method: "PATCH", body: JSON.stringify(body) });
+export const del = <T,>(path: string) => request<T>(path, { method: "DELETE" });
 
 export type User = { id: string; username: string; displayName: string; role: "ADMIN" | "CASHIER" };
 export type Category = { id: string; name: string; color: string; _count?: { products: number } };
-export type Product = { id: string; sku: string; barcode: string | null; name: string; unit: string; isWeighted?: boolean; expiryDate?: string | null; price: number; cost: number; stock: number; minStock: number; categoryId: string | null; category?: Category | null; isActive?: boolean };
+export type Product = { id: string; sku: string; barcode: string | null; name: string; unit: string; isWeighted?: boolean; expiryDate?: string | null; price: number; wholesalePrice?: number | null; wholesaleMinQty?: number | null; cost: number; stock: number; minStock: number; categoryId: string | null; category?: Category | null; isActive?: boolean };
 export type Contact = { id: string; name: string; phone: string | null; address: string | null; note: string | null; balance?: number };
 export type SaleItem = { id: string; name: string; sku: string; quantity: number; unitPrice: number; lineTotal: number; productId: string };
 export type SaleReturnItem = { id: string; productId: string; name: string; sku: string; quantity: number; unitPrice: number; lineTotal: number };
@@ -63,13 +64,17 @@ export type SaleReturn = { id: string; returnNo: string; total: number; note: st
 export type Sale = { id: string; receiptNo: string; subtotal: number; discount: number; total: number; amountPaid: number; change: number; paymentMethod: "CASH" | "MOBILE" | "CREDIT"; createdAt: string; customer?: Contact | null; user?: { displayName: string }; items: SaleItem[]; returns?: SaleReturn[] };
 export type PurchaseItem = { id: string; productId: string; name: string; sku: string; quantity: number; unitCost: number; lineTotal: number };
 export type Purchase = { id: string; invoiceNo: string | null; note: string | null; total: number; paidAmount: number; createdAt: string; supplier?: Contact | null; user?: { displayName: string }; items: PurchaseItem[] };
+export type PurchaseReturnItem = { id: string; productId: string; name: string; sku: string; quantity: number; unitCost: number; lineTotal: number };
+export type PurchaseReturn = { id: string; returnNo: string; total: number; note: string | null; createdAt: string; supplier?: Contact | null; user?: { displayName: string }; purchase?: { invoiceNo: string | null } | null; items: PurchaseReturnItem[] };
+export type Expense = { id: string; title: string; amount: number; category: string | null; note: string | null; fromCash: boolean; cashSessionId: string | null; createdAt: string; user?: { displayName: string } };
+export type ExpenseList = { list: Expense[]; total: number };
 export type CustomerPayment = { id: string; amount: number; note: string | null; createdAt: string; user?: { displayName: string } };
 export type CustomerDetail = { customer: Contact; creditSales: number; creditReturns: number; paymentsTotal: number; balance: number; payments: CustomerPayment[]; recentSales: Sale[] };
 export type SupplierPayment = CustomerPayment;
 export type SupplierDetail = { supplier: Contact; purchasesTotal: number; paidAtPurchase: number; paymentsTotal: number; balance: number; payments: SupplierPayment[]; recentPurchases: Purchase[] };
 export type ProfitReport = {
   from: string; to: string; revenue: number; refunds: number; netRevenue: number; cost: number; profit: number; margin: number;
-  unknownCostRevenue: number; invoiceCount: number; purchasesTotal: number;
+  unknownCostRevenue: number; invoiceCount: number; purchasesTotal: number; expenses: number; netProfit: number;
   byDay: { day: string; revenue: number; profit: number }[];
   topProducts: { productId: string; name: string; quantity: number; revenue: number; profit: number }[];
   paymentMix: { method: string; total: number; count: number }[];

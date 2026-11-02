@@ -1,5 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
-import { PurchasesController } from "./purchases.module";
+import { PurchaseReturnsController, PurchasesController } from "./purchases.module";
 
 const user = { id: "user-1", username: "admin", displayName: "Admin", role: "ADMIN" as const };
 const product = { id: "product-1", name: "چای", sku: "T-1", stock: 2, cost: 10, price: 15, isActive: true };
@@ -57,5 +57,44 @@ describe("Purchases", () => {
     expect(tx.purchase.create).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ total: 60, paidAmount: 60 }) }));
     await controller.create({ items: [{ productId: "product-1", quantity: 5, unitCost: 12 }], paidAmount: 20 }, user);
     expect(tx.purchase.create).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ total: 60, paidAmount: 20 }) }));
+  });
+});
+
+function returnSetup() {
+  const product = { id: "product-1", name: "چای", sku: "T-1", stock: 8, cost: 10, price: 15, isActive: true };
+  const tx = {
+    product: { findMany: jest.fn().mockResolvedValue([{ ...product }]), update: jest.fn().mockResolvedValue({}) },
+    supplier: { findUnique: jest.fn().mockResolvedValue({ id: "supplier-1", name: "تأمین‌کننده" }) },
+    purchase: { findUnique: jest.fn().mockResolvedValue({ supplierId: "supplier-1" }) },
+    purchaseReturn: { create: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ id: "return-1", ...data })) },
+    inventoryMovement: { create: jest.fn().mockResolvedValue({}) },
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
+  };
+  const prisma = { $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)) };
+  return { controller: new PurchaseReturnsController(prisma as never), tx };
+}
+
+describe("Purchase returns", () => {
+  it("decrements stock, records a PURCHASE_RETURN movement and settles the supplier account", async () => {
+    const { controller, tx } = returnSetup();
+    const record = (await controller.createReturn({ purchaseId: "purchase-1", items: [{ productId: "product-1", quantity: 5 }] }, user)) as { total: number; supplierId: string | null };
+    expect(record.total).toBe(50); // 5 × cost 10
+    expect(record.supplierId).toBe("supplier-1");
+    expect(tx.product.update).toHaveBeenCalledWith({ where: { id: "product-1" }, data: { stock: { decrement: 5 } } });
+    expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "PURCHASE_RETURN", quantity: 5, stockAfter: 3 }) }));
+    expect(tx.auditLog.create).toHaveBeenCalled();
+  });
+
+  it("rejects a return larger than the stock on hand", async () => {
+    const { controller, tx } = returnSetup();
+    await expect(controller.createReturn({ items: [{ productId: "product-1", quantity: 9 }] }, user)).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.purchaseReturn.create).not.toHaveBeenCalled();
+    expect(tx.product.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown product", async () => {
+    const { controller, tx } = returnSetup();
+    tx.product.findMany.mockResolvedValue([]);
+    await expect(controller.createReturn({ items: [{ productId: "missing", quantity: 1 }] }, user)).rejects.toBeInstanceOf(BadRequestException);
   });
 });

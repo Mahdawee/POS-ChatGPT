@@ -84,12 +84,17 @@ export class SalesController {
       const products = await tx.product.findMany({ where: { id: { in: lines.map(([id]) => id) }, isActive: true } });
       if (products.length !== lines.length) throw new BadRequestException("یکی از کالاها غیرفعال است یا پیدا نشد.");
       const productMap = new Map(products.map((product) => [product.id, product]));
+      // Same rule as the POS screen: the line switches to the wholesale price
+      // once its quantity reaches the wholesale minimum. Keeping it here (not
+      // trusting client-sent prices) means the invoice total is always honest.
+      const unitPriceFor = (product: { price: number; wholesalePrice: number | null; wholesaleMinQty: number | null }, quantity: number): number =>
+        product.wholesalePrice != null && product.wholesaleMinQty != null && quantity >= product.wholesaleMinQty ? product.wholesalePrice : product.price;
       let subtotal = 0;
       for (const [productId, quantity] of lines) {
         const product = productMap.get(productId)!;
         if (product.stock < quantity) throw new BadRequestException(`موجودی ${product.name} کافی نیست. موجودی فعلی: ${product.stock}`);
         // Weighted goods (kg) produce fractional math; money stays whole-afghani.
-        const lineTotal = Math.round(product.price * quantity);
+        const lineTotal = Math.round(unitPriceFor(product, quantity) * quantity);
         if (!Number.isSafeInteger(lineTotal) || lineTotal > 2147483647) throw new BadRequestException("مبلغ یک قلم از سقف مجاز بیشتر است.");
         subtotal += lineTotal;
         if (subtotal > 2147483647) throw new BadRequestException("جمع فاکتور از سقف مجاز بیشتر است.");
@@ -116,7 +121,7 @@ export class SalesController {
           change: dto.paymentMethod === "CASH" ? amountPaid - total : 0,
           paymentMethod: dto.paymentMethod, note: dto.note?.trim(), customerId: dto.customerId || null,
           userId: user.id, cashSessionId,
-          items: { create: lines.map(([productId, quantity]) => { const product = productMap.get(productId)!; return { productId, name: product.name, sku: product.sku, quantity, unitPrice: product.price, unitCost: product.cost, lineTotal: Math.round(product.price * quantity) }; }) },
+          items: { create: lines.map(([productId, quantity]) => { const product = productMap.get(productId)!; const unitPrice = unitPriceFor(product, quantity); return { productId, name: product.name, sku: product.sku, quantity, unitPrice, unitCost: product.cost, lineTotal: Math.round(unitPrice * quantity) }; }) },
         }, include: { items: true, customer: true },
       });
       for (const [productId, quantity] of lines) {

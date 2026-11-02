@@ -54,6 +54,7 @@ function supplierSetup() {
     supplier: { findMany: jest.fn().mockResolvedValue([{ id: "supplier-1", name: "تأمین‌کننده نمونه", isActive: true }]) },
     purchase: { groupBy: jest.fn().mockResolvedValue([{ supplierId: "supplier-1", _sum: { total: 800, paidAmount: 500 } }]) },
     supplierPayment: { groupBy: jest.fn().mockResolvedValue([{ supplierId: "supplier-1", _sum: { amount: 100 } }]) },
+    purchaseReturn: { groupBy: jest.fn().mockResolvedValue([]) },
   };
   return { controller: new SuppliersController(prisma as never), tx, prisma };
 }

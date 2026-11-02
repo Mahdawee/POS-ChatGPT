@@ -1,5 +1,5 @@
 import { dateTime, dayLabel, dir, fullDate, lang, money, percent, t } from "../i18n";
-import type { ProfitReport, Product, Sale, SaleReturn, ShopSettings, ZReport } from "./api";
+import type { CustomerDetail, ProfitReport, Product, PurchaseReturn, Sale, SaleReturn, ShopSettings, ZReport } from "./api";
 
 /** Escapes user data before it is embedded into the print document. */
 const esc = (value: unknown): string => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char] as string));
@@ -128,6 +128,41 @@ export function zReportHtml(z: ZReport, shop: ShopSettings): string {
 export function labelsHtml(product: Product, count: number, barcodeSvg: string, shop: ShopSettings): string {
   const label = `<div class="price-label"><div class="label-name">${esc(product.name)}</div>${barcodeSvg}<div class="label-price">${money(product.price)}</div><div class="muted" style="font-size:9px">${esc(shop.shopName?.trim() || t("فروشگاه من"))}</div></div>`;
   return `<h1>${esc(t("لیبل قیمت"))} — ${esc(product.name)}</h1><div class="label-grid">${label.repeat(Math.max(1, Math.min(200, count)))}</div>`;
+}
+
+export function purchaseReturnHtml(record: PurchaseReturn, shop: ShopSettings): string {
+  const meta: Array<[string, string]> = [
+    [t("شماره برگشت خرید"), record.returnNo],
+    [t("رسید خرید"), record.purchase?.invoiceNo || "—"],
+    [t("تأمین‌کننده"), record.supplier?.name || "—"],
+    [t("زمان"), dateTime(record.createdAt)],
+  ];
+  const items = (record.items || []).map((item) => `<div class="receipt-item"><span>${esc(item.name)} × ${item.quantity}</span><b>${money(item.lineTotal)}</b></div>`);
+  const totals: Array<[string, string, boolean?]> = [
+    [t("مبلغ برگشت خرید"), money(record.total), true],
+    [t("ثبت در حساب"), t("تأمین‌کننده")],
+  ];
+  if (record.note) totals.push([t("یادداشت"), record.note]);
+  return receiptShell(shop, meta, items, totals, t("این برگشت در حساب تأمین‌کننده ثبت شد."));
+}
+
+export function debtReceiptHtml(detail: CustomerDetail, shop: ShopSettings): string {
+  const meta: Array<[string, string]> = [
+    [t("سند بدهی"), `DEBT-${detail.customer.id.slice(-6).toUpperCase()}`],
+    [t("زمان"), dateTime(new Date())],
+    [t("مشتری"), detail.customer.name],
+  ];
+  if (detail.customer.phone) meta.push([t("شماره تماس"), detail.customer.phone]);
+  const items = detail.recentSales
+    .filter((sale) => sale.paymentMethod === "CREDIT")
+    .slice(0, 8)
+    .map((sale) => `<div class="receipt-item"><span>${esc(sale.receiptNo)} · ${dayLabel(sale.createdAt)}</span><b>${money(sale.total)}</b></div>`);
+  const totals: Array<[string, string, boolean?]> = [
+    [t("مانده بدهی"), money(detail.balance), true],
+    [t("فروش نسیه"), money(detail.creditSales)],
+    [t("برگشتی + وصولی"), money(detail.creditReturns + detail.paymentsTotal)],
+  ];
+  return receiptShell(shop, meta, items, totals, t("لطفاً مانده بدهی خود را در اولین فرصت تسویه کنید."));
 }
 
 export function reportHtml(report: ProfitReport): string {

@@ -26,6 +26,16 @@ describe("POS checkout", () => {
     expect(tx.inventoryMovement.create).not.toHaveBeenCalled();
   });
 
+  it("switches the line to the wholesale price once quantity reaches the wholesale minimum", async () => {
+    const { controller, tx } = setup(10);
+    tx.product.findMany.mockResolvedValue([{ ...product, stock: 10, wholesalePrice: 8, wholesaleMinQty: 5 }]);
+    await controller.checkout({ items: [{ productId: "product-1", quantity: 6 }], paymentMethod: "CASH", amountPaid: 48 }, user);
+    expect(tx.sale.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ subtotal: 48, total: 48, change: 0, items: { create: [expect.objectContaining({ unitPrice: 8, lineTotal: 48 })] } }) }));
+    // Below the minimum the retail price applies, wholesale fields or not.
+    await controller.checkout({ items: [{ productId: "product-1", quantity: 2 }], paymentMethod: "CASH", amountPaid: 20 }, user);
+    expect(tx.sale.create).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ subtotal: 20, items: { create: [expect.objectContaining({ unitPrice: 10 })] } }) }));
+  });
+
   it("records the sale and its stock movement inside the same database transaction", async () => {
     const { controller, tx } = setup(5);
     await controller.checkout({ items: [{ productId: "product-1", quantity: 2 }], paymentMethod: "CASH", amountPaid: 25 }, user);

@@ -21,6 +21,8 @@ export class ProductDto {
   @IsOptional() @IsBoolean() isWeighted?: boolean;
   @IsOptional() @IsString() @MaxLength(10) expiryDate?: string;
   @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) price!: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) wholesalePrice?: number | null;
+  @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0) wholesaleMinQty?: number | null;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) cost?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) stock?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) minStock?: number;
@@ -120,4 +122,23 @@ export class ImportProductRowDto {
 }
 export class ProductImportDto {
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(5000) @ValidateNested({ each: true }) @Type(() => ImportProductRowDto) rows!: ImportProductRowDto[];
+}
+
+export class ExpenseDto {
+  @IsString() @MinLength(1) @MaxLength(120) title!: string;
+  @Type(() => Number) @IsInt() @Min(1) @Max(2147483647) amount!: number;
+  @IsOptional() @IsString() @MaxLength(60) category?: string;
+  @IsOptional() @IsString() @MaxLength(300) note?: string;
+  @IsOptional() @IsBoolean() fromCash?: boolean;
+}
+export class PurchaseReturnLineDto {
+  @IsString() productId!: string;
+  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001) @Max(2147483647) quantity!: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) unitCost?: number;
+}
+export class PurchaseReturnDto {
+  @IsOptional() @IsString() purchaseId?: string;
+  @IsOptional() @IsString() supplierId?: string;
+  @IsOptional() @IsString() @MaxLength(300) note?: string;
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(200) @ValidateNested({ each: true }) @Type(() => PurchaseReturnLineDto) items!: PurchaseReturnLineDto[];
 }

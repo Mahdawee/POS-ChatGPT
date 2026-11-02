@@ -24,6 +24,7 @@ enum MovementType {
   ADJUSTMENT_IN
   ADJUSTMENT_OUT
   SALE_RETURN
+  PURCHASE_RETURN
 }
 
 enum CashMovementType {
@@ -49,6 +50,8 @@ model Product {
   isWeighted  Boolean             @default(false)
   expiryDate  DateTime?
   price       Int
+  wholesalePrice Int?
+  wholesaleMinQty Float?
   cost        Int                 @default(0)
   stock       Float               @default(0)
   minStock    Float               @default(0)
@@ -59,6 +62,7 @@ model Product {
   movements   InventoryMovement[]
   purchaseItems PurchaseItem[]
   returnItems   SaleReturnItem[]
+  purchaseReturnItems PurchaseReturnItem[]
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
   @@index([name])
@@ -89,6 +93,7 @@ model Supplier {
   isActive  Boolean           @default(true)
   purchases Purchase[]
   payments  SupplierPayment[]
+  purchaseReturns PurchaseReturn[]
   createdAt DateTime          @default(now())
   updatedAt DateTime          @updatedAt
   @@index([name])
@@ -105,6 +110,8 @@ model User {
   cashSessions CashSession[]
   purchases    Purchase[]
   saleReturns  SaleReturn[]
+  expenses     Expense[]
+  purchaseReturns PurchaseReturn[]
   customerPayments CustomerPayment[]
   supplierPayments SupplierPayment[]
   createdAt    DateTime    @default(now())
@@ -181,6 +188,7 @@ model CashSession {
   sales       Sale[]
   movements   CashMovement[]
   customerPayments CustomerPayment[]
+  expenses    Expense[]
   openedAt    DateTime     @default(now())
   closedAt    DateTime?
   @@index([status, openedAt])
@@ -219,6 +227,7 @@ model Purchase {
   total      Int
   paidAmount Int            @default(0)
   items      PurchaseItem[]
+  purchaseReturns PurchaseReturn[]
   createdAt  DateTime       @default(now())
   @@index([createdAt])
   @@index([supplierId])
@@ -280,6 +289,52 @@ model CustomerPayment {
   user          User         @relation(fields: [userId], references: [id])
   createdAt     DateTime     @default(now())
   @@index([customerId, createdAt])
+}
+
+model Expense {
+  id            String       @id @default(cuid())
+  title         String
+  amount        Int
+  category      String?
+  note          String?
+  fromCash      Boolean      @default(false)
+  cashSessionId String?
+  cashSession   CashSession? @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
+  userId        String
+  user          User         @relation(fields: [userId], references: [id])
+  createdAt     DateTime     @default(now())
+  @@index([createdAt])
+}
+
+model PurchaseReturn {
+  id         String               @id @default(cuid())
+  returnNo   String               @unique
+  purchaseId String?
+  purchase   Purchase?            @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+  supplierId String?
+  supplier   Supplier?            @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  total      Int
+  note       String?
+  userId     String
+  user       User                 @relation(fields: [userId], references: [id])
+  items      PurchaseReturnItem[]
+  createdAt  DateTime             @default(now())
+  @@index([createdAt])
+  @@index([supplierId])
+}
+
+model PurchaseReturnItem {
+  id               String         @id @default(cuid())
+  purchaseReturnId String
+  purchaseReturn   PurchaseReturn @relation(fields: [purchaseReturnId], references: [id], onDelete: Cascade)
+  productId        String
+  product          Product        @relation(fields: [productId], references: [id])
+  name             String
+  sku              String
+  quantity         Float
+  unitCost         Int
+  lineTotal        Int
+  @@index([purchaseReturnId])
 }
 
 model SupplierPayment {

@@ -37,12 +37,13 @@ export class ReportsController {
     const start = from ? new Date(from) : new Date(end.getTime() - 29 * 86400000);
     if (!from) start.setHours(0, 0, 0, 0);
     const range = { gte: start, lte: end };
-    const [sales, returns, purchasesAgg, mix] = await Promise.all([
+    const [sales, returns, purchasesAgg, expensesAgg, mix] = await Promise.all([
       // Hard cap protects memory on very long ranges; a small shop cannot
       // realistically reach 50k sales inside one report window.
       this.prisma.sale.findMany({ where: { createdAt: range }, take: 50000, include: { items: true } }),
       this.prisma.saleReturn.findMany({ where: { createdAt: range }, include: { items: true } }),
       this.prisma.purchase.aggregate({ _sum: { total: true }, where: { createdAt: range } }),
+      this.prisma.expense.aggregate({ _sum: { amount: true }, where: { createdAt: range } }),
       this.prisma.sale.groupBy({ by: ["paymentMethod"], _sum: { total: true }, _count: true, where: { createdAt: range } }),
     ]);
     let revenue = 0;
@@ -94,6 +95,9 @@ export class ReportsController {
     const netRevenue = revenue - refunds;
     const netCost = cost - returnsCost;
     const profit = netRevenue - netCost;
+    // Store expenses (rent, power, transport…) are not part of the margin on
+    // goods, so they are reported separately and deducted for the net result.
+    const expenses = expensesAgg._sum.amount || 0;
     return {
       from: start.toISOString(),
       to: end.toISOString(),
@@ -102,6 +106,8 @@ export class ReportsController {
       netRevenue,
       cost: netCost,
       profit,
+      expenses,
+      netProfit: profit - expenses,
       margin: netRevenue > 0 ? profit / netRevenue : 0,
       unknownCostRevenue,
       invoiceCount: sales.length,

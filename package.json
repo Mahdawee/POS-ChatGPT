@@ -1,6 +1,6 @@
 {
   "name": "dar-pos-erp",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "scripts": {
     "setup:dependencies": "npm install && npm --prefix server install && npm --prefix desktop install && npm run db:generate",

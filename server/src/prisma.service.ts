@@ -16,6 +16,8 @@ const COLUMN_MIGRATIONS: Array<{ table: string; column: string; ddl: string }> =
   { table: "Purchase", column: "paidAmount", ddl: `ALTER TABLE "Purchase" ADD COLUMN "paidAmount" INTEGER NOT NULL DEFAULT 0` },
   { table: "Product", column: "isWeighted", ddl: `ALTER TABLE "Product" ADD COLUMN "isWeighted" BOOLEAN NOT NULL DEFAULT false` },
   { table: "Product", column: "expiryDate", ddl: `ALTER TABLE "Product" ADD COLUMN "expiryDate" DATETIME` },
+  { table: "Product", column: "wholesalePrice", ddl: `ALTER TABLE "Product" ADD COLUMN "wholesalePrice" INTEGER` },
+  { table: "Product", column: "wholesaleMinQty", ddl: `ALTER TABLE "Product" ADD COLUMN "wholesaleMinQty" REAL` },
 ];
 
 export async function ensureColumnMigrations(db: { $queryRawUnsafe(sql: string): Promise<unknown> }): Promise<void> {

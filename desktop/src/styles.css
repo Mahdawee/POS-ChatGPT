@@ -31,3 +31,17 @@
 
 /* login-screen language switch (same component as the sidebar one) */
 .login-card .lang-switch{justify-content:center;margin:16px 0 0}
+
+/* v0.6.0 — purchase-return tabs, held orders, expense page */
+.segmented{display:inline-flex;border:1px solid #e2e9e4;border-radius:8px;overflow:hidden;background:#fff}
+.segmented button{border:0;background:transparent;padding:7px 13px;font-size:11px;font-weight:600;color:#7b8894;cursor:pointer}
+.segmented button.active{background:#eaf4ee;color:#246847}
+.hold-list{display:flex;flex-direction:column}
+.hold-row{display:flex;align-items:center;gap:10px;padding:11px 2px;border-bottom:1px solid #f0f2f2}
+.hold-row:last-child{border:0}
+.hold-row small{display:block;color:#98a2ab;font-size:10px;margin-top:3px}
+.pos-shortcuts kbd{margin:0 2px}
+.metric-chip{display:inline-flex;align-items:center;gap:8px;background:#fbf4ea;border:1px solid #f0e4d2;color:#a3742b;border-radius:9px;padding:8px 12px;font-size:11px}
+.metric-chip b{font-size:13px}
+.check-line{display:flex;align-items:center;gap:8px;font-size:11px;color:#4a5763;cursor:pointer}
+.check-line input{width:15px;height:15px;accent-color:#35825c}

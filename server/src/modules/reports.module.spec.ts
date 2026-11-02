@@ -20,6 +20,7 @@ function setup() {
       ]),
     },
     purchase: { aggregate: jest.fn().mockResolvedValue({ _sum: { total: 120 } }) },
+    expense: { aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 70 } }) },
   };
   return { controller: new ReportsController(prisma as never), prisma };
 }
@@ -35,6 +36,8 @@ describe("Profit report", () => {
     expect(report.profit).toBe(21);             // 45 - 24
     expect(report.margin).toBeCloseTo(21 / 45);
     expect(report.purchasesTotal).toBe(120);
+    expect(report.expenses).toBe(70);
+    expect(report.netProfit).toBe(-49);         // 21 gross - 70 expenses
     expect(report.invoiceCount).toBe(2);
   });
 
@@ -68,6 +71,7 @@ function debtorsSetup() {
     customerPayment: { groupBy: jest.fn().mockResolvedValue([{ customerId: "c1", _sum: { amount: 150 } }]) },
     purchase: { groupBy: jest.fn().mockResolvedValue([{ supplierId: "s1", _sum: { total: 800, paidAmount: 500 } }]) },
     supplierPayment: { groupBy: jest.fn().mockResolvedValue([{ supplierId: "s1", _sum: { amount: 100 } }]) },
+    purchaseReturn: { groupBy: jest.fn().mockResolvedValue([{ supplierId: "s1", _sum: { total: 50 } }]) },
   };
   return { controller: new ReportsController(prisma as never), prisma };
 }
@@ -78,7 +82,7 @@ describe("Debtors report", () => {
     const report = await controller.debtors();
     expect(report.customers).toEqual([{ id: "c1", name: "احمد", phone: null, balance: 250 }]);
     expect(report.customersTotal).toBe(250);
-    expect(report.suppliers).toEqual([{ id: "s1", name: "تأمین‌کننده", phone: null, balance: 200 }]);
-    expect(report.suppliersTotal).toBe(200);
+    expect(report.suppliers).toEqual([{ id: "s1", name: "تأمین‌کننده", phone: null, balance: 150 }]);
+    expect(report.suppliersTotal).toBe(150); // 800 - 500 paid - 100 payments - 50 returned goods
   });
 });

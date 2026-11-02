@@ -1,9 +1,9 @@
 import { type ReactNode } from "react";
-import { Activity, Banknote, BarChart3, Box, Boxes, CircleUserRound, FileText, Globe, LayoutDashboard, LogOut, PackagePlus, Settings2, ShoppingCart, Tags, Truck, UsersRound, type LucideIcon } from "lucide-react";
+import { Activity, Banknote, BarChart3, Box, Boxes, CircleUserRound, FileText, Globe, LayoutDashboard, LogOut, PackagePlus, ReceiptText, Settings2, ShoppingCart, Tags, Truck, UsersRound, type LucideIcon } from "lucide-react";
 import type { User } from "../lib/api";
 import { LANGS, t, todayLabel, useLanguage } from "../i18n";
 
-export type PageId = "dashboard" | "pos" | "products" | "categories" | "customers" | "suppliers" | "purchases" | "inventory" | "sales" | "reports" | "cash" | "users" | "settings";
+export type PageId = "dashboard" | "pos" | "products" | "categories" | "customers" | "suppliers" | "purchases" | "inventory" | "sales" | "reports" | "cash" | "expenses" | "users" | "settings";
 // Labels/groups are Dari keys; t() runs at render time so switching the
 // language updates the sidebar immediately.
 const navigation: { id: PageId; label: string; icon: LucideIcon; group: string; admin?: boolean }[] = [
@@ -18,6 +18,7 @@ const navigation: { id: PageId; label: string; icon: LucideIcon; group: string; 
   { id: "suppliers", label: "تأمین‌کنندگان", icon: PackagePlus, group: "اشخاص" },
   { id: "reports", label: "گزارش‌ها", icon: BarChart3, group: "مدیریت", admin: true },
   { id: "cash", label: "مدیریت صندوق", icon: Banknote, group: "مدیریت" },
+  { id: "expenses", label: "دخل و خرج", icon: ReceiptText, group: "مدیریت", admin: true },
   { id: "users", label: "کاربران", icon: CircleUserRound, group: "مدیریت", admin: true },
   { id: "settings", label: "تنظیمات", icon: Settings2, group: "مدیریت", admin: true },
 ];
