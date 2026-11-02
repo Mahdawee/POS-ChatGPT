@@ -56,6 +56,12 @@
 .scan-result-grid>div{border:1px solid #e2e9e4;border-radius:8px;padding:8px 10px;background:#fff;display:flex;flex-direction:column;gap:2px}
 .scan-result-grid span{font-size:10px;color:#7b8894}
 .scan-result-grid b{font-size:12px;word-break:break-all}
+.scan-status{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid #e2e9e4;border-radius:10px;background:#fff}
+.scan-status .grow{display:flex;flex-direction:column;gap:2px;min-width:0}
+.scan-status small{color:#7b8894}
+.scan-status .scan-status-icon{flex:none}
+.scan-status.ok .scan-status-icon{color:#246847}
+.scan-status:not(.ok) .scan-status-icon{color:#b3261e}
 .scan-status-icon{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600}
 .compact-field{display:flex;flex-direction:column;gap:4px}
 .grow{flex:1}

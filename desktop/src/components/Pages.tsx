@@ -5,7 +5,7 @@ import { dateOnly, dateTime, dayLabel, fullDate, money, percent, qty, t } from "
 import { debtorsHtml, debtReceiptHtml, labelsHtml, printHtml, purchaseReturnHtml, reportHtml, returnSlipHtml, saleReceiptHtml, zReportHtml } from "../lib/print";
 import { importTemplateHeader, mapImportRows, parseCsv, toCsv, type ImportRow } from "../lib/csv";
 import { ScannerPanel } from "./ScannerPanel";
-import { beep, scannerSettings } from "../lib/scanner";
+import { scannerBeep, scannerSettings } from "../lib/scanner";
 import { APP_VERSION, RELEASES_API } from "../lib/version";
 import { invoke } from "@tauri-apps/api/core";
 import JsBarcode from "jsbarcode";
@@ -180,7 +180,11 @@ export function PosPage({ notify }: { notify: Notify }) {
   const searchRef = useRef<HTMLInputElement>(null); const paidRef = useRef<HTMLInputElement>(null); const lastSaleRef = useRef<Sale | null>(null);
   /** Effective unit price: wholesale once the line reaches the wholesale minimum. */
   const unitPriceFor = (product: Product, quantity: number): number => (product.wholesalePrice != null && product.wholesaleMinQty != null && quantity >= product.wholesaleMinQty ? product.wholesalePrice : product.price);
-  const load = () => Promise.all([get<Product[]>("/products"), get<Contact[]>("/customers"), get<CashSession | null>("/cash/current"), get<ShopSettings>("/settings")]).then(([p, c, s, settings]) => { setProducts(p); setCustomers(c); setCash(s); setShop(settings); }).catch((e) => setError(e.message)); useEffect(() => { void load(); }, []);
+  // Shop settings (incl. the logo data-URL and print options) are fetched
+  // once per mount — re-downloading them after every checkout only added
+  // latency to the next sale.
+  const load = () => Promise.all([get<Product[]>("/products"), get<Contact[]>("/customers"), get<CashSession | null>("/cash/current")]).then(([p, c, s]) => { setProducts(p); setCustomers(c); setCash(s); }).catch((e) => setError(e.message));
+  useEffect(() => { void load(); get<ShopSettings>("/settings").then(setShop).catch((e) => setError(e.message)); }, []);
   const cartItems = useMemo(() => Object.entries(cart).map(([id, quantity]) => { const product = products.find((p) => p.id === id)!; return { product, quantity }; }).filter((line) => line.product), [cart, products]);
   const subtotal = cartItems.reduce((sum, line) => sum + Math.round(unitPriceFor(line.product, line.quantity) * line.quantity), 0); const total = Math.max(0, subtotal - discount);
   useEffect(() => { if (payment !== "CASH") setPaid(total); else if (paid === 0 || paid < total) setPaid(total); }, [total, payment]);
@@ -215,10 +219,11 @@ export function PosPage({ notify }: { notify: Notify }) {
       const plu = code.slice(1, 6);
       const weight = Number(code.slice(6, 11)) / 1000;
       const scaled = products.find((p) => p.sku === plu);
-      if (scaled && weight > 0) { add(scaled, Math.round(weight * 1000) / 1000); setQuery(""); beep(); return; }
+      if (scaled && weight > 0) { scannerBeep((cart[scaled.id] || 0) + weight <= scaled.stock); add(scaled, Math.round(weight * 1000) / 1000); setQuery(""); return; }
     }
     const exact = products.find((p) => p.barcode === code || p.sku.toLowerCase() === code.toLowerCase());
-    if (exact) { add(exact); setQuery(""); beep(); } else if (code) setError(t("کالایی با این بارکد یا کد پیدا نشد."));
+    if (exact) { scannerBeep((cart[exact.id] || 0) + 1 <= exact.stock); add(exact); setQuery(""); }
+    else if (code) { scannerBeep(false); setError(t("کالایی با این بارکد یا کد پیدا نشد.")); }
   };
   const quantity = (id: string, change: number) => setCart((previous) => { const next = (previous[id] || 0) + change; if (next <= 0) { const copy = { ...previous }; delete copy[id]; return copy; } const product = products.find((p) => p.id === id); if (product && next > product.stock) { setError(t("موجودی {name} کافی نیست.", { name: product.name })); return previous; } return { ...previous, [id]: next }; });
   const parkOrder = () => {
@@ -252,7 +257,7 @@ export function PosPage({ notify }: { notify: Notify }) {
     const next = held.filter((entry) => entry.id !== order.id);
     setHeld(next); writeHeldOrders(next);
   };
-  const checkout = async () => { if (!cartItems.length) return; if (discount > subtotal) { setError(t("تخفیف نمی‌تواند بیشتر از جمع فاکتور باشد.")); return; } setSaving(true); setError(""); try { const sale = await post<Sale>("/sales", { items: cartItems.map(({ product, quantity }) => ({ productId: product.id, quantity })), customerId: customerId || undefined, paymentMethod: payment, discount, amountPaid: payment === "CREDIT" ? 0 : paid }, { "Idempotency-Key": crypto.randomUUID() }); setReceipt(sale); lastSaleRef.current = sale; setCart({}); setDiscount(0); setCustomerId(""); setPaid(0); await load(); notify(t("فروش با موفقیت ثبت شد.")); beep(); if (shop.autoPrintReceipt === "1") printHtml(saleReceiptHtml(sale, shop), { copies: Number(shop.receiptCopies) || 1 }); } catch (e) { setError((e as Error).message); } finally { setSaving(false); } };
+  const checkout = async () => { if (!cartItems.length) return; if (discount > subtotal) { setError(t("تخفیف نمی‌تواند بیشتر از جمع فاکتور باشد.")); return; } setSaving(true); setError(""); try { const sale = await post<Sale>("/sales", { items: cartItems.map(({ product, quantity }) => ({ productId: product.id, quantity })), customerId: customerId || undefined, paymentMethod: payment, discount, amountPaid: payment === "CREDIT" ? 0 : paid }, { "Idempotency-Key": crypto.randomUUID() }); setReceipt(sale); lastSaleRef.current = sale; setCart({}); setDiscount(0); setCustomerId(""); setPaid(0); await load(); notify(t("فروش با موفقیت ثبت شد.")); scannerBeep(); if (shop.autoPrintReceipt === "1") printHtml(saleReceiptHtml(sale, shop), { copies: Number(shop.receiptCopies) || 1 }); } catch (e) { setError((e as Error).message); } finally { setSaving(false); } };
   return <div className="pos-layout">
     <section className="pos-products surface"><div className="pos-title"><div><h2>{t("انتخاب کالا")}</h2><p>{t("بارکد را اسکن یا نام کالا را جست‌وجو کنید.")}</p></div><span className="live-status"><i/>{t("آماده")}</span></div><form className="search-box pos-search" onSubmit={scan}><Search size={19}/><input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Tab" && !e.shiftKey && query.trim() && scannerSettings().endKey !== "enter") { e.preventDefault(); void scan(e as unknown as FormEvent); } }} placeholder={t("نام کالا، بارکد یا بارکد ترازو…")} ref={searchRef}/><kbd>F1</kbd></form>{error && <ErrorBox message={error}/>}<div className="pos-product-grid">{filtered.map((p) => <button key={p.id} className={`pos-product ${p.stock <= 0 ? "disabled" : ""}`} disabled={p.stock <= 0} onClick={() => add(p)}><div className="pos-product-art" style={{ background: p.category?.color || "#8494a5" }}>{p.name.slice(0, 1)}</div><span className="pos-product-name">{p.name}</span><span className="pos-product-bottom"><b>{money(p.price)}</b><small className={p.stock <= p.minStock ? "stock-low" : ""}>{qty(p.stock)} {p.unit}</small></span></button>)}{!filtered.length && <Empty title={t("کالایی پیدا نشد")} text={t("نام یا بارکد دیگری را جست‌وجو کنید.")}/>}</div></section>
     <aside className="cart-panel surface"><div className="cart-heading"><div><h2>{t("فاکتور فروش")}</h2><p>{cartItems.reduce((n, line) => n + line.quantity, 0)} {t("قلم کالا")}</p></div><div className="row-actions">{held.length > 0 && <button className="text-button" onClick={() => setShowHeld(true)}><Pause size={14}/>{t("معلق‌ها")} ({held.length})</button>}<button className="text-button" onClick={parkOrder} disabled={!cartItems.length} title="F4"><Pause size={14}/>{t("معلق")}</button><button className="text-button danger-text" onClick={() => setCart({})}>{t("پاک‌کردن")}</button></div></div><div className="cart-lines">{cartItems.length ? cartItems.map(({ product, quantity: lineQty }) => <article className="cart-line" key={product.id}><div className="cart-line-title"><b>{product.name}</b><small>{money(unitPriceFor(product, lineQty))} / {product.unit}{unitPriceFor(product, lineQty) === product.wholesalePrice && product.wholesalePrice != null ? ` · ${t("قیمت عمده")}` : ""}</small></div><div className="quantity-control"><button onClick={() => quantity(product.id, -1)}>−</button>{product.isWeighted ? <input className="qty-input" type="number" dir="ltr" min="0.001" step="0.001" value={lineQty} onChange={(e) => setExact(product.id, Number(e.target.value) || 0)} title={t("مقدار (کیلوگرم)")} aria-label={t("مقدار (کیلوگرم)")}/> : <b>{lineQty}</b>}<button onClick={() => quantity(product.id, 1)}>+</button></div><strong>{money(Math.round(unitPriceFor(product, lineQty) * lineQty))}</strong></article>) : <div className="cart-empty"><div><ShoppingBag size={24}/></div><b>{t("فاکتور خالی است")}</b><span>{t("برای افزودن کالا روی آن بزنید.")}</span></div>}</div>

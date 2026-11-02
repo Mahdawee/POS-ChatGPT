@@ -44,7 +44,12 @@ export function printHtml(inner: string, options: { width?: string; title?: stri
   const width = options.width || "72mm";
   const title = options.title || t("رسید فروش");
   const copies = Math.min(3, Math.max(1, Math.round(options.copies || 1)));
-  const html = `<!doctype html><html dir="${dir()}" lang="${lang()}"><head><meta charset="utf-8"><title>${esc(title)}</title><style>${baseStyles(width)}</style></head><body>${inner}</body></html>`;
+  // Receipt copies all live in ONE print document, separated by page
+  // breaks: a single print dialog then emits the whole batch back-to-back
+  // (thermal printers cannot duplicate a job themselves, and consecutive
+  // dialogs are unreliable in WebView2).
+  const body = Array.from({ length: copies }, () => inner).join('<div style="break-after:page;page-break-after:always;height:0"></div>');
+  const html = `<!doctype html><html dir="${dir()}" lang="${lang()}"><head><meta charset="utf-8"><title>${esc(title)}</title><style>${baseStyles(width)}</style></head><body>${body}</body></html>`;
   const frame = document.createElement("iframe");
   frame.setAttribute("aria-hidden", "true");
   frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
@@ -57,11 +62,6 @@ export function printHtml(inner: string, options: { width?: string; title?: stri
   };
   document.body.appendChild(frame);
   frame.srcdoc = html;
-  // Receipt copies: each copy is its own print document (thermal printers
-  // cannot duplicate a job), delivered back-to-back.
-  for (let copy = 1; copy < copies; copy += 1) {
-    window.setTimeout(() => printHtml(inner, { ...options, copies: undefined }), copy * 900);
-  }
 }
 
 /** Shop header shared by every printed document: logo (if configured) + name. */

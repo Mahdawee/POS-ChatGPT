@@ -37,12 +37,18 @@ export function rememberScannerTest(test: ScannerTest): void {
   try { localStorage.setItem(LAST_TEST_KEY, JSON.stringify(test)); } catch { /* storage unavailable */ }
 }
 
+// One shared AudioContext: creating it on every beep wastes time and some
+// browsers throttle repeated context creation.
+let audioContext: AudioContext | null = null;
+
 /** Short confirmation beep after a successful scan (WebAudio, no assets). */
 export function beep(ok = true): void {
   try {
     const Ctor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!Ctor) return;
-    const context = new Ctor();
+    audioContext = audioContext || new Ctor();
+    const context = audioContext;
+    if (context.state === "suspended") void context.resume();
     const oscillator = context.createOscillator();
     const gain = context.createGain();
     oscillator.type = "sine";
@@ -51,8 +57,13 @@ export function beep(ok = true): void {
     oscillator.connect(gain).connect(context.destination);
     oscillator.start();
     oscillator.stop(context.currentTime + (ok ? 0.07 : 0.18));
-    oscillator.onended = () => { void context.close(); };
   } catch { /* audio unavailable */ }
+}
+
+/** Beep used in the POS flow — respects the "beep after scan" setting. */
+export function scannerBeep(ok = true): void {
+  if (!scannerSettings().beep) return;
+  beep(ok);
 }
 
 /** Rough classification of a scanned value, for the settings test panel. */

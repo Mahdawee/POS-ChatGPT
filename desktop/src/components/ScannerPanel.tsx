@@ -32,6 +32,7 @@ export function ScannerPanel() {
       beep(true);
     };
     const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { window.clearTimeout(timerRef.current); bufferRef.current = []; setArmed(false); return; }
       if (event.key === "Enter" || event.key === "Tab") {
         if (event.key === "Tab") event.preventDefault();
         if (event.key === "Enter" && !bufferRef.current.length) return; // plain Enter key press, not a scan
@@ -54,7 +55,7 @@ export function ScannerPanel() {
       <div className="scan-status-icon">{last ? <Check size={22}/> : <CircleAlert size={22}/>}</div>
       <div className="grow">
         <b>{last ? t("بارکدخوان متصل و فعال است") : armed ? t("در انتظار اسکن…") : t("وسیله آزمون نشده است")}</b>
-        <small>{last ? t("آخرین اسکن: {time}", { time: dateTime(last.at) }) : armed ? t("هر بارکد یا کد QR را مقابل وسیله بگیرید.") : t("برای بررسی اتصال، آزمون را شروع کنید و یک بارکد اسکن کنید.")}</small>
+        <small>{last ? t("آخرین اسکن: {time}", { time: dateTime(last.at) }) : armed ? <> {t("هر بارکد یا کد QR را مقابل وسیله بگیرید.")} · {t("کلید Esc آزمون را لغو می‌کند.")} </> : t("برای بررسی اتصال، آزمون را شروع کنید و یک بارکد اسکن کنید.")}</small>
       </div>
       <button className={last ? "secondary-button" : "primary-button"} onClick={() => { bufferRef.current = []; setArmed(true); }} disabled={armed}><ScanBarcode size={17}/>{armed ? t("در حال گوش‌دادن…") : t("شروع آزمون")}</button>
     </div>

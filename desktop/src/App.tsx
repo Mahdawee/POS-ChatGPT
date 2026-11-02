@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CircleAlert, CircleCheck, Globe, LoaderCircle, LockKeyhole, ShoppingBasket } from "lucide-react";
 import { get, post, type ShopSettings, type User } from "./lib/api";
 import { LANGS, t, useLanguage } from "./i18n";
@@ -19,7 +19,10 @@ export default function App() {
   const [apiSlow, setApiSlow] = useState(false);
   const [restore, setRestore] = useState(true);
   const [shopName, setShopName] = useState("");
-  const notify = (text: string, kind: "success" | "error" = "success") => { setNotice({ text, kind }); window.setTimeout(() => setNotice(null), 4000); };
+  const noticeTimer = useRef<number | undefined>(undefined);
+  // Clearing the previous timer keeps the newest toast on screen for its
+  // full four seconds instead of being cut short by an older one.
+  const notify = (text: string, kind: "success" | "error" = "success") => { setNotice({ text, kind }); window.clearTimeout(noticeTimer.current); noticeTimer.current = window.setTimeout(() => setNotice(null), 4000); };
 
   useEffect(() => {
     let saved: Session | null = null;
