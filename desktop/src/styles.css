@@ -155,3 +155,31 @@ html.dark .login-card,html.dark .lock-card{background:#151d23;border-color:#2a34
 .count-sheet{max-height:46vh;overflow:auto}
 .count-sheet input{width:110px;padding:5px 8px;font-size:12px}
 html.dark .checkbox-row{color:#b6c2cc}
+
+/* ── Round 16: licensing, orders, installments, digital receipts ────────── */
+.license-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:linear-gradient(160deg,#f4f7f4,#e9efe9)}
+html.dark .license-screen{background:linear-gradient(160deg,#141b16,#0f1411)}
+.license-card{width:min(560px,100%);background:var(--surface,#fff);border:1px solid #e4e8e6;border-radius:16px;padding:28px;display:flex;flex-direction:column;gap:14px;box-shadow:0 18px 50px rgba(15,35,20,.12)}
+html.dark .license-card{background:#181f1b;border-color:#2a332c;box-shadow:0 18px 50px rgba(0,0,0,.5)}
+.license-card h1{display:flex;align-items:center;gap:10px;font-size:20px;margin:0}
+.license-card h1 small{font-weight:400;font-size:12px;color:#98a2ab}
+.license-logo{width:44px;height:44px;border-radius:12px;background:#246847;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px}
+.machine-key{border:1px dashed #b9c6bd;border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;background:#f7faf7}
+html.dark .machine-key{background:#1d2620;border-color:#3a463c}
+.machine-key span{font-size:11px;color:#68766e}
+.machine-key>div{display:flex;align-items:center;gap:8px}
+.machine-key b{font-family:ui-monospace,monospace;font-size:15px;letter-spacing:.5px;direction:ltr}
+.receipt-text{white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px;line-height:1.7;background:#f7faf7;border:1px solid #e4e8e6;border-radius:10px;padding:12px;max-height:40vh;overflow:auto;margin:0 0 10px}
+html.dark .receipt-text{background:#1d2620;border-color:#2a332c}
+.bundle-row{display:grid;grid-template-columns:1fr 110px 36px;gap:8px;align-items:center}
+.bundle-row input,.bundle-row select{padding:8px 10px;border:1px solid #d7ded9;border-radius:8px;font-size:12px;background:transparent}
+.order-deliver-line{display:flex;flex-direction:column;gap:6px;border:1px solid #e4e8e6;border-radius:10px;padding:10px}
+.order-deliver-line b{font-size:13px}
+.installment-chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid #d7ded9;background:transparent;border-radius:999px;padding:4px 10px;font-size:11px;cursor:pointer;color:inherit}
+.chip.active{background:#246847;color:#fff;border-color:#246847}
+.chip.done{background:#e7f3ec;color:#246847;border-color:#bcdcc9}
+.chip.overdue{background:#fdecec;color:#b4232a;border-color:#f3c5c7}
+.hint-box.green{background:#e7f3ec;color:#1f5b3a;border-color:#bcdcc9}
+.amber-text{color:#b25e09}
+html.dark .amber-text{color:#e8a33d}

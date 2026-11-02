@@ -34,6 +34,12 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     },
   });
   if (response.status === 401 && !path.endsWith("/auth/login")) window.dispatchEvent(new CustomEvent("darpos:session-expired"));
+  // 402 = unlicensed/expired/tampered: the app switches to the license screen.
+  if (response.status === 402) {
+    let detail: Record<string, unknown> = {};
+    try { detail = await response.json(); } catch { /* body unreadable */ }
+    window.dispatchEvent(new CustomEvent("darpos:license-required", { detail }));
+  }
   if (!response.ok) {
     let message = t("درخواست انجام نشد.");
     try {
@@ -60,12 +66,12 @@ export const del = <T,>(path: string) => request<T>(path, { method: "DELETE" });
 
 export type User = { id: string; username: string; displayName: string; role: "ADMIN" | "CASHIER" };
 export type Category = { id: string; name: string; color: string; _count?: { products: number } };
-export type Product = { id: string; sku: string; barcode: string | null; name: string; unit: string; isWeighted?: boolean; expiryDate?: string | null; price: number; wholesalePrice?: number | null; wholesaleMinQty?: number | null; cost: number; stock: number; backstock?: number; minStock: number; categoryId: string | null; category?: Category | null; isActive?: boolean };
-export type Contact = { id: string; name: string; phone: string | null; address: string | null; note: string | null; balance?: number; creditLimit?: number };
+export type Product = { id: string; sku: string; barcode: string | null; name: string; unit: string; isWeighted?: boolean; isBundle?: boolean; isSerialized?: boolean; reserved?: number; expiryDate?: string | null; price: number; wholesalePrice?: number | null; wholesaleMinQty?: number | null; cost: number; stock: number; backstock?: number; minStock: number; categoryId: string | null; category?: Category | null; isActive?: boolean; bundleComponents?: Array<{ id: string; componentId: string; quantity: number; component?: { id: string; name: string; sku: string; unit: string } }>; serialUnits?: Array<{ id: string }> };
+export type Contact = { id: string; name: string; phone: string | null; address: string | null; note: string | null; balance?: number; creditLimit?: number; walletBalance?: number; tier?: "RETAIL" | "WHOLESALE" };
 export type SaleItem = { id: string; name: string; sku: string; quantity: number; unitPrice: number; lineTotal: number; productId: string; discount?: number };
 export type SaleReturnItem = { id: string; productId: string; name: string; sku: string; quantity: number; unitPrice: number; lineTotal: number };
 export type SaleReturn = { id: string; returnNo: string; total: number; creditRelief?: number; cashAmount?: number; note: string | null; createdAt: string; user?: { displayName: string }; items?: SaleReturnItem[] };
-export type Sale = { id: string; receiptNo: string; invoiceNo?: string | null; subtotal: number; discount: number; total: number; amountPaid: number; change: number; cashPart?: number; mobilePart?: number; creditPart?: number; paymentMethod: "CASH" | "MOBILE" | "CREDIT"; createdAt: string; customer?: Contact | null; user?: { displayName: string }; items: SaleItem[]; returns?: SaleReturn[] };
+export type Sale = { id: string; receiptNo: string; invoiceNo?: string | null; subtotal: number; discount: number; total: number; amountPaid: number; change: number; cashPart?: number; mobilePart?: number; creditPart?: number; walletPart?: number; paymentMethod: "CASH" | "MOBILE" | "CREDIT" | "WALLET"; createdAt: string; customer?: Contact | null; user?: { displayName: string }; items: SaleItem[]; returns?: SaleReturn[] };
 export type PurchaseItem = { id: string; productId: string; name: string; sku: string; quantity: number; unitCost: number; lineTotal: number; expiryDate?: string | null };
 export type Purchase = { id: string; invoiceNo: string | null; note: string | null; total: number; paidAmount: number; createdAt: string; supplier?: Contact | null; user?: { displayName: string }; items: PurchaseItem[] };
 export type PurchaseReturnItem = { id: string; productId: string; name: string; sku: string; quantity: number; unitCost: number; lineTotal: number };
@@ -73,7 +79,16 @@ export type PurchaseReturn = { id: string; returnNo: string; total: number; note
 export type Expense = { id: string; title: string; amount: number; category: string | null; note: string | null; fromCash: boolean; cashSessionId: string | null; createdAt: string; user?: { displayName: string } };
 export type ExpenseList = { list: Expense[]; total: number };
 export type CustomerPayment = { id: string; amount: number; note: string | null; createdAt: string; user?: { displayName: string } };
-export type CustomerDetail = { customer: Contact; creditSales: number; creditReturns: number; paymentsTotal: number; balance: number; payments: CustomerPayment[]; recentSales: Sale[] };
+export type WalletTxn = { id: string; type: "CHARGE" | "SALE" | "REFUND"; amount: number; note: string | null; saleId: string | null; createdAt: string };
+export type CustomerDetail = { customer: Contact; creditSales: number; creditReturns: number; paymentsTotal: number; balance: number; payments: CustomerPayment[]; recentSales: Sale[]; walletTxns?: WalletTxn[]; walletBalance?: number };
+export type Installment = { id: string; planId: string; seq: number; amount: number; dueDate: string; paidAt: string | null; paidAmount: number };
+export type InstallmentPlan = { id: string; customerId: string; total: number; paidAmount: number; status: "OPEN" | "SETTLED"; note: string | null; saleId: string | null; createdAt: string; installments: Installment[]; customer?: { id: string; name: string; phone: string | null } };
+export type CustomerOrderLine = { id: string; productId: string; name: string; sku: string; quantity: number; unitPrice: number; deliveredQty: number };
+export type CustomerOrder = { id: string; orderNo: string; customerId: string | null; status: "OPEN" | "FULFILLED" | "CANCELLED"; note: string | null; createdAt: string; lines: CustomerOrderLine[]; customer?: { id: string; name: string; phone: string | null } | null };
+export type ReorderRow = { productId: string; name: string; sku: string; unit: string; onHand: number; reserved: number; minStock: number; soldLast30: number; velocityPerDay: number; daysLeft: number | null; suggested: number; belowMin: boolean; lastSupplier: { id: string; name: string; phone: string | null } | null; estimatedCost: number };
+export type SerialUnit = { id: string; productId: string; serial: string; status: "IN_STOCK" | "SOLD" | "RETURNED"; purchaseItemId: string | null; saleItemId: string | null; note: string | null; createdAt: string; updatedAt: string; product?: { id: string; name: string; sku: string } };
+export type LicenseStatus = { ok: boolean; mode: "TRIAL" | "LICENSED"; reason: "NONE" | "TRIAL_EXPIRED" | "LICENSE_EXPIRED" | "TAMPERED" | "MACHINE_MISMATCH"; plan: string | null; licenseId: string | null; customer: string | null; expiresAt: string | null; daysLeft: number | null; effectiveNow: string; trialStartedAt: string | null; trialDaysLeft: number | null; machineKey: string; features: string[] };
+export type ReceiptText = { text: string; sale: { id: string; invoiceNo: string | null; receiptNo: string; total: number; customerPhone: string | null } };
 export type SupplierPayment = CustomerPayment;
 export type SupplierDetail = { supplier: Contact; purchasesTotal: number; paidAtPurchase: number; paymentsTotal: number; balance: number; payments: SupplierPayment[]; recentPurchases: Purchase[] };
 export type ProfitReport = {

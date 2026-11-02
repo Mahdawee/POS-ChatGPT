@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, Get, Module, NotFoundException, Param, Patch, Post } from "@nestjs/common";
 import { CurrentUser, SessionUser } from "../auth";
 import { customerBalances, supplierBalances } from "../balances";
-import { ContactDto, CustomerPaymentDto, SupplierPaymentDto } from "../dto";
+import { ContactDto, CustomerPaymentDto, SupplierPaymentDto, WalletChargeDto } from "../dto";
 import { PrismaService } from "../prisma.service";
 
 @Controller("customers")
@@ -22,17 +22,38 @@ export class CustomersController {
   @Get(":id") async detail(@Param("id") id: string) {
     const customer = await this.prisma.customer.findUnique({ where: { id } });
     if (!customer) throw new NotFoundException("مشتری پیدا نشد.");
-    const [creditSales, creditReturns, paymentsTotal, payments, recentSales] = await Promise.all([
+    const [creditSales, creditReturns, paymentsTotal, payments, recentSales, walletTxns] = await Promise.all([
       this.prisma.sale.aggregate({ _sum: { creditPart: true }, where: { customerId: id, creditPart: { gt: 0 } } }),
       this.prisma.saleReturn.aggregate({ _sum: { creditRelief: true }, where: { sale: { customerId: id, creditPart: { gt: 0 } } } }),
       this.prisma.customerPayment.aggregate({ _sum: { amount: true }, where: { customerId: id } }),
       this.prisma.customerPayment.findMany({ where: { customerId: id }, orderBy: { createdAt: "desc" }, take: 20, include: { user: { select: { displayName: true } } } }),
       this.prisma.sale.findMany({ where: { customerId: id }, orderBy: { createdAt: "desc" }, take: 10, include: { items: true, user: { select: { displayName: true } } } }),
+      this.prisma.customerWalletTxn.findMany({ where: { customerId: id }, orderBy: { createdAt: "desc" }, take: 30 }),
     ]);
     const creditTotal = creditSales._sum.creditPart || 0;
     const returnsTotal = creditReturns._sum.creditRelief || 0;
     const paidTotal = paymentsTotal._sum.amount || 0;
-    return { customer, creditSales: creditTotal, creditReturns: returnsTotal, paymentsTotal: paidTotal, balance: creditTotal - returnsTotal - paidTotal, payments, recentSales };
+    return { customer, creditSales: creditTotal, creditReturns: returnsTotal, paymentsTotal: paidTotal, balance: creditTotal - returnsTotal - paidTotal, payments, recentSales, walletTxns, walletBalance: customer.walletBalance };
+  }
+
+  /** شارژ کیف پول مشتری: موجودی بالا می‌رود و در دفتر کیف پول ثبت می‌شود. */
+  @Post(":id/wallet/charge")
+  async chargeWallet(@Param("id") id: string, @Body() dto: WalletChargeDto, @CurrentUser() user: SessionUser) {
+    return this.prisma.$transaction(async (tx) => {
+      const customer = await tx.customer.findUnique({ where: { id } });
+      if (!customer || !customer.isActive) throw new BadRequestException("مشتری پیدا نشد.");
+      let cashSessionId: string | undefined;
+      if (dto.fromCash) {
+        const session = await tx.cashSession.findFirst({ where: { status: "OPEN" }, orderBy: { openedAt: "desc" } });
+        if (!session) throw new BadRequestException("صندوق باز وجود ندارد.");
+        cashSessionId = session.id;
+        await tx.cashMovement.create({ data: { type: "OUT", amount: dto.amount, description: `شارژ کیف پول ${customer.name}`, cashSessionId: session.id } });
+      }
+      const updated = await tx.customer.update({ where: { id }, data: { walletBalance: { increment: dto.amount } } });
+      const txn = await tx.customerWalletTxn.create({ data: { customerId: id, type: "CHARGE", amount: dto.amount, note: dto.note?.trim(), cashSessionId, userId: user.id } });
+      await tx.auditLog.create({ data: { actor: user.username, action: "WALLET_CHARGE", entity: "Customer", entityId: id, detail: `${dto.amount}${dto.fromCash ? " / از صندوق" : ""}` } });
+      return { walletBalance: updated.walletBalance, txn };
+    });
   }
 
   @Post(":id/payments")

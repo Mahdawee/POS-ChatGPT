@@ -1,5 +1,5 @@
 import { Type } from "class-transformer";
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsEnum, IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength, ValidateNested } from "class-validator";
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsEnum, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength, ValidateNested } from "class-validator";
 
 export class LoginDto {
   @IsString() @MinLength(1) @MaxLength(40) username!: string;
@@ -19,6 +19,10 @@ export class ProductDto {
   @IsString() @MinLength(1) @MaxLength(120) name!: string;
   @IsOptional() @IsString() @MaxLength(24) unit?: string;
   @IsOptional() @IsBoolean() isWeighted?: boolean;
+  /** Kit/BOM: selling this product deducts its components instead. */
+  @IsOptional() @IsBoolean() isBundle?: boolean;
+  /** Each unit is tracked by serial/IMEI (purchase → sale → return). */
+  @IsOptional() @IsBoolean() isSerialized?: boolean;
   @IsOptional() @IsString() @MaxLength(10) expiryDate?: string;
   @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) price!: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) wholesalePrice?: number | null;
@@ -35,19 +39,23 @@ export class ContactDto {
   @IsOptional() @IsString() @MaxLength(300) note?: string;
   /** Customers only: 0 disables the credit-limit warning. */
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(999999999) creditLimit?: number;
+  /** Customers only: WHOLESALE tier buys at the wholesale price at any qty. */
+  @IsOptional() @IsIn(["RETAIL", "WHOLESALE"]) tier?: "RETAIL" | "WHOLESALE";
 }
 export class SaleLineDto {
   @IsString() productId!: string;
   @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001) @Max(1000000) quantity!: number;
   /** Optional per-line discount in whole afghani. */
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) discount?: number;
+  /** Serialized products: the serial/IMEI of every unit handed over. */
+  @IsOptional() @IsArray() @ArrayMaxSize(100) @IsString({ each: true }) serials?: string[];
 }
 export class SaleDto {
   @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => SaleLineDto) items!: SaleLineDto[];
   @IsOptional() @IsInt() @Min(0) @Max(2147483647) discount?: number;
   /** Percentage alternative to the flat `discount` (0–100). */
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(100) discountPercent?: number;
-  @IsEnum(["CASH", "MOBILE", "CREDIT"]) paymentMethod!: "CASH" | "MOBILE" | "CREDIT";
+  @IsEnum(["CASH", "MOBILE", "CREDIT", "WALLET"]) paymentMethod!: "CASH" | "MOBILE" | "CREDIT" | "WALLET";
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) amountPaid?: number;
   /** Mixed payment: cash and mobile portions; the remainder becomes credit. */
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) splitCash?: number;
@@ -96,6 +104,8 @@ export class PurchaseLineDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) unitCost?: number;
   /** Optional batch/lot expiry for this delivery — feeds expiry warnings. */
   @IsOptional() @IsString() @MaxLength(10) expiryDate?: string;
+  /** Serialized products: the serial/IMEI of every unit that arrived. */
+  @IsOptional() @IsArray() @ArrayMaxSize(200) @IsString({ each: true }) serials?: string[];
 }
 export class PurchaseDto {
   @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => PurchaseLineDto) items!: PurchaseLineDto[];
@@ -107,6 +117,8 @@ export class PurchaseDto {
 export class ReturnLineDto {
   @IsString() productId!: string;
   @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001) @Max(1000000) quantity!: number;
+  /** Serialized products: which exact units are coming back. */
+  @IsOptional() @IsArray() @ArrayMaxSize(100) @IsString({ each: true }) serials?: string[];
 }
 export class SaleReturnDto {
   @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => ReturnLineDto) items!: ReturnLineDto[];
@@ -136,6 +148,10 @@ export class ImportProductRowDto {
   @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0) @Max(2147483647) minStock?: number;
   @IsOptional() @IsString() @MaxLength(24) unit?: string;
   @IsOptional() @IsBoolean() isWeighted?: boolean;
+  /** Kit/BOM: selling this product deducts its components instead. */
+  @IsOptional() @IsBoolean() isBundle?: boolean;
+  /** Each unit is tracked by serial/IMEI (purchase → sale → return). */
+  @IsOptional() @IsBoolean() isSerialized?: boolean;
   @IsOptional() @IsString() @MaxLength(10) expiryDate?: string;
   @IsOptional() @IsString() @MaxLength(60) category?: string;
 }
@@ -193,4 +209,71 @@ export class QuoteDto {
   @IsOptional() @IsString() customerId?: string;
   @IsOptional() @IsString() @MaxLength(300) note?: string;
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(200) @ValidateNested({ each: true }) @Type(() => QuoteLineDto) items!: QuoteLineDto[];
+}
+
+// ── Round 16: wallet, bundles, serials, installments, orders ──────────────
+
+export class WalletChargeDto {
+  @Type(() => Number) @IsInt() @Min(1) @Max(999999999) amount!: number;
+  @IsOptional() @IsString() @MaxLength(300) note?: string;
+  /** Take the money out of the open register when charging the wallet. */
+  @IsOptional() @IsBoolean() fromCash?: boolean;
+}
+
+export class BundleComponentDto {
+  @IsString() productId!: string;
+  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001) @Max(100000) quantity!: number;
+}
+
+export class BundleDto {
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => BundleComponentDto) components!: BundleComponentDto[];
+}
+
+export class CreateInstallmentPlanDto {
+  @IsString() customerId!: string;
+  @Type(() => Number) @IsInt() @Min(1) @Max(999999999) total!: number;
+  /** How many installments to split the total into (2–60). */
+  @Type(() => Number) @IsInt() @Min(2) @Max(60) installmentCount!: number;
+  /** Days between installment due dates (default 30 = monthly). */
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(365) intervalDays?: number;
+  /** First due date (YYYY-MM-DD); defaults to intervalDays from today. */
+  @IsOptional() @IsString() @MaxLength(10) startDate?: string;
+  @IsOptional() @IsString() @MaxLength(300) note?: string;
+  /** Optional: the sale this plan finances. */
+  @IsOptional() @IsString() saleId?: string;
+}
+
+export class PayInstallmentDto {
+  @Type(() => Number) @IsInt() @Min(1) @Max(999999999) amount!: number;
+  @IsOptional() @IsBoolean() fromCash?: boolean;
+  @IsOptional() @IsString() @MaxLength(300) note?: string;
+}
+
+export class OrderLineDto {
+  @IsString() productId!: string;
+  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001) @Max(1000000) quantity!: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) discount?: number;
+}
+
+export class CreateOrderDto {
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(100) @ValidateNested({ each: true }) @Type(() => OrderLineDto) items!: OrderLineDto[];
+  @IsOptional() @IsString() customerId?: string;
+  @IsOptional() @IsString() @MaxLength(300) note?: string;
+}
+
+export class OrderDeliveryLineDto {
+  @IsString() lineId!: string;
+  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001) @Max(1000000) quantity!: number;
+  /** Serialized products: serials of the units being handed over. */
+  @IsOptional() @IsArray() @ArrayMaxSize(100) @IsString({ each: true }) serials?: string[];
+}
+
+export class DeliverOrderDto {
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(100) @ValidateNested({ each: true }) @Type(() => OrderDeliveryLineDto) deliveries!: OrderDeliveryLineDto[];
+  @IsEnum(["CASH", "MOBILE", "CREDIT", "WALLET"]) paymentMethod!: "CASH" | "MOBILE" | "CREDIT" | "WALLET";
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) amountPaid?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) splitCash?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) splitMobile?: number;
+  @IsOptional() @IsBoolean() overrideCreditLimit?: boolean;
+  @IsOptional() @IsString() @MaxLength(300) note?: string;
 }

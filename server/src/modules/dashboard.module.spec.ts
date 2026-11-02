@@ -17,6 +17,8 @@ function setup(backupDir: string | null) {
     purchase: { aggregate: jest.fn().mockResolvedValue({ _sum: { total: 0 } }) },
     saleReturn: { aggregate: jest.fn().mockResolvedValue({ _sum: { total: 0, creditRelief: 0 } }) },
     customerPayment: { aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }) },
+    installment: { findMany: jest.fn().mockResolvedValue([]) },
+    customerOrder: { findMany: jest.fn().mockResolvedValue([]) },
     $queryRaw: jest.fn().mockResolvedValue([]),
     $queryRawUnsafe: jest.fn().mockResolvedValue([]),
     setting: { findUnique: jest.fn().mockResolvedValue(backupDir === null ? null : { key: "backupDir", value: backupDir }) },

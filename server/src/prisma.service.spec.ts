@@ -45,6 +45,13 @@ describe("Column migrations for installed databases", () => {
       `ALTER TABLE "SaleReturn" ADD COLUMN "creditRelief" INTEGER NOT NULL DEFAULT 0`,
       `ALTER TABLE "SaleReturn" ADD COLUMN "cashAmount" INTEGER NOT NULL DEFAULT 0`,
       `ALTER TABLE "PurchaseItem" ADD COLUMN "expiryDate" DATETIME`,
+      `ALTER TABLE "Product" ADD COLUMN "isBundle" BOOLEAN NOT NULL DEFAULT false`,
+      `ALTER TABLE "Product" ADD COLUMN "isSerialized" BOOLEAN NOT NULL DEFAULT false`,
+      `ALTER TABLE "Product" ADD COLUMN "reserved" REAL NOT NULL DEFAULT 0`,
+      `ALTER TABLE "Customer" ADD COLUMN "walletBalance" INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE "Customer" ADD COLUMN "tier" TEXT NOT NULL DEFAULT 'RETAIL'`,
+      `ALTER TABLE "Sale" ADD COLUMN "walletPart" INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE "SaleReturn" ADD COLUMN "walletRefund" INTEGER NOT NULL DEFAULT 0`,
     ]);
   });
 
@@ -54,10 +61,10 @@ describe("Column migrations for installed databases", () => {
       SaleReturnItem: ["unitCost"],
       Purchase: ["paidAmount"],
       PurchaseItem: ["expiryDate"],
-      Product: ["isWeighted", "expiryDate", "wholesalePrice", "wholesaleMinQty", "backstock"],
-      Customer: ["creditLimit"],
-      Sale: ["cashPart", "mobilePart", "creditPart", "invoiceNo"],
-      SaleReturn: ["creditRelief", "cashAmount"],
+      Product: ["isWeighted", "expiryDate", "wholesalePrice", "wholesaleMinQty", "backstock", "isBundle", "isSerialized", "reserved"],
+      Customer: ["creditLimit", "walletBalance", "tier"],
+      Sale: ["cashPart", "mobilePart", "creditPart", "invoiceNo", "walletPart"],
+      SaleReturn: ["creditRelief", "cashAmount", "walletRefund"],
     });
     await ensureColumnMigrations(client);
     expect(statements).toEqual([]);

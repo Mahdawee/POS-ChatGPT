@@ -6,9 +6,10 @@ import { createBackup } from "../backup";
 import { RestoreBackupDto, SettingDto } from "../dto";
 import { PrismaService } from "../prisma.service";
 import { configureLocalStorage } from "../storage";
+import { BackupScheduler } from "./backup-scheduler";
 
 @Controller("settings")
-class SettingsController {
+export class SettingsController {
   constructor(private readonly prisma: PrismaService) {}
   // Reading settings (shop name, receipt footer, …) is allowed for every
   // signed-in user so receipts and the header show the configured name.
@@ -16,7 +17,34 @@ class SettingsController {
     const entries = await this.prisma.setting.findMany({ orderBy: { key: "asc" } });
     return Object.fromEntries(entries.map(({ key, value }) => [key, value]));
   }
+  /** تقویم نمایش تاریخ‌ها: شمسی (پیش‌فرض)، قمری یا میلادی. */
+  static readonly CALENDARS = ["persian", "islamic-umalqura", "gregorian"];
+  /** ارزهای پشتیبانی‌شده در نمایش مبالغ. */
+  static readonly CURRENCIES = ["AFN", "USD", "EUR", "GBP", "IRR", "PKR", "AED", "SAR", "INR", "CNY", "TRY", "KZT", "UZS", "TJS", "IQD", "JOD"];
   @AdminOnly() @Put() async put(@Body() dto: SettingDto, @CurrentUser() user: SessionUser) {
+    // Internal, machine-owned keys must not be edited from the UI.
+    if (dto.key === "lastScheduledBackupAt" || dto.key.startsWith("invoiceSeq:")) {
+      throw new BadRequestException("این کلید تنظیم داخلی برنامه است و قابل تغییر نیست.");
+    }
+    if (dto.key === "calendar" && !SettingsController.CALENDARS.includes(dto.value)) {
+      throw new BadRequestException("تقویم باید شمسی، قمری یا میلادی باشد.");
+    }
+    if (dto.key === "currency" && !SettingsController.CURRENCIES.includes(dto.value)) {
+      throw new BadRequestException("این ارز در فهرست ارزهای پشتیبانی‌شده نیست.");
+    }
+    if (dto.key === "timezone") {
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: dto.value });
+      } catch {
+        throw new BadRequestException("منطقهٔ زمانی معتبر نیست (مثال: Asia/Kabul).");
+      }
+    }
+    if (dto.key === "backupHour" && !(Number(dto.value) >= 0 && Number(dto.value) <= 23)) {
+      throw new BadRequestException("ساعت بکاپ باید بین ۰ تا ۲۳ باشد.");
+    }
+    if (dto.key === "backupRetentionDays" && !(Number(dto.value) >= 0 && Number(dto.value) <= 3650)) {
+      throw new BadRequestException("مدت نگهداری بکاپ باید بین ۰ تا ۳۶۵۰ روز باشد.");
+    }
     const setting = await this.prisma.setting.upsert({ where: { key: dto.key }, create: dto, update: { value: dto.value } });
     await this.prisma.auditLog.create({ data: { actor: user.username, action: "UPDATE_SETTING", entity: "Setting", entityId: dto.key } });
     return setting;
@@ -102,5 +130,5 @@ class SettingsController {
   }
 }
 
-@Module({ controllers: [SettingsController] })
+@Module({ controllers: [SettingsController], providers: [BackupScheduler] })
 export class SettingsModule {}

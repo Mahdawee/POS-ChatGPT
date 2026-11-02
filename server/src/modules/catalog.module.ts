@@ -1,6 +1,6 @@
-import { BadRequestException, Body, Controller, Get, Module, Param, Patch, Post, Query } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Module, Param, Patch, Post, Put, Query } from "@nestjs/common";
 import { AdminOnly, CurrentUser, SessionUser } from "../auth";
-import { CategoryDto, ProductDto, ProductImportDto } from "../dto";
+import { BundleDto, CategoryDto, ProductDto, ProductImportDto } from "../dto";
 import { PrismaService } from "../prisma.service";
 
 @Controller("categories")
@@ -28,12 +28,12 @@ export class ProductsController {
     const search = q?.trim();
     const where: { isActive: boolean; OR?: Array<{ name: { contains: string } } | { sku: { contains: string } } | { barcode: { contains: string } }> } = { isActive: archived !== "1" };
     if (search) where.OR = [{ name: { contains: search } }, { sku: { contains: search } }, { barcode: { contains: search } }];
-    return this.prisma.product.findMany({ where, include: { category: true }, orderBy: { name: "asc" } });
+    return this.prisma.product.findMany({ where, include: { category: true, bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true } } } }, serialUnits: { where: { status: "IN_STOCK" }, select: { id: true } } }, orderBy: { name: "asc" } });
   }
   @Post() async create(@Body() dto: ProductDto) {
     const stock = dto.stock ?? 0;
     const item = await this.prisma.$transaction(async (tx) => {
-      const product = await tx.product.create({ data: { sku: dto.sku.trim(), barcode: dto.barcode?.trim() || null, name: dto.name.trim(), unit: dto.unit || "عدد", isWeighted: dto.isWeighted ?? false, expiryDate: dto.expiryDate ? new Date(`${dto.expiryDate}T00:00:00.000Z`) : null, price: dto.price, cost: dto.cost ?? 0, stock, minStock: dto.minStock ?? 0, categoryId: dto.categoryId || null } });
+      const product = await tx.product.create({ data: { sku: dto.sku.trim(), barcode: dto.barcode?.trim() || null, name: dto.name.trim(), unit: dto.unit || "عدد", isWeighted: dto.isWeighted ?? false, isBundle: dto.isBundle ?? false, isSerialized: dto.isSerialized ?? false, expiryDate: dto.expiryDate ? new Date(`${dto.expiryDate}T00:00:00.000Z`) : null, price: dto.price, wholesalePrice: dto.wholesalePrice ?? null, wholesaleMinQty: dto.wholesaleMinQty ?? null, cost: dto.cost ?? 0, stock, minStock: dto.minStock ?? 0, categoryId: dto.categoryId || null } });
       if (stock > 0) await tx.inventoryMovement.create({ data: { productId: product.id, type: "ADJUSTMENT_IN", quantity: stock, stockAfter: stock, note: "موجودی اولیه" } });
       await tx.auditLog.create({ data: { action: "CREATE", entity: "Product", entityId: product.id, detail: product.sku } });
       return product;
@@ -54,6 +54,28 @@ export class ProductsController {
     await this.prisma.auditLog.create({ data: { action: "UPDATE", entity: "Product", entityId: id, detail: item.sku } });
     return item;
   }
+  /** اجزای یک بسته/BOM را جایگزین می‌کند (اقلام قبلی پاک می‌شوند). */
+  @AdminOnly()
+  @Put(":id/bundle")
+  async setBundle(@Param("id") id: string, @Body() dto: BundleDto) {
+    return this.prisma.$transaction(async (tx) => {
+      const bundle = await tx.product.findUnique({ where: { id } });
+      if (!bundle || !bundle.isActive) throw new BadRequestException("کالا پیدا نشد.");
+      if (!bundle.isBundle) throw new BadRequestException("ابتدا کالا را به‌عنوان «بسته» ذخیره کنید.");
+      const ids = [...new Set(dto.components.map((row) => row.productId))];
+      const components = await tx.product.findMany({ where: { id: { in: ids }, isActive: true } });
+      if (components.length !== ids.length) throw new BadRequestException("یکی از اجزای بسته پیدا نشد یا غیرفعال است.");
+      for (const component of components) {
+        if (component.id === id) throw new BadRequestException("بسته نمی‌تواند جزء خودش باشد.");
+        if (component.isBundle) throw new BadRequestException("بسته داخل بسته مجاز نیست.");
+      }
+      await tx.bundleComponent.deleteMany({ where: { bundleId: id } });
+      await tx.bundleComponent.createMany({ data: dto.components.map((row) => ({ bundleId: id, componentId: row.productId, quantity: row.quantity })) });
+      await tx.auditLog.create({ data: { actor: "admin", action: "SET_BUNDLE", entity: "Product", entityId: id, detail: `${dto.components.length} جزء` } });
+      return tx.product.findUnique({ where: { id }, include: { bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true } } } } } });
+    });
+  }
+
   @Patch(":id/archive") async archive(@Param("id") id: string) { return this.prisma.product.update({ where: { id }, data: { isActive: false } }); }
   @Patch(":id/restore") async restore(@Param("id") id: string) { return this.prisma.product.update({ where: { id }, data: { isActive: true } }); }
 

@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useRef, useState, type FormEvent } from "react";
 import { CircleAlert, CircleCheck, Globe, LoaderCircle, LockKeyhole, ShoppingBasket } from "lucide-react";
-import { get, post, type ShopSettings, type User } from "./lib/api";
-import { LANGS, t, useLanguage } from "./i18n";
+import { get, post, type LicenseStatus, type ShopSettings, type User } from "./lib/api";
+import { applyLocaleSettings, LANGS, t, useLanguage } from "./i18n";
 import { type PageId, Shell } from "./components/Shell";
 import { CustomerDisplay } from "./components/CustomerDisplay";
 import { SectionHead } from "./components/SectionHead";
@@ -22,6 +22,8 @@ const SettingsPage = lazy(() => import("./components/Pages").then((m) => ({ defa
 const UsersPage = lazy(() => import("./components/Pages").then((m) => ({ default: m.UsersPage })));
 const AuditPage = lazy(() => import("./components/Pages").then((m) => ({ default: m.AuditPage })));
 const CashPage = lazy(() => import("./components/Pages").then((m) => ({ default: m.CashPage })));
+const OrdersPage = lazy(() => import("./components/Round16").then((m) => ({ default: m.OrdersPage })));
+const LicenseScreen = lazy(() => import("./components/Round16").then((m) => ({ default: m.LicenseScreen })));
 
 type Notice = { text: string; kind: "success" | "error" };
 type Session = { accessToken: string; user: User };
@@ -39,6 +41,8 @@ export default function App() {
   const [shopName, setShopName] = useState("");
   const [locked, setLocked] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  // Licensing: the gate re-checks on every 402 reply and after activation.
+  const [licenseOk, setLicenseOk] = useState<boolean | null>(null);
   const [dark, setDark] = useState(() => { try { return localStorage.getItem("darpos-theme") === "dark"; } catch { return false; } });
   const noticeTimer = useRef<number | undefined>(undefined);
   // Clearing the previous timer keeps the newest toast on screen for its
@@ -67,6 +71,15 @@ export default function App() {
     void poll();
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    const checkLicense = () => { get<LicenseStatus>("/license/status").then((state) => setLicenseOk(state.ok)).catch(() => setLicenseOk(true)); };
+    // Any 402 from the API flips the app onto the license screen.
+    const licenseRequired = () => setLicenseOk(false);
+    window.addEventListener("darpos:license-required", licenseRequired);
+    if (apiReady) checkLicense();
+    return () => window.removeEventListener("darpos:license-required", licenseRequired);
+  }, [apiReady]);
 
   useEffect(() => {
     const expired = () => {
@@ -123,7 +136,16 @@ export default function App() {
 
   useEffect(() => {
     if (!user) { setShopName(""); return; }
-    get<ShopSettings>("/settings").then((settings) => setShopName(settings.shopName || "")).catch(() => undefined);
+    get<ShopSettings>("/settings").then((settings) => {
+      setShopName(settings.shopName || "");
+      // Calendar / timezone / currency are display settings: apply them
+      // before any screen renders dates and amounts.
+      applyLocaleSettings({
+        calendar: (settings.calendar === "islamic-umalqura" || settings.calendar === "gregorian" ? settings.calendar : "persian"),
+        timezone: settings.timezone || "",
+        currency: settings.currency || "AFN",
+      });
+    }).catch(() => undefined);
   }, [user]);
 
   // Sliding sessions: silently exchange the token for a fresh one every 4
@@ -142,9 +164,10 @@ export default function App() {
 
   const logout = () => { localStorage.removeItem("darpos-token"); localStorage.removeItem("darpos-session"); setUser(null); setPage("dashboard"); };
   if (restore) return <div className="startup-screen"><LoaderCircle className="spin" size={22}/> {t("برنامه در حال آماده‌شدن است…")}</div>;
+  if (licenseOk === false) return <Suspense fallback={<Loading/>}><LicenseScreen onActivated={() => { setLicenseOk(null); void get<LicenseStatus>("/license/status").then((state) => setLicenseOk(state.ok)).catch(() => setLicenseOk(true)); }}/></Suspense>;
   if (!user || apiReady === false) return <LoginScreen apiReady={apiReady} apiSlow={apiSlow} onLogin={(session) => { localStorage.setItem("darpos-token", session.accessToken); localStorage.setItem("darpos-session", JSON.stringify(session)); setUser(session.user); setPage("dashboard"); }} notify={notify}/>;
 
-  const labels: Record<PageId, string> = { dashboard: t("نمای کلی"), pos: t("صندوق فروش"), products: t("کالاها"), categories: t("دسته‌بندی‌ها"), customers: t("مشتریان"), suppliers: t("تأمین‌کنندگان"), purchases: t("خریدها"), inventory: t("موجودی انبار"), sales: t("فروش‌ها"), reports: t("گزارش‌ها"), cash: t("مدیریت صندوق"), expenses: t("دخل و خرج"), users: t("کاربران"), audit: t("لاگ فعالیت"), settings: t("تنظیمات") };
+  const labels: Record<PageId, string> = { dashboard: t("نمای کلی"), pos: t("صندوق فروش"), products: t("کالاها"), categories: t("دسته‌بندی‌ها"), customers: t("مشتریان"), suppliers: t("تأمین‌کنندگان"), purchases: t("خریدها"), orders: t("سفارش‌ها"), inventory: t("موجودی انبار"), sales: t("فروش‌ها"), reports: t("گزارش‌ها"), cash: t("مدیریت صندوق"), expenses: t("دخل و خرج"), users: t("کاربران"), audit: t("لاگ فعالیت"), settings: t("تنظیمات") };
   // The second window (customer display) renders standalone, without the Shell.
   if (typeof window !== "undefined" && window.location.hash === "#customer-display") return <CustomerDisplay/>;
   const content = <Suspense fallback={<Loading/>}>{(() => {
@@ -157,6 +180,7 @@ export default function App() {
           case "suppliers": return <ContactsPage kind="suppliers" notify={notify}/>;
           case "inventory": return <InventoryPage notify={notify}/>;
           case "purchases": return <PurchasesPage notify={notify}/>;
+          case "orders": return <OrdersPage notify={notify}/>;
           case "sales": return <SalesPage notify={notify}/>;
           case "reports": return <ReportsPage notify={notify}/>;
           case "expenses": return <ExpensesPage notify={notify} user={user}/>;

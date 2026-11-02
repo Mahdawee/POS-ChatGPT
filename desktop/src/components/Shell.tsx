@@ -1,9 +1,9 @@
 import { type ReactNode } from "react";
-import { Activity, Banknote, BarChart3, Box, Boxes, CircleUserRound, FileText, Globe, Keyboard, LayoutDashboard, Lock, LogOut, Moon, PackagePlus, ReceiptText, ScrollText, Settings2, ShoppingCart, Sun, Tags, Truck, UsersRound, type LucideIcon } from "lucide-react";
+import { Activity, Banknote, BarChart3, Box, Boxes, CircleUserRound, ClipboardList, FileText, Globe, Keyboard, LayoutDashboard, Lock, LogOut, Moon, PackagePlus, ReceiptText, ScrollText, Settings2, ShoppingCart, Sun, Tags, Truck, UsersRound, type LucideIcon } from "lucide-react";
 import type { User } from "../lib/api";
 import { LANGS, t, todayLabel, useLanguage } from "../i18n";
 
-export type PageId = "dashboard" | "pos" | "products" | "categories" | "customers" | "suppliers" | "purchases" | "inventory" | "sales" | "reports" | "cash" | "expenses" | "users" | "audit" | "settings";
+export type PageId = "dashboard" | "pos" | "products" | "categories" | "customers" | "suppliers" | "purchases" | "orders" | "inventory" | "sales" | "reports" | "cash" | "expenses" | "users" | "audit" | "settings";
 // Labels/groups are Dari keys; t() runs at render time so switching the
 // language updates the sidebar immediately.
 const navigation: { id: PageId; label: string; icon: LucideIcon; group: string; admin?: boolean }[] = [
@@ -13,6 +13,7 @@ const navigation: { id: PageId; label: string; icon: LucideIcon; group: string; 
   { id: "purchases", label: "خریدها", icon: Truck, group: "فروش و انبار" },
   { id: "products", label: "کالاها", icon: Box, group: "فروش و انبار" },
   { id: "categories", label: "دسته‌بندی‌ها", icon: Tags, group: "فروش و انبار" },
+  { id: "orders", label: "سفارش‌ها", icon: ClipboardList, group: "فروش و انبار" },
   { id: "inventory", label: "موجودی انبار", icon: Boxes, group: "فروش و انبار" },
   { id: "customers", label: "مشتریان", icon: UsersRound, group: "اشخاص" },
   { id: "suppliers", label: "تأمین‌کنندگان", icon: PackagePlus, group: "اشخاص" },

@@ -5,12 +5,12 @@ import type { SaleDto } from "../dto";
 
 const admin = { id: "user-1", username: "admin", displayName: "Admin", role: "ADMIN" as const };
 const cashier = { id: "user-2", username: "cashier", displayName: "Cashier", role: "CASHIER" as const };
-const product = { id: "product-1", name: "چای", sku: "T-1", stock: 2, price: 10, cost: 6, isActive: true, backstock: 0 };
+const product = { id: "product-1", name: "چای", sku: "T-1", stock: 2, price: 10, cost: 6, isActive: true, backstock: 0, reserved: 0, isBundle: false, isSerialized: false };
 
 function setup(stock = 2) {
   const tx = {
     product: { findMany: jest.fn().mockResolvedValue([{ ...product, stock }]), update: jest.fn().mockResolvedValue({}) },
-    customer: { findUnique: jest.fn().mockResolvedValue(null) },
+    customer: { findUnique: jest.fn().mockResolvedValue(null), update: jest.fn().mockResolvedValue({}) },
     sale: { aggregate: jest.fn().mockResolvedValue({ _sum: { creditPart: null } }), create: jest.fn().mockResolvedValue({ id: "sale-1", receiptNo: "POS-1", items: [] }), findUnique: jest.fn().mockResolvedValue(null) },
     saleReturn: { aggregate: jest.fn().mockResolvedValue({ _sum: { creditRelief: null } }) },
     customerPayment: { aggregate: jest.fn().mockResolvedValue({ _sum: { amount: null } }) },
@@ -19,6 +19,9 @@ function setup(stock = 2) {
     setting: { findUnique: jest.fn().mockResolvedValue(null), upsert: jest.fn().mockResolvedValue({}) },
     inventoryMovement: { create: jest.fn().mockResolvedValue({}) },
     productBatch: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn().mockResolvedValue({}) },
+    bundleComponent: { findMany: jest.fn().mockResolvedValue([]) },
+    serialUnit: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn().mockResolvedValue({}) },
+    customerWalletTxn: { create: jest.fn().mockResolvedValue({}) },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
   };
   const prisma = {
@@ -149,6 +152,7 @@ const saleFixture = {
   cashPart: 25,
   mobilePart: 0,
   creditPart: 0,
+  walletPart: 0,
   paymentMethod: "CASH",
   items: [{ id: "item-1", productId: "product-1", name: "چای", sku: "T-1", quantity: 3, unitPrice: 10, unitCost: 6, lineTotal: 30, discount: 0 }],
   returns: [] as { total: number; creditRelief: number; cashAmount: number; items: { productId: string; quantity: number }[] }[],
@@ -159,6 +163,8 @@ function returnSetup(sale: typeof saleFixture = saleFixture) {
     sale: { findUnique: jest.fn().mockResolvedValue(sale) },
     product: { findMany: jest.fn().mockResolvedValue([{ ...product, stock: 0 }]), update: jest.fn().mockResolvedValue({}) },
     saleReturn: { create: jest.fn().mockImplementation(({ data }: { data: { total: number; returnNo: string } }) => Promise.resolve({ id: "return-1", ...data })) },
+    customerWalletTxn: { create: jest.fn().mockResolvedValue({}) },
+    customer: { update: jest.fn().mockResolvedValue({}) },
     cashSession: { findFirst: jest.fn().mockResolvedValue({ id: "cash-1" }) },
     cashMovement: { create: jest.fn().mockResolvedValue({}) },
     inventoryMovement: { create: jest.fn().mockResolvedValue({}) },
@@ -227,6 +233,21 @@ describe("Sale returns", () => {
     expect(record.creditRelief).toBe(20);
     expect(record.cashAmount).toBe(5);
     expect(tx.cashMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "OUT", amount: 5 }) }));
+  });
+
+  it("refunds a WALLET sale back to the customer's wallet", async () => {
+    // Entirely paid from the prepaid balance: a partial return must go back
+    // to the wallet (no drawer move). Regression test: paidPart used to omit
+    // walletPart, so the refund ceiling was 0 and nothing came back.
+    const walletSale = { ...saleFixture, customerId: "customer-1", amountPaid: 25, cashPart: 0, mobilePart: 0, walletPart: 25, paymentMethod: "WALLET", returns: [] };
+    const { controller, tx } = returnSetup(walletSale);
+    const record = await controller.returnSale("sale-1", { items: [{ productId: "product-1", quantity: 1 }] }, admin);
+    expect(record.total).toBe(10);
+    expect(record.cashAmount).toBe(0);
+    expect(record.walletRefund).toBe(10);
+    expect(tx.customerWalletTxn.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "REFUND", amount: 10 }) }));
+    expect(tx.customer.update).toHaveBeenCalledWith({ where: { id: "customer-1" }, data: { walletBalance: { increment: 10 } } });
+    expect(tx.cashMovement.create).not.toHaveBeenCalled();
   });
 
   it("relieves a partial return of a full-credit sale at the returned line value", async () => {

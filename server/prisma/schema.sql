@@ -201,6 +201,7 @@ CREATE TABLE IF NOT EXISTS "SaleReturn" (
     "total" INTEGER NOT NULL,
     "creditRelief" INTEGER NOT NULL DEFAULT 0,
     "cashAmount" INTEGER NOT NULL DEFAULT 0,
+    "walletRefund" INTEGER NOT NULL DEFAULT 0,
     "note" TEXT,
     "userId" TEXT NOT NULL,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -450,3 +451,108 @@ CREATE INDEX IF NOT EXISTS "StocktakeLine_stocktakeId_idx" ON "StocktakeLine"("s
 CREATE INDEX IF NOT EXISTS "Quote_status_createdAt_idx" ON "Quote"("status", "createdAt");
 CREATE INDEX IF NOT EXISTS "QuoteItem_quoteId_idx" ON "QuoteItem"("quoteId");
 CREATE INDEX IF NOT EXISTS "ProductBatch_productId_expiryDate_idx" ON "ProductBatch"("productId", "expiryDate");
+
+-- Round 16: wallet, bundles, serials, installments, orders, licensing.
+
+CREATE TABLE IF NOT EXISTS "CustomerWalletTxn" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "customerId" TEXT NOT NULL,
+    "type" TEXT NOT NULL,
+    "amount" INTEGER NOT NULL,
+    "note" TEXT,
+    "saleId" TEXT,
+    "cashSessionId" TEXT,
+    "userId" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "CustomerWalletTxn_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "Customer" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS "BundleComponent" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "bundleId" TEXT NOT NULL,
+    "componentId" TEXT NOT NULL,
+    "quantity" REAL NOT NULL,
+    CONSTRAINT "BundleComponent_bundleId_fkey" FOREIGN KEY ("bundleId") REFERENCES "Product" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "BundleComponent_componentId_fkey" FOREIGN KEY ("componentId") REFERENCES "Product" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS "SerialUnit" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "productId" TEXT NOT NULL,
+    "serial" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'IN_STOCK',
+    "purchaseItemId" TEXT,
+    "saleItemId" TEXT,
+    "note" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "SerialUnit_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS "InstallmentPlan" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "customerId" TEXT NOT NULL,
+    "total" INTEGER NOT NULL,
+    "paidAmount" INTEGER NOT NULL DEFAULT 0,
+    "status" TEXT NOT NULL DEFAULT 'OPEN',
+    "note" TEXT,
+    "saleId" TEXT,
+    "userId" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "InstallmentPlan_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "Customer" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS "Installment" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "planId" TEXT NOT NULL,
+    "seq" INTEGER NOT NULL,
+    "amount" INTEGER NOT NULL,
+    "dueDate" DATETIME NOT NULL,
+    "paidAt" DATETIME,
+    "paidAmount" INTEGER NOT NULL DEFAULT 0,
+    CONSTRAINT "Installment_planId_fkey" FOREIGN KEY ("planId") REFERENCES "InstallmentPlan" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS "CustomerOrder" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "orderNo" TEXT NOT NULL,
+    "customerId" TEXT,
+    "status" TEXT NOT NULL DEFAULT 'OPEN',
+    "note" TEXT,
+    "userId" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "CustomerOrder_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "Customer" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS "CustomerOrderLine" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "orderId" TEXT NOT NULL,
+    "productId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "sku" TEXT NOT NULL,
+    "quantity" REAL NOT NULL,
+    "unitPrice" INTEGER NOT NULL,
+    "deliveredQty" REAL NOT NULL DEFAULT 0,
+    CONSTRAINT "CustomerOrderLine_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "CustomerOrder" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "CustomerOrderLine_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS "LicenseState" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "licenseText" TEXT,
+    "maxSeenAt" DATETIME,
+    "trialStartedAt" DATETIME,
+    "tamperFlag" BOOLEAN NOT NULL DEFAULT false,
+    "note" TEXT,
+    "updatedAt" DATETIME NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "BundleComponent_bundleId_componentId_key" ON "BundleComponent"("bundleId", "componentId");
+CREATE UNIQUE INDEX IF NOT EXISTS "SerialUnit_serial_key" ON "SerialUnit"("serial");
+CREATE UNIQUE INDEX IF NOT EXISTS "CustomerOrder_orderNo_key" ON "CustomerOrder"("orderNo");
+CREATE INDEX IF NOT EXISTS "CustomerWalletTxn_customerId_createdAt_idx" ON "CustomerWalletTxn"("customerId", "createdAt");
+CREATE INDEX IF NOT EXISTS "SerialUnit_productId_status_idx" ON "SerialUnit"("productId", "status");
+CREATE INDEX IF NOT EXISTS "InstallmentPlan_customerId_status_idx" ON "InstallmentPlan"("customerId", "status");
+CREATE INDEX IF NOT EXISTS "Installment_planId_dueDate_idx" ON "Installment"("planId", "dueDate");
+CREATE INDEX IF NOT EXISTS "CustomerOrder_status_createdAt_idx" ON "CustomerOrder"("status", "createdAt");
+CREATE INDEX IF NOT EXISTS "CustomerOrderLine_orderId_idx" ON "CustomerOrderLine"("orderId");

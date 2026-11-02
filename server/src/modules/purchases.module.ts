@@ -25,11 +25,13 @@ export class PurchasesController {
 
   @Post()
   async create(@Body() dto: PurchaseDto, @CurrentUser() user: SessionUser) {
-    // Merge duplicated product lines before touching the database.
-    const merged = new Map<string, { quantity: number; unitCost: number; expiryDate?: string }>();
+    // Merge duplicated product lines before touching the database. Serials
+    // (IMEI) ride along per line; they are registered as tracked units after
+    // the purchase row exists, so duplicates must keep their list.
+    const merged = new Map<string, { quantity: number; unitCost: number; expiryDate?: string; serials: string[] }>();
     for (const line of dto.items) {
       const current = merged.get(line.productId);
-      merged.set(line.productId, { quantity: (current?.quantity || 0) + line.quantity, unitCost: line.unitCost ?? current?.unitCost ?? 0, expiryDate: line.expiryDate ?? current?.expiryDate });
+      merged.set(line.productId, { quantity: (current?.quantity || 0) + line.quantity, unitCost: line.unitCost ?? current?.unitCost ?? 0, expiryDate: line.expiryDate ?? current?.expiryDate, serials: (current?.serials || []).concat(line.serials || []) });
     }
     const lines = [...merged.entries()];
     return this.prisma.$transaction(async (tx) => {
@@ -64,14 +66,27 @@ export class PurchasesController {
         },
         include: { items: true, supplier: true },
       });
-      for (const [productId, { quantity, unitCost, expiryDate }] of lines) {
+      for (const [productId, { quantity, unitCost, expiryDate, serials }] of lines) {
         const product = productMap.get(productId)!;
+        // Serialized goods must declare one serial per unit — the tracked
+        // units are what the POS will later insist on handing over.
+        if (product.isSerialized) {
+          if (!serials.length || serials.length !== Math.round(quantity)) throw new BadRequestException(`برای «${product.name}» تعداد سریال/IMEI باید دقیقاً ${Math.round(quantity)} باشد.`);
+          const existing = await tx.serialUnit.findMany({ where: { serial: { in: serials } }, select: { serial: true } });
+          if (existing.length) throw new BadRequestException(`سریال ${existing[0].serial} قبلاً ثبت شده است.`);
+        } else if (serials.length) {
+          throw new BadRequestException(`«${product.name}» کالای سریال‌دار نیست؛ فیلد سریال را خالی بگذارید.`);
+        }
         await tx.product.update({ where: { id: productId }, data: { stock: { increment: quantity }, cost: unitCost } });
         await tx.inventoryMovement.create({ data: { productId, type: "PURCHASE", quantity, stockAfter: product.stock + quantity, reference: purchase.id, note: "ورود خرید" } });
         // Deliveries with their own expiry date are tracked as batches so the
         // dashboard can warn per-lot (FEFO) instead of per-product.
         if (expiryDate) {
           await tx.productBatch.create({ data: { productId, expiryDate: new Date(`${expiryDate}T00:00:00.000Z`), initialQty: quantity, remainingQty: quantity, purchaseId: purchase.id } });
+        }
+        if (serials.length) {
+          const purchaseItem = purchase.items.find((item) => item.productId === productId);
+          await tx.serialUnit.createMany({ data: serials.map((serial) => ({ productId, serial: serial.trim(), status: "IN_STOCK", purchaseItemId: purchaseItem?.id })) });
         }
       }
       await tx.auditLog.create({ data: { actor: user.username, action: "CREATE_PURCHASE", entity: "Purchase", entityId: purchase.id, detail: String(total) } });

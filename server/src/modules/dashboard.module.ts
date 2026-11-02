@@ -45,7 +45,7 @@ export class DashboardController {
     start.setHours(0, 0, 0, 0);
     const chartStart = new Date(start);
     chartStart.setDate(chartStart.getDate() - 13);
-    const [sales, productCount, lowStock, expiring, recentSales, purchasesToday, returnsToday, creditSalesTotal, creditReturnsTotal, paymentsTotal, stockValue, chartSales, backroom] = await Promise.all([
+    const [sales, productCount, lowStock, expiring, recentSales, purchasesToday, returnsToday, creditSalesTotal, creditReturnsTotal, paymentsTotal, stockValue, chartSales, backroom, overdueInstallments, openOrders] = await Promise.all([
       this.prisma.sale.findMany({ where: { createdAt: { gte: start } }, select: { total: true } }),
       this.prisma.product.count({ where: { isActive: true } }),
       this.prisma.$queryRaw<Array<{ id: string; name: string; sku: string; stock: number; minStock: number }>>`SELECT id, name, sku, stock, minStock FROM Product WHERE isActive = 1 AND stock <= minStock ORDER BY stock ASC LIMIT 8`,
@@ -59,6 +59,9 @@ export class DashboardController {
       this.prisma.$queryRaw<Array<{ value: number | bigint }>>`SELECT COALESCE(SUM(stock * cost), 0) AS value FROM Product WHERE isActive = 1`,
       this.prisma.sale.findMany({ where: { createdAt: { gte: chartStart } }, select: { createdAt: true, total: true } }),
       this.prisma.$queryRaw<Array<{ value: number | bigint }>>`SELECT COALESCE(SUM(backstock * cost), 0) AS value FROM Product WHERE isActive = 1`,
+      // Round 16 cards: overdue installments and open pre-orders.
+      this.prisma.installment.findMany({ where: { paidAt: null, dueDate: { lt: new Date() }, plan: { status: "OPEN" } }, include: { plan: { include: { customer: { select: { id: true, name: true, phone: true } } } } }, orderBy: { dueDate: "asc" }, take: 50 }),
+      this.prisma.customerOrder.findMany({ where: { status: "OPEN" }, include: { lines: true, customer: { select: { id: true, name: true, phone: true } } }, orderBy: { createdAt: "desc" }, take: 20 }),
     ]);
     // Batch/lot expiries: live batches tracking a delivery's own expiry date.
     // They complement (not replace) the product-level date above; products
@@ -88,6 +91,12 @@ export class DashboardController {
       recentSales,
       // Newest backup file age, for the "has it been a while?" warning.
       lastBackupAt: await lastBackupTimestamp(this.prisma),
+      // اقساط سررسیدشدهٔ پرداخت‌نشده (مبلغ و مشتری) برای کارت هشدار.
+      overdueInstallments: overdueInstallments.map((inst) => ({ id: inst.id, seq: inst.seq, amount: inst.amount - inst.paidAmount, dueDate: inst.dueDate, customer: inst.plan.customer, planId: inst.planId })),
+      overdueInstallmentsTotal: overdueInstallments.reduce((sum, inst) => sum + (inst.amount - inst.paidAmount), 0),
+      // سفارش‌های باز (رزرو شده) با مقدار تحویل‌نشده.
+      openOrders: openOrders.map((order) => ({ id: order.id, orderNo: order.orderNo, createdAt: order.createdAt, note: order.note, customer: order.customer, lines: order.lines.map((line) => ({ id: line.id, name: line.name, quantity: line.quantity, deliveredQty: line.deliveredQty, unitPrice: line.unitPrice })) })),
+      openOrdersCount: openOrders.length,
       // Daily totals for the last 14 days (dashboard chart), bucketed by the
       // machine's LOCAL day. SQLite's date() would bucket by UTC day, which
       // shifts sales made after midnight (e.g. 00:00-04:30 in UTC+4:30) into

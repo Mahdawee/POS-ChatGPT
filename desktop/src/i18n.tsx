@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { english, pashto } from "./i18n-dictionaries";
 
 /**
- * Three UI languages: Dari (fa, right-to-left), Pashto (ps, right-to-left)
+ * Three UI languages: Dari (fa, right-to-left), Pashto (ps, right-to-right)
  * and English (en, left-to-right). Dari strings are the source of truth and
  * double as dictionary keys, so `t("ذخیره")` returns the Pashto/English entry
  * when one exists and falls back to the Dari text itself otherwise — a missed
@@ -30,6 +30,44 @@ let currentLang: Lang = readStoredLang();
 export const lang = (): Lang => currentLang;
 export const dir = (): "rtl" | "ltr" => (currentLang === "en" ? "ltr" : "rtl");
 
+// ── Locale settings (calendar / timezone / currency) ───────────────────────
+// Shop-level display settings loaded from the server at login; module-level
+// so date formatting helpers used outside React (printing, CSV) follow them.
+export type CalendarId = "persian" | "islamic-umalqura" | "gregorian";
+export type LocaleSettings = { calendar: CalendarId; timezone: string; currency: string };
+let currentCalendar: CalendarId = "persian";
+let currentTimezone = "";
+let currentCurrency = "AFN";
+
+/** Dari labels double as translation keys (see i18n-dictionaries). */
+export const CURRENCIES: Array<{ code: string; label: string }> = [
+  { code: "AFN", label: "افغانی" },
+  { code: "USD", label: "دلار امریکا" },
+  { code: "EUR", label: "یورو" },
+  { code: "GBP", label: "پوند" },
+  { code: "IRR", label: "تومان" },
+  { code: "PKR", label: "روپیهٔ پاکستان" },
+  { code: "AED", label: "درهم امارات" },
+  { code: "SAR", label: "ریال سعودی" },
+  { code: "INR", label: "روپیهٔ هند" },
+  { code: "CNY", label: "یوان" },
+  { code: "TRY", label: "لیر" },
+  { code: "KZT", label: "تنگه" },
+  { code: "UZS", label: "سوم" },
+  { code: "TJS", label: "سامانی" },
+  { code: "IQD", label: "دینار عراق" },
+  { code: "JOD", label: "دینار اردن" },
+];
+export const currencyLabel = (code: string): string => CURRENCIES.find((row) => row.code === code)?.label ?? code;
+
+/** Applies shop display settings; unknown values fall back to the defaults. */
+export function applyLocaleSettings(settings: Partial<LocaleSettings>): void {
+  if (settings.calendar === "persian" || settings.calendar === "islamic-umalqura" || settings.calendar === "gregorian") currentCalendar = settings.calendar;
+  if (typeof settings.timezone === "string") currentTimezone = settings.timezone;
+  if (typeof settings.currency === "string" && CURRENCIES.some((row) => row.code === settings.currency)) currentCurrency = settings.currency;
+}
+export const localeSettings = (): LocaleSettings => ({ calendar: currentCalendar, timezone: currentTimezone, currency: currentCurrency });
+
 // Dictionaries are imported (not required at runtime via a registry call) so
 // module initialization has no circular dependency.
 const dictionaries: Record<Lang, Record<string, string>> = {
@@ -47,15 +85,22 @@ export function t(key: string, params?: Record<string, string | number>): string
 
 const localeOf = (which: Lang): string => (which === "fa" ? "fa-AF" : which === "ps" ? "ps-AF" : "en-US");
 const activeLocale = () => localeOf(currentLang);
+/** Intl calendar tag for the active shop calendar (Dari default: Solar Hijri). */
+const activeCalendar = (): string => (currentCalendar === "islamic-umalqura" ? "islamic-umalqura" : currentCalendar === "gregorian" ? "gregory" : "persian");
+const dateOptions = (): { calendar: string; timeZone?: string } => {
+  const options: { calendar: string; timeZone?: string } = { calendar: activeCalendar() };
+  if (currentTimezone) options.timeZone = currentTimezone;
+  return options;
+};
 
-export const money = (value: number): string => `${new Intl.NumberFormat(activeLocale(), { maximumFractionDigits: 0 }).format(value)} ${t("افغانی")}`;
+export const money = (value: number): string => `${new Intl.NumberFormat(activeLocale(), { maximumFractionDigits: 0 }).format(value)} ${t(currencyLabel(currentCurrency))}`;
 export const moneyPlain = (value: number): string => new Intl.NumberFormat(activeLocale(), { maximumFractionDigits: 0 }).format(value);
 export const qty = (value: number): string => new Intl.NumberFormat(activeLocale(), { maximumFractionDigits: 3 }).format(value);
-export const dateTime = (value: string | Date): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
-export const dateOnly = (value: string | Date): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium" }).format(new Date(value));
-export const dayLabel = (day: string): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium" }).format(new Date(`${day}T00:00:00`));
-export const todayLabel = (): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium" }).format(new Date());
-export const fullDate = (value: string | Date): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "full" }).format(new Date(value));
+export const dateTime = (value: string | Date): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium", timeStyle: "short", ...dateOptions() }).format(new Date(value));
+export const dateOnly = (value: string | Date): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium", ...dateOptions() }).format(new Date(value));
+export const dayLabel = (day: string): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium", ...dateOptions() }).format(new Date(`${day}T00:00:00`));
+export const todayLabel = (): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium", ...dateOptions() }).format(new Date());
+export const fullDate = (value: string | Date): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "full", ...dateOptions() }).format(new Date(value));
 export const percent = (value: number): string => `${new Intl.NumberFormat(activeLocale(), { maximumFractionDigits: 0 }).format(value)}${currentLang === "en" ? "%" : "٪"}`;
 
 /** Applies the language to the document (direction, lang, title) — called by the provider and at boot. */

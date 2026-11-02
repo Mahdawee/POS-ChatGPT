@@ -39,7 +39,11 @@ export class SalesController {
       const sale = await tx.sale.findUnique({ where: { id }, include: { items: true, returns: { include: { items: true } } } });
       if (!sale) throw new NotFoundException("فروش پیدا نشد.");
       const requested = new Map<string, number>();
-      for (const line of dto.items) requested.set(line.productId, (requested.get(line.productId) || 0) + line.quantity);
+      const serialsByProduct = new Map<string, string[]>();
+      for (const line of dto.items) {
+        requested.set(line.productId, (requested.get(line.productId) || 0) + line.quantity);
+        if (line.serials?.length) serialsByProduct.set(line.productId, (serialsByProduct.get(line.productId) || []).concat(line.serials));
+      }
       const returned = new Map<string, number>();
       for (const item of sale.returns.flatMap((record) => record.items)) returned.set(item.productId, (returned.get(item.productId) || 0) + item.quantity);
       let lineSum = 0;
@@ -54,9 +58,11 @@ export class SalesController {
         lineSum += lineTotal;
         lines.push({ productId, name: saleItem.name, sku: saleItem.sku, quantity, unitPrice: saleItem.unitPrice, unitCost: saleItem.unitCost, lineTotal });
       }
-      // What the customer actually settled at checkout (cash + mobile; a
-      // legacy overpaid cash sale carries only its total as cashPart).
-      const paidPart = sale.cashPart + sale.mobilePart;
+      // What the customer actually settled at checkout (cash + mobile + the
+      // prepaid wallet part; a legacy overpaid cash sale carries only its
+      // total as cashPart). Without walletPart here, WALLET sales would
+      // compute a zero refund ceiling and return nothing.
+      const paidPart = sale.cashPart + sale.mobilePart + sale.walletPart;
       const alreadyRefunded = sale.returns.reduce((sum, record) => sum + record.total, 0);
       const alreadyRelieved = sale.returns.reduce((sum, record) => sum + record.creditRelief, 0);
       const alreadyCashRefunded = sale.returns.reduce((sum, record) => sum + record.cashAmount, 0);
@@ -75,18 +81,56 @@ export class SalesController {
       // Only the cash portion of the refund may leave the drawer.
       const cashLeft = Math.max(0, sale.cashPart - alreadyCashRefunded);
       const cashAmount = Math.min(total, cashLeft);
+      // The wallet portion goes back to the prepaid balance (no drawer move).
+      const alreadyWalletRefunded = sale.returns.reduce((sum, record) => sum + record.walletRefund, 0);
+      const walletLeft = Math.max(0, sale.walletPart - alreadyWalletRefunded);
+      const walletRefund = Math.min(total - cashAmount, walletLeft);
       const products = await tx.product.findMany({ where: { id: { in: lines.map((line) => line.productId) } } });
       const productMap = new Map(products.map((product) => [product.id, product]));
+      // Serialized goods: the exact units coming back must be named.
+      for (const line of lines) {
+        const product = productMap.get(line.productId);
+        if (!product || !product.isSerialized) continue;
+        const serials = serialsByProduct.get(line.productId) || [];
+        if (!serials.length || serials.length !== Math.round(line.quantity)) throw new BadRequestException(`برای برگشت «${line.name}» شمارهٔ سریال هر دستگاه را وارد کنید (${Math.round(line.quantity)} عدد).`);
+        const saleItemIds = new Set(sale.items.map((item) => item.id));
+        const units = await tx.serialUnit.findMany({ where: { serial: { in: serials } } });
+        const unitMap = new Map(units.map((unit) => [unit.serial, unit]));
+        for (const serial of serials) {
+          const unit = unitMap.get(serial);
+          if (!unit || !unit.saleItemId || !saleItemIds.has(unit.saleItemId)) throw new BadRequestException(`سریال ${serial} در فاکتور اصلی نیست.`);
+          if (unit.status !== "SOLD") throw new BadRequestException(`سریال ${serial} قبلاً برگشت داده شده است.`);
+        }
+      }
       const returnNo = `RET-${Date.now()}-${randomBytes(2).toString("hex").toUpperCase()}`;
       const record = await tx.saleReturn.create({
-        data: { returnNo, saleId: sale.id, total, creditRelief, cashAmount, note: dto.note?.trim(), userId: user.id, items: { create: lines } },
+        data: { returnNo, saleId: sale.id, total, creditRelief, cashAmount, walletRefund, note: dto.note?.trim(), userId: user.id, items: { create: lines } },
         include: { items: true },
       });
       for (const line of lines) {
         const product = productMap.get(line.productId);
         if (!product) continue; // product row vanished; keep the financial record
-        await tx.product.update({ where: { id: line.productId }, data: { stock: { increment: line.quantity } } });
-        await tx.inventoryMovement.create({ data: { productId: line.productId, type: "SALE_RETURN", quantity: line.quantity, stockAfter: product.stock + line.quantity, reference: returnNo, note: "برگشت از فروش" } });
+        // Bundles never carried their own stock: the components come back.
+        const physical: Array<{ productId: string; stock: number; quantity: number; name: string }> = [];
+        if (product.isBundle) {
+          const rows = await tx.bundleComponent.findMany({ where: { bundleId: line.productId }, include: { component: true } });
+          for (const row of rows) physical.push({ productId: row.componentId, stock: row.component.stock, quantity: row.quantity * line.quantity, name: row.component.name });
+        } else {
+          physical.push({ productId: line.productId, stock: product.stock, quantity: line.quantity, name: product.name });
+        }
+        for (const part of physical) {
+          await tx.product.update({ where: { id: part.productId }, data: { stock: { increment: part.quantity } } });
+          await tx.inventoryMovement.create({ data: { productId: part.productId, type: "SALE_RETURN", quantity: part.quantity, stockAfter: part.stock + part.quantity, reference: returnNo, note: product.isBundle ? `برگشت جزء بستهٔ ${product.name}` : "برگشت از فروش" } });
+        }
+        // Tracked units re-enter sellable stock.
+        for (const serial of serialsByProduct.get(line.productId) || []) {
+          await tx.serialUnit.update({ where: { serial }, data: { status: "IN_STOCK", saleItemId: null, updatedAt: new Date(), note: `برگشت ${returnNo}` } });
+        }
+      }
+      // Wallet refunds land back on the prepaid balance immediately.
+      if (walletRefund > 0 && sale.customerId) {
+        await tx.customer.update({ where: { id: sale.customerId }, data: { walletBalance: { increment: walletRefund } } });
+        await tx.customerWalletTxn.create({ data: { customerId: sale.customerId, type: "REFUND", amount: walletRefund, note: `برگشت فاکتور ${sale.receiptNo}`, saleId: sale.id, userId: user.id } });
       }
       // Cash refunds leave the register when a shift is still open; refunds
       // on closed shifts (or non-cash sales) stay bookkeeping-only.
@@ -97,6 +141,45 @@ export class SalesController {
       await tx.auditLog.create({ data: { actor: user.username, action: "SALE_RETURN", entity: "Sale", entityId: sale.id, detail: `${returnNo} / ${total}` } });
       return record;
     });
+  }
+
+  /**
+   * متن سادهٔ فاکتور برای ارسال دیجیتال (پیام‌رسان/ایمیل/SMS): بدون وابستگی
+   * به چاپگر، قابل کپی و خواندن روی هر گوشی. وضعیت اقلام برگشتی هم لحاظ
+   * می‌شود تا مشتری نسخهٔ صادقانه‌ای بگیرد.
+   */
+  @Get(":id/receipt")
+  async receiptText(@Param("id") id: string) {
+    const sale = await this.prisma.sale.findUnique({ where: { id }, include: { items: true, customer: true, user: { select: { displayName: true } }, returns: { include: { items: true } } } });
+    if (!sale) throw new NotFoundException("فروش پیدا نشد.");
+    const settings = await this.prisma.setting.findMany({ where: { key: { in: ["shopName", "receiptFooter"] } } });
+    const shopName = settings.find((row) => row.key === "shopName")?.value || "فروشگاه";
+    const footer = settings.find((row) => row.key === "receiptFooter")?.value || "";
+    const returned = new Map<string, number>();
+    for (const record of sale.returns) for (const item of record.items) returned.set(item.productId, (returned.get(item.productId) || 0) + item.quantity);
+    const lines = [
+      shopName,
+      `فاکتور ${sale.invoiceNo || sale.receiptNo}`,
+      `تاریخ: ${new Date(sale.createdAt).toLocaleString("fa-AF")}`,
+      sale.customer ? `مشتری: ${sale.customer.name}${sale.customer.phone ? ` (${sale.customer.phone})` : ""}` : "مشتری: نقدی",
+      "────────────────────",
+      ...sale.items.map((item) => {
+        const back = returned.get(item.productId) || 0;
+        const note = back > 0 ? ` (برگشتی: ${back})` : "";
+        return `${item.name} × ${item.quantity} = ${item.lineTotal}${note}`;
+      }),
+      "────────────────────",
+      `جمع: ${sale.subtotal}`,
+      sale.discount > 0 ? `تخفیف: ${sale.discount}` : null,
+      `پرداختنی: ${sale.total}`,
+      sale.cashPart > 0 ? `نقدی: ${sale.cashPart}` : null,
+      sale.mobilePart > 0 ? `موبایل: ${sale.mobilePart}` : null,
+      sale.walletPart > 0 ? `کیف پول: ${sale.walletPart}` : null,
+      sale.creditPart > 0 ? `نسیه: ${sale.creditPart}` : null,
+      `صندوقدار: ${sale.user.displayName}`,
+      footer,
+    ].filter((line): line is string => line !== null);
+    return { text: lines.join("\n"), sale: { id: sale.id, invoiceNo: sale.invoiceNo, receiptNo: sale.receiptNo, total: sale.total, customerPhone: sale.customer?.phone ?? null } };
   }
 
   @Post()

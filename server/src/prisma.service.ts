@@ -28,6 +28,13 @@ const COLUMN_MIGRATIONS: Array<{ table: string; column: string; ddl: string }> =
   { table: "SaleReturn", column: "creditRelief", ddl: `ALTER TABLE "SaleReturn" ADD COLUMN "creditRelief" INTEGER NOT NULL DEFAULT 0` },
   { table: "SaleReturn", column: "cashAmount", ddl: `ALTER TABLE "SaleReturn" ADD COLUMN "cashAmount" INTEGER NOT NULL DEFAULT 0` },
   { table: "PurchaseItem", column: "expiryDate", ddl: `ALTER TABLE "PurchaseItem" ADD COLUMN "expiryDate" DATETIME` },
+  { table: "Product", column: "isBundle", ddl: `ALTER TABLE "Product" ADD COLUMN "isBundle" BOOLEAN NOT NULL DEFAULT false` },
+  { table: "Product", column: "isSerialized", ddl: `ALTER TABLE "Product" ADD COLUMN "isSerialized" BOOLEAN NOT NULL DEFAULT false` },
+  { table: "Product", column: "reserved", ddl: `ALTER TABLE "Product" ADD COLUMN "reserved" REAL NOT NULL DEFAULT 0` },
+  { table: "Customer", column: "walletBalance", ddl: `ALTER TABLE "Customer" ADD COLUMN "walletBalance" INTEGER NOT NULL DEFAULT 0` },
+  { table: "Customer", column: "tier", ddl: `ALTER TABLE "Customer" ADD COLUMN "tier" TEXT NOT NULL DEFAULT 'RETAIL'` },
+  { table: "Sale", column: "walletPart", ddl: `ALTER TABLE "Sale" ADD COLUMN "walletPart" INTEGER NOT NULL DEFAULT 0` },
+  { table: "SaleReturn", column: "walletRefund", ddl: `ALTER TABLE "SaleReturn" ADD COLUMN "walletRefund" INTEGER NOT NULL DEFAULT 0` },
 ];
 
 /**
@@ -106,6 +113,9 @@ const REQUIRED_MODELS = [
   "inventoryMovement", "cashSession", "cashMovement",
   "expense", "auditLog",
   "stocktake", "stocktakeLine", "quote", "quoteItem", "productBatch",
+  "customerWalletTxn", "bundleComponent", "serialUnit",
+  "installmentPlan", "installment",
+  "customerOrder", "customerOrderLine", "licenseState",
 ] as const;
 
 @Injectable()
