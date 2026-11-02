@@ -153,51 +153,6 @@ CREATE TABLE IF NOT EXISTS "AuditLog" (
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- CreateIndex
-CREATE UNIQUE INDEX IF NOT EXISTS "Category_name_key" ON "Category"("name");
-
--- CreateIndex
-CREATE UNIQUE INDEX IF NOT EXISTS "Product_sku_key" ON "Product"("sku");
-
--- CreateIndex
-CREATE UNIQUE INDEX IF NOT EXISTS "Product_barcode_key" ON "Product"("barcode");
-
--- CreateIndex
-CREATE INDEX IF NOT EXISTS "Product_name_idx" ON "Product"("name");
-
--- CreateIndex
-CREATE INDEX IF NOT EXISTS "Product_categoryId_idx" ON "Product"("categoryId");
-
--- CreateIndex
-CREATE INDEX IF NOT EXISTS "Customer_name_idx" ON "Customer"("name");
-
--- CreateIndex
-CREATE INDEX IF NOT EXISTS "Customer_phone_idx" ON "Customer"("phone");
-
--- CreateIndex
-CREATE INDEX IF NOT EXISTS "Supplier_name_idx" ON "Supplier"("name");
-
--- CreateIndex
-CREATE UNIQUE INDEX IF NOT EXISTS "User_username_key" ON "User"("username");
-
--- CreateIndex
-CREATE UNIQUE INDEX IF NOT EXISTS "Sale_receiptNo_key" ON "Sale"("receiptNo");
-
--- CreateIndex
-CREATE UNIQUE INDEX IF NOT EXISTS "Sale_idempotencyKey_key" ON "Sale"("idempotencyKey");
-
--- CreateIndex
-CREATE INDEX IF NOT EXISTS "Sale_createdAt_idx" ON "Sale"("createdAt");
-
--- CreateIndex
-CREATE INDEX IF NOT EXISTS "InventoryMovement_productId_createdAt_idx" ON "InventoryMovement"("productId", "createdAt");
-
--- CreateIndex
-CREATE INDEX IF NOT EXISTS "CashSession_status_openedAt_idx" ON "CashSession"("status", "openedAt");
-
--- CreateIndex
-CREATE INDEX IF NOT EXISTS "AuditLog_entity_createdAt_idx" ON "AuditLog"("entity", "createdAt");
-
 -- CreateTable
 CREATE TABLE IF NOT EXISTS "Purchase" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -268,8 +223,62 @@ CREATE TABLE IF NOT EXISTS "CustomerPayment" (
     CONSTRAINT "CustomerPayment_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
 
+-- CreateTable
+CREATE TABLE IF NOT EXISTS "SupplierPayment" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "supplierId" TEXT NOT NULL,
+    "amount" INTEGER NOT NULL,
+    "note" TEXT,
+    "userId" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "SupplierPayment_supplierId_fkey" FOREIGN KEY ("supplierId") REFERENCES "Supplier" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "SupplierPayment_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
 -- CreateIndex
-CREATE UNIQUE INDEX IF NOT EXISTS "SaleReturn_returnNo_key" ON "SaleReturn"("returnNo");
+CREATE UNIQUE INDEX IF NOT EXISTS "Category_name_key" ON "Category"("name");
+
+-- CreateIndex
+CREATE UNIQUE INDEX IF NOT EXISTS "Product_sku_key" ON "Product"("sku");
+
+-- CreateIndex
+CREATE UNIQUE INDEX IF NOT EXISTS "Product_barcode_key" ON "Product"("barcode");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "Product_name_idx" ON "Product"("name");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "Product_categoryId_idx" ON "Product"("categoryId");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "Customer_name_idx" ON "Customer"("name");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "Customer_phone_idx" ON "Customer"("phone");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "Supplier_name_idx" ON "Supplier"("name");
+
+-- CreateIndex
+CREATE UNIQUE INDEX IF NOT EXISTS "User_username_key" ON "User"("username");
+
+-- CreateIndex
+CREATE UNIQUE INDEX IF NOT EXISTS "Sale_receiptNo_key" ON "Sale"("receiptNo");
+
+-- CreateIndex
+CREATE UNIQUE INDEX IF NOT EXISTS "Sale_idempotencyKey_key" ON "Sale"("idempotencyKey");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "Sale_createdAt_idx" ON "Sale"("createdAt");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "InventoryMovement_productId_createdAt_idx" ON "InventoryMovement"("productId", "createdAt");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "CashSession_status_openedAt_idx" ON "CashSession"("status", "openedAt");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "AuditLog_entity_createdAt_idx" ON "AuditLog"("entity", "createdAt");
 
 -- CreateIndex
 CREATE INDEX IF NOT EXISTS "Purchase_createdAt_idx" ON "Purchase"("createdAt");
@@ -279,6 +288,9 @@ CREATE INDEX IF NOT EXISTS "Purchase_supplierId_idx" ON "Purchase"("supplierId")
 
 -- CreateIndex
 CREATE INDEX IF NOT EXISTS "PurchaseItem_purchaseId_idx" ON "PurchaseItem"("purchaseId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX IF NOT EXISTS "SaleReturn_returnNo_key" ON "SaleReturn"("returnNo");
 
 -- CreateIndex
 CREATE INDEX IF NOT EXISTS "SaleReturn_saleId_idx" ON "SaleReturn"("saleId");
@@ -291,18 +303,6 @@ CREATE INDEX IF NOT EXISTS "SaleReturnItem_saleReturnId_idx" ON "SaleReturnItem"
 
 -- CreateIndex
 CREATE INDEX IF NOT EXISTS "CustomerPayment_customerId_createdAt_idx" ON "CustomerPayment"("customerId", "createdAt");
-
--- CreateTable
-CREATE TABLE IF NOT EXISTS "SupplierPayment" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "supplierId" TEXT NOT NULL,
-    "amount" INTEGER NOT NULL,
-    "note" TEXT,
-    "userId" TEXT NOT NULL,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT "SupplierPayment_supplierId_fkey" FOREIGN KEY ("supplierId") REFERENCES "Supplier" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT "SupplierPayment_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
-);
 
 -- CreateIndex
 CREATE INDEX IF NOT EXISTS "SupplierPayment_supplierId_createdAt_idx" ON "SupplierPayment"("supplierId", "createdAt");
