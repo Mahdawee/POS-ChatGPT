@@ -306,3 +306,12 @@ CREATE TABLE IF NOT EXISTS "SupplierPayment" (
 
 -- CreateIndex
 CREATE INDEX IF NOT EXISTS "SupplierPayment_supplierId_createdAt_idx" ON "SupplierPayment"("supplierId", "createdAt");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "SaleItem_saleId_idx" ON "SaleItem"("saleId");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "Sale_customerId_idx" ON "Sale"("customerId");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "CashMovement_cashSessionId_idx" ON "CashMovement"("cashSessionId");

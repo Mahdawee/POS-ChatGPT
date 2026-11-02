@@ -49,6 +49,12 @@ export type ProfitReport = {
   topProducts: { productId: string; name: string; quantity: number; revenue: number; profit: number }[];
   paymentMix: { method: string; total: number; count: number }[];
 };
+export type DebtorsReport = {
+  customers: { id: string; name: string; phone: string | null; balance: number }[];
+  customersTotal: number;
+  suppliers: { id: string; name: string; phone: string | null; balance: number }[];
+  suppliersTotal: number;
+};
 export type ShopSettings = { shopName?: string; receiptFooter?: string; [key: string]: string | undefined };
 export type CashSession = { id: string; status: "OPEN" | "CLOSED"; openingCash: number; expectedCash: number; cashSalesAmount?: number; countedCash: number | null; difference?: number; openedAt: string; closedAt: string | null; user?: { displayName: string }; movements?: { id: string; type: "IN" | "OUT"; amount: number; description: string }[] };
 

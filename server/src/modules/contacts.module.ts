@@ -1,5 +1,6 @@
 import { BadRequestException, Body, Controller, Get, Module, NotFoundException, Param, Patch, Post } from "@nestjs/common";
 import { CurrentUser, SessionUser } from "../auth";
+import { customerBalances, supplierBalances } from "../balances";
 import { ContactDto, CustomerPaymentDto, SupplierPaymentDto } from "../dto";
 import { PrismaService } from "../prisma.service";
 
@@ -8,16 +9,10 @@ export class CustomersController {
   constructor(private readonly prisma: PrismaService) {}
   /** Active customers with their outstanding credit balance attached. */
   @Get() async list() {
-    const [customers, creditSales, creditReturns, payments] = await Promise.all([
+    const [customers, balance] = await Promise.all([
       this.prisma.customer.findMany({ where: { isActive: true }, orderBy: { name: "asc" } }),
-      this.prisma.sale.groupBy({ by: ["customerId"], _sum: { total: true }, where: { paymentMethod: "CREDIT", customerId: { not: null } } }),
-      this.prisma.saleReturn.findMany({ where: { sale: { paymentMethod: "CREDIT" } }, select: { total: true, sale: { select: { customerId: true } } } }),
-      this.prisma.customerPayment.groupBy({ by: ["customerId"], _sum: { amount: true } }),
+      customerBalances(this.prisma),
     ]);
-    const balance = new Map<string, number>();
-    for (const row of creditSales) if (row.customerId) balance.set(row.customerId, (balance.get(row.customerId) || 0) + (row._sum.total || 0));
-    for (const row of creditReturns) if (row.sale.customerId) balance.set(row.sale.customerId, (balance.get(row.sale.customerId) || 0) - row.total);
-    for (const row of payments) balance.set(row.customerId, (balance.get(row.customerId) || 0) - (row._sum.amount || 0));
     return customers.map((customer) => ({ ...customer, balance: balance.get(customer.id) || 0 }));
   }
   @Post() create(@Body() dto: ContactDto) { return this.prisma.customer.create({ data: { ...dto, name: dto.name.trim() } }); }
@@ -63,14 +58,10 @@ export class SuppliersController {
   constructor(private readonly prisma: PrismaService) {}
   /** Active suppliers with their outstanding balance (purchases − paid at purchase − later payments). */
   @Get() async list() {
-    const [suppliers, purchases, payments] = await Promise.all([
+    const [suppliers, balance] = await Promise.all([
       this.prisma.supplier.findMany({ where: { isActive: true }, orderBy: { name: "asc" } }),
-      this.prisma.purchase.groupBy({ by: ["supplierId"], _sum: { total: true, paidAmount: true }, where: { supplierId: { not: null } } }),
-      this.prisma.supplierPayment.groupBy({ by: ["supplierId"], _sum: { amount: true } }),
+      supplierBalances(this.prisma),
     ]);
-    const balance = new Map<string, number>();
-    for (const row of purchases) if (row.supplierId) balance.set(row.supplierId, (balance.get(row.supplierId) || 0) + (row._sum.total || 0) - (row._sum.paidAmount || 0));
-    for (const row of payments) balance.set(row.supplierId, (balance.get(row.supplierId) || 0) - (row._sum.amount || 0));
     return suppliers.map((supplier) => ({ ...supplier, balance: balance.get(supplier.id) || 0 }));
   }
   @Post() create(@Body() dto: ContactDto) { return this.prisma.supplier.create({ data: { ...dto, name: dto.name.trim() } }); }
