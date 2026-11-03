@@ -41,7 +41,7 @@ export class ProductsController {
     const search = q?.trim();
     const where: { isActive: boolean; OR?: Array<{ name: { contains: string } } | { sku: { contains: string } } | { barcode: { contains: string } }> } = { isActive: archived !== "1" };
     if (search) where.OR = [{ name: { contains: search } }, { sku: { contains: search } }, { barcode: { contains: search } }];
-    return this.prisma.product.findMany({ where, include: { category: true, bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true, stock: true, reserved: true } } } }, serialUnits: { where: { status: "IN_STOCK" }, select: { id: true } } }, orderBy: { name: "asc" } });
+    return this.prisma.product.findMany({ where, include: { category: true, bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true, stock: true, reserved: true, isSerialized: true } } } }, serialUnits: { where: { status: "IN_STOCK" }, select: { id: true } } }, orderBy: { name: "asc" } });
   }
   /** Paged variant of list() for the management table: same filters, but only
    *  one page of rows plus the total, so a 10k-item warehouse never ships the
@@ -53,7 +53,7 @@ export class ProductsController {
     if (search) where.OR = [{ name: { contains: search } }, { sku: { contains: search } }, { barcode: { contains: search } }];
     const take = 100;
     const offset = Math.max(0, Number(skip) || 0);
-    const include = { category: true, bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true, stock: true, reserved: true } } } }, serialUnits: { where: { status: "IN_STOCK" }, select: { id: true } } } as const;
+    const include = { category: true, bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true, stock: true, reserved: true, isSerialized: true } } } }, serialUnits: { where: { status: "IN_STOCK" }, select: { id: true } } } as const;
     const [list, total] = await Promise.all([
       this.prisma.product.findMany({ where, include, orderBy: { name: "asc" }, take, skip: offset }),
       this.prisma.product.count({ where }),
@@ -109,7 +109,7 @@ export class ProductsController {
       await tx.bundleComponent.deleteMany({ where: { bundleId: id } });
       await tx.bundleComponent.createMany({ data: dto.components.map((row) => ({ bundleId: id, componentId: row.productId, quantity: row.quantity })) });
       await tx.auditLog.create({ data: { actor: user.username, action: "SET_BUNDLE", entity: "Product", entityId: id, detail: `${dto.components.length} جزء` } });
-      return tx.product.findUnique({ where: { id }, include: { bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true, stock: true, reserved: true } } } } } });
+      return tx.product.findUnique({ where: { id }, include: { bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true, stock: true, reserved: true, isSerialized: true } } } } } });
     });
   }
 

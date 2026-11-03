@@ -99,6 +99,10 @@ export class CheckoutService {
       // reserve stock, so walk-in availability is stock − reserved.
       const bundleComponents = new Map<string, Array<{ component: StockishProduct; quantity: number }>>();
       const componentById = new Map<string, StockishProduct>();
+      // Serials that must flip to SOLD when the sale commits, keyed by the
+      // sale line they leave with: a direct product, or the BUNDLE for units
+      // handed over inside a kit (so a sale-return can still find them).
+      const serialFlipPlan: Array<{ ownerProductId: string; serial: string }> = [];
       for (const [productId, quantity] of lines) {
         const product = productMap.get(productId)!;
         if (product.isBundle) {
@@ -129,6 +133,35 @@ export class CheckoutService {
             const unit = unitMap.get(serial);
             if (!unit || unit.productId !== productId) throw new BadRequestException(`سریال ${serial} برای این کالا ثبت نشده است.`);
             if (unit.status !== "IN_STOCK") throw new BadRequestException(`سریال ${serial} قبلاً فروخته یا برگشتی است.`);
+          }
+          for (const serial of serials) serialFlipPlan.push({ ownerProductId: productId, serial });
+        }
+        if (product.isBundle) {
+          // A kit containing tracked devices hands those devices over too.
+          // Their serials ride on the bundle line; without this the unit
+          // leaves the shop while its serial stays "in stock" — sellable a
+          // second time and returnable to the supplier as phantom stock.
+          const serializedParts = (bundleComponents.get(productId) || []).filter((part) => part.component.isSerialized);
+          if (serializedParts.length) {
+            const serials = (serialsByProduct.get(productId) || []).map((value) => value.trim()).filter(Boolean);
+            const needed = serializedParts.reduce((sum, part) => sum + part.quantity, 0);
+            if (!serials.length) throw new BadRequestException(`برای «${product.name}» شمارهٔ سریال/IMEI اجزای سریال‌دار هر بسته را وارد کنید (${needed} عدد).`);
+            if (new Set(serials).size !== serials.length) throw new BadRequestException(`سریال تکراری در اقلام «${product.name}» هست؛ هر دستگاه را یک بار وارد کنید.`);
+            const units = await tx.serialUnit.findMany({ where: { serial: { in: serials } } });
+            const unitMap = new Map(units.map((unit) => [unit.serial, unit]));
+            const perComponent = new Map<string, string[]>();
+            for (const serial of serials) {
+              const unit = unitMap.get(serial);
+              const part = serializedParts.find((row) => row.component.id === unit?.productId);
+              if (!unit || !part) throw new BadRequestException(`سریال ${serial} برای اجزای بستهٔ «${product.name}» ثبت نشده است.`);
+              if (unit.status !== "IN_STOCK") throw new BadRequestException(`سریال ${serial} قبلاً فروخته یا برگشتی است.`);
+              perComponent.set(unit.productId, (perComponent.get(unit.productId) || []).concat(serial));
+            }
+            for (const part of serializedParts) {
+              const have = (perComponent.get(part.component.id) || []).length;
+              if (have !== part.quantity) throw new BadRequestException(`برای جزء «${part.component.name}» از بستهٔ «${product.name}» دقیقاً ${part.quantity} سریال لازم است (${have} عدد وارد شد).`);
+            }
+            for (const serial of serials) serialFlipPlan.push({ ownerProductId: productId, serial });
           }
         }
       }
@@ -270,14 +303,12 @@ export class CheckoutService {
           // Bundle lines name the bundle so the cardex shows why the shelf moved.
           await deduct(part.product, part.quantity, product.isBundle ? `جزء بستهٔ ${product.name}` : undefined);
         }
-        // Serialized units flip to SOLD and remember the sale item they left with.
-        if (product.isSerialized) {
-          const saleItem = sale.items.find((item) => item.productId === productId);
-          const serials = serialsByProduct.get(productId) || [];
-          for (const serial of serials) {
-            await tx.serialUnit.update({ where: { serial }, data: { status: "SOLD", saleItemId: saleItem?.id, updatedAt: new Date() } });
-          }
-        }
+      }
+      // Serialized units flip to SOLD and remember the sale item they left
+      // with — direct lines name the product, kit lines name the bundle.
+      for (const flip of serialFlipPlan) {
+        const saleItem = sale.items.find((item) => item.productId === flip.ownerProductId);
+        await tx.serialUnit.update({ where: { serial: flip.serial }, data: { status: "SOLD", saleItemId: saleItem?.id, updatedAt: new Date() } });
       }
       // ── Wallet settlement ────────────────────────────────────────────
       if (walletPart > 0 && dto.customerId) {

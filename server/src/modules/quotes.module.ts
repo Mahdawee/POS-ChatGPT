@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, Get, Module, Param, Post } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
 import { CurrentUser, SessionUser } from "../auth";
-import { QuoteDto } from "../dto";
+import { QuoteDto , ConvertQuoteDto } from "../dto";
 import { PrismaService } from "../prisma.service";
 import { CheckoutService } from "../services/checkout";
 
@@ -63,7 +63,7 @@ export class QuotesController {
 
   /** تبدیل پیش‌فاکتور به فروش واقعی؛ سپس پیش‌فاکتور CONVERTED می‌شود. */
   @Post(":id/convert")
-  async convert(@Param("id") id: string, @CurrentUser() user: SessionUser) {
+  async convert(@Param("id") id: string, @Body() dto: ConvertQuoteDto, @CurrentUser() user: SessionUser) {
     // ONE transaction: the sale and the quote's OPEN → CONVERTED transition
     // commit together, so a failure between them can never leave an OPEN
     // quote convertible a second time (double sale).
@@ -77,10 +77,14 @@ export class QuotesController {
       // now, pay later" flow); anonymous quotes become plain cash sales.
       const paymentMethod = quote.customerId ? "CREDIT" : "CASH";
       // Same checkout pipeline as the POS: prices re-checked, stock deducted,
-      // invoice numbered, credit limit enforced.
+      // invoice numbered, credit limit enforced. Serialized lines (and kits
+      // with serialized components) name their units here — at conversion
+      // time, when the devices actually change hands.
+      const serialsByItem = new Map<string, string[]>();
+      for (const entry of dto.items || []) if (entry.serials?.length) serialsByItem.set(entry.itemId, entry.serials);
       const sale = (await this.checkoutService.checkoutInTx(
         tx,
-        { items: quote.items.map((item) => ({ productId: item.productId, quantity: item.quantity })), paymentMethod, customerId: quote.customerId || undefined, note: `از پیش‌فاکتور ${quote.quoteNo}` },
+        { items: quote.items.map((item) => ({ productId: item.productId, quantity: item.quantity, serials: serialsByItem.get(item.id) })), paymentMethod, customerId: quote.customerId || undefined, note: `از پیش‌فاکتور ${quote.quoteNo}` },
         user,
       )) as { id: string };
       const updated = await tx.quote.update({ where: { id }, data: { status: "CONVERTED", saleId: sale.id, convertedAt: new Date() }, include: { items: true } });

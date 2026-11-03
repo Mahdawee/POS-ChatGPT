@@ -213,6 +213,15 @@ export class QuoteDto {
   @IsOptional() @IsString() @MaxLength(300) note?: string;
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(200) @ValidateNested({ each: true }) @Type(() => QuoteLineDto) items!: QuoteLineDto[];
 }
+export class QuoteConvertSerialLineDto {
+  @IsString() itemId!: string;
+  /** Serialized products (and serialized components of a bundle line):
+   *  which exact units are handed over when the quote becomes a sale. */
+  @IsOptional() @IsArray() @ArrayMaxSize(100) @IsString({ each: true }) serials?: string[];
+}
+export class ConvertQuoteDto {
+  @IsOptional() @IsArray() @ArrayMaxSize(200) @ValidateNested({ each: true }) @Type(() => QuoteConvertSerialLineDto) items?: QuoteConvertSerialLineDto[];
+}
 
 // ── Round 16: wallet, bundles, serials, installments, orders ──────────────
 

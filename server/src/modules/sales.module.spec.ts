@@ -130,6 +130,59 @@ describe("POS checkout", () => {
     expect(tx.productBatch.update).toHaveBeenNthCalledWith(2, { where: { id: "batch-2" }, data: { remainingQty: { decrement: 2 } } });
   });
 
+  it("sells a kit's serialized components through the serials on the bundle line", async () => {
+    const { service, tx } = setup();
+    const phone = { ...product, id: "phone-1", name: "گوشی", isSerialized: true, stock: 5 };
+    const kit = { ...product, id: "bundle-1", name: "بستهٔ گوشی", sku: "B-1", isBundle: true, price: 150, stock: 0 };
+    tx.product.findMany.mockResolvedValue([kit]);
+    tx.bundleComponent.findMany.mockResolvedValue([{ bundleId: "bundle-1", componentId: "phone-1", quantity: 1, component: phone }]);
+    tx.serialUnit.findMany.mockResolvedValue([{ serial: "IMEI-1", productId: "phone-1", status: "IN_STOCK" }]);
+    tx.sale.create.mockResolvedValue({ id: "sale-1", receiptNo: "POS-1", items: [{ id: "sale-item-1", productId: "bundle-1" }] });
+    await service.checkout({ items: [{ productId: "bundle-1", quantity: 1, serials: ["IMEI-1"] }], paymentMethod: "CASH" }, admin);
+    // The component leaves the shelf…
+    expect(tx.product.update).toHaveBeenCalledWith({ where: { id: "phone-1" }, data: { stock: { decrement: 1 } } });
+    // …and its unit flips to SOLD against the bundle's sale line, so a later
+    // sale-return can find it and the serial list never shows a phantom unit.
+    expect(tx.serialUnit.update).toHaveBeenCalledWith({ where: { serial: "IMEI-1" }, data: expect.objectContaining({ status: "SOLD", saleItemId: "sale-item-1" }) });
+  });
+
+  it("refuses a kit with serialized components when no serials are given", async () => {
+    const { service, tx } = setup();
+    const phone = { ...product, id: "phone-1", name: "گوشی", isSerialized: true, stock: 5 };
+    const kit = { ...product, id: "bundle-1", name: "بستهٔ گوشی", isBundle: true, stock: 0 };
+    tx.product.findMany.mockResolvedValue([kit]);
+    tx.bundleComponent.findMany.mockResolvedValue([{ bundleId: "bundle-1", componentId: "phone-1", quantity: 1, component: phone }]);
+    await expect(service.checkout({ items: [{ productId: "bundle-1", quantity: 1 }], paymentMethod: "CASH" }, admin)).rejects.toThrow(/اجزای سریال‌دار هر بسته را وارد کنید/);
+    expect(tx.sale.create).not.toHaveBeenCalled();
+    expect(tx.product.update).not.toHaveBeenCalled();
+    expect(tx.serialUnit.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses a kit whose component serial count does not match the kits sold", async () => {
+    const { service, tx } = setup();
+    const phone = { ...product, id: "phone-1", name: "گوشی", isSerialized: true, stock: 5 };
+    const kit = { ...product, id: "bundle-1", name: "بستهٔ گوشی", isBundle: true, stock: 0 };
+    tx.product.findMany.mockResolvedValue([kit]);
+    tx.bundleComponent.findMany.mockResolvedValue([{ bundleId: "bundle-1", componentId: "phone-1", quantity: 1, component: phone }]);
+    tx.serialUnit.findMany.mockResolvedValue([
+      { serial: "IMEI-1", productId: "phone-1", status: "IN_STOCK" },
+      { serial: "IMEI-2", productId: "phone-1", status: "IN_STOCK" },
+    ]);
+    await expect(service.checkout({ items: [{ productId: "bundle-1", quantity: 1, serials: ["IMEI-1", "IMEI-2"] }], paymentMethod: "CASH" }, admin)).rejects.toThrow(/دقیقاً 1 سریال لازم است/);
+    expect(tx.serialUnit.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses a kit serial that belongs to a product outside the kit", async () => {
+    const { service, tx } = setup();
+    const phone = { ...product, id: "phone-1", name: "گوشی", isSerialized: true, stock: 5 };
+    const kit = { ...product, id: "bundle-1", name: "بستهٔ گوشی", isBundle: true, stock: 0 };
+    tx.product.findMany.mockResolvedValue([kit]);
+    tx.bundleComponent.findMany.mockResolvedValue([{ bundleId: "bundle-1", componentId: "phone-1", quantity: 1, component: phone }]);
+    tx.serialUnit.findMany.mockResolvedValue([{ serial: "IMEI-9", productId: "other-1", status: "IN_STOCK" }]);
+    await expect(service.checkout({ items: [{ productId: "bundle-1", quantity: 1, serials: ["IMEI-9"] }], paymentMethod: "CASH" }, admin)).rejects.toThrow(/برای اجزای بستهٔ/);
+    expect(tx.serialUnit.update).not.toHaveBeenCalled();
+  });
+
   it("replays the original receipt when the same idempotency key arrives again", async () => {
     const { service, prisma, tx } = setup(5);
     const first = { id: "sale-9", receiptNo: "POS-9", items: [] };

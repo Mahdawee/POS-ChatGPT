@@ -45,6 +45,22 @@ describe("Quotes", () => {
     await expect(controller.create({ items: [{ productId: "product-1", quantity: 1 }], customerId: "ghost" }, user)).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it("hands the picked serials of serialized quote lines to checkout at conversion", async () => {
+    const { controller, tx, checkoutInTx, quoteRow } = setup();
+    tx.quote.findUnique.mockResolvedValue({
+      ...quoteRow,
+      customerId: "customer-1",
+      items: [{ id: "item-1", productId: "phone-1", quantity: 2 }],
+    });
+    checkoutInTx.mockResolvedValue({ id: "sale-78" });
+    await controller.convert("quote-1", { items: [{ itemId: "item-1", serials: ["IMEI-1", "IMEI-2"] }] }, user);
+    expect(checkoutInTx).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ items: [{ productId: "phone-1", quantity: 2, serials: ["IMEI-1", "IMEI-2"] }] }),
+      user,
+    );
+  });
+
   it("converts an open quote through the shared checkout pipeline and links the sale", async () => {
     const { controller, tx, checkoutInTx, quoteRow } = setup();
     tx.quote.findUnique.mockResolvedValue({
@@ -53,7 +69,7 @@ describe("Quotes", () => {
       items: [{ productId: "product-1", quantity: 2 }],
     });
     checkoutInTx.mockResolvedValue({ id: "sale-77", total: 20 });
-    const updated = (await controller.convert("quote-1", user)) as { status: string; saleId: string };
+    const updated = (await controller.convert("quote-1", {}, user)) as { status: string; saleId: string };
     expect(checkoutInTx).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ items: [{ productId: "product-1", quantity: 2 }], paymentMethod: "CREDIT", customerId: "customer-1" }),
@@ -67,7 +83,7 @@ describe("Quotes", () => {
     const { controller, tx, checkoutInTx, quoteRow } = setup();
     tx.quote.findUnique.mockResolvedValue({ ...quoteRow, customerId: null, items: [{ productId: "product-1", quantity: 1 }] });
     checkoutInTx.mockResolvedValue({ id: "sale-78" });
-    await controller.convert("quote-1", user);
+    await controller.convert("quote-1", {}, user);
     expect(checkoutInTx).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ paymentMethod: "CASH" }), user);
   });
 
@@ -75,14 +91,14 @@ describe("Quotes", () => {
     const { controller, tx, checkoutInTx, quoteRow } = setup();
     tx.quote.findUnique.mockResolvedValue({ ...quoteRow, customerId: "customer-1", items: [{ productId: "product-1", quantity: 1 }] });
     checkoutInTx.mockRejectedValue(new Error("موجودی کافی نیست"));
-    await expect(controller.convert("quote-1", user)).rejects.toThrow(/موجودی/);
+    await expect(controller.convert("quote-1", {}, user)).rejects.toThrow(/موجودی/);
     expect(tx.quote.update).not.toHaveBeenCalled();
   });
 
   it("refuses to convert or void a quote that is not open", async () => {
     const { controller, tx, quoteRow } = setup();
     tx.quote.findUnique.mockResolvedValue({ ...quoteRow, status: "CONVERTED", items: [{ productId: "product-1", quantity: 1 }] });
-    await expect(controller.convert("quote-1", user)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(controller.convert("quote-1", {}, user)).rejects.toBeInstanceOf(BadRequestException);
     await expect(controller.void("quote-1", user)).rejects.toBeInstanceOf(BadRequestException);
     expect(tx.quote.update).not.toHaveBeenCalled();
   });
