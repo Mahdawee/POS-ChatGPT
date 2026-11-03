@@ -6,6 +6,7 @@ import { AppModule } from "./app.module";
 import { AllExceptionsFilter } from "./all-exceptions.filter";
 import { configureLocalStorage } from "./storage";
 import { LicenseService } from "./license/license.service";
+import { resolveApiHost } from "./network";
 
 async function bootstrap() {
   const dataDir = configureLocalStorage();
@@ -24,7 +25,9 @@ async function bootstrap() {
   const port = Number(process.env.API_PORT || 4317);
   // The desktop app pins API_HOST=127.0.0.1; a machine shared as the LAN
   // server is started with API_HOST=0.0.0.0 so other registers can connect.
-  const host = process.env.API_HOST || "127.0.0.1";
+  // In development the env is not set, so the persisted network-mode file
+  // (Settings → Network) decides — same rule as the packaged app.
+  const host = resolveApiHost(dataDir);
   await app.listen(port, host);
   console.log(`Dar POS API listening on ${host}:${port}; local data: ${dataDir}`);
 }

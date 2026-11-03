@@ -1230,7 +1230,12 @@ export const pashto: Record<string, string> = {
   "پلن {plan} برای «{customer}» فعال است.": "«{customer}» لپاره {plan} پلن فعال دی.",
   "چطور تمدید کنیم؟": "څنګه تمدید کړو؟",
   "کلید دستگاه": "د کمپیوټر کیلي",
-  "کلید دستگاه کپی شد.": "د کمپیوټر کیلي کاپي شوه."
+  "کلید دستگاه کپی شد.": "د کمپیوټر کیلي کاپي شوه.",
+  "حالت سرور شبکه ذخیره شد. {hint}": "د شبکې سرور حالت خوندي شو. {hint}",
+  "حالت تک‌کامپیوتر ذخیره شد. {hint}": "یوکمپیوټر حالت خوندي شو. {hint}",
+  "در حالت توسعه: فرمان npm run dev را کاملاً ببندید (Ctrl+C) و دوباره اجرا کنید تا حالت شبکه اعمال شود.": "د پراختیا په حالت کې: د npm run dev فرمان بشپړ بنده کړئ (Ctrl+C) او بیا یې چلولو ته ورشئ چې د شبکې حالت پلي شي.",
+  "برنامه را کاملاً ببندید و دوباره باز کنید.": "برنامه بشپړ بنده کړئ او بیا یې پرانیستئ.",
+  "وضعیت فعلی این دستگاه: تک‌کامپیوتر. تا برنامه را باز و بسته نکنید، حالت سرور اعمال نمی‌شود و دستگاه‌های دیگر نمی‌توانند وصل شوند.": "د همدې کمپیوټر اوسنی حالت: یوکمپیوټر. تر څو برنامه نه بنده او نه پرانیستل شوې، د سرور حالت پلی نه کیږي او نور کمپیوټر نه شي وصل کیدای."
 };
 
 export const english: Record<string, string> = {
@@ -2458,5 +2463,10 @@ export const english: Record<string, string> = {
   "پلن {plan} برای «{customer}» فعال است.": "The {plan} plan is active for \"{customer}\".",
   "چطور تمدید کنیم؟": "How to renew",
   "کلید دستگاه": "Machine key",
-  "کلید دستگاه کپی شد.": "Machine key copied."
+  "کلید دستگاه کپی شد.": "Machine key copied.",
+  "حالت سرور شبکه ذخیره شد. {hint}": "Network-server mode saved. {hint}",
+  "حالت تک‌کامپیوتر ذخیره شد. {hint}": "Single-computer mode saved. {hint}",
+  "در حالت توسعه: فرمان npm run dev را کاملاً ببندید (Ctrl+C) و دوباره اجرا کنید تا حالت شبکه اعمال شود.": "In development: stop the npm run dev command entirely (Ctrl+C) and run it again so the network mode takes effect.",
+  "برنامه را کاملاً ببندید و دوباره باز کنید.": "Close the app completely and open it again.",
+  "وضعیت فعلی این دستگاه: تک‌کامپیوتر. تا برنامه را باز و بسته نکنید، حالت سرور اعمال نمی‌شود و دستگاه‌های دیگر نمی‌توانند وصل شوند.": "This machine is currently in single-computer mode. Until you restart the app, server mode is not in effect and other registers cannot connect."
 };

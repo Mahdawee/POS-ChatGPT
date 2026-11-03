@@ -4,6 +4,7 @@ import * as jwt from "jsonwebtoken";
 import { ChangePasswordDto, LoginDto } from "../dto";
 import { PrismaService } from "../prisma.service";
 import { CurrentUser, Public, sessionSecret, SessionUser } from "../auth";
+import { apiHost } from "../network";
 import { SettingsController } from "./settings.module";
 
 const TOKEN_TTL = "12h" as const;
@@ -19,7 +20,9 @@ export class AuthController {
     // API actually accepts LAN connections ("server" = bound to 0.0.0.0), and
     // `lan` lists this machine's IPv4 addresses so the exact client URLs
     // (http://<lan>:4317) can be shown without running ipconfig by hand.
-    return { ok: true, mode: process.env.API_HOST === "0.0.0.0" ? "server" : "local", lan: SettingsController.lanAddresses() };
+    // apiHost() reflects the real binding — env-driven in the packaged app,
+    // network-mode-file-driven in development.
+    return { ok: true, mode: apiHost() === "0.0.0.0" ? "server" : "local", lan: SettingsController.lanAddresses() };
   }
 
   @Public()

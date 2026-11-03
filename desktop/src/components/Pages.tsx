@@ -1042,6 +1042,11 @@ export function SettingsPage({ notify }: { notify: Notify }) {
     reader.readAsDataURL(file);
   };
   const removeLogo = async () => { try { await put("/settings", { key: "logo", value: "" }); setSettings({ ...settings, logo: "" }); notify(t("لوگو حذف شد.")); } catch (e) { setError((e as Error).message); } };
+  // در حالت توسعه (npm run dev) سرور API فرمان جدای npm است؛ پس پیام
+  // ری‌استارت باید هر دو را شامل شود. در نسخهٔ نصبی همان «بستن برنامه» کافی است.
+  const devRestartHint = import.meta.env.DEV
+    ? t("در حالت توسعه: فرمان npm run dev را کاملاً ببندید (Ctrl+C) و دوباره اجرا کنید تا حالت شبکه اعمال شود.")
+    : t("برنامه را کاملاً ببندید و دوباره باز کنید.");
   const applyNetwork = async () => {
     setNetworkBusy(true); setError("");
     try {
@@ -1054,9 +1059,9 @@ export function SettingsPage({ notify }: { notify: Notify }) {
         notify(t("حالت مشتری شبکه ذخیره شد؛ برنامه دوباره بارگذاری می‌شود…"));
         window.setTimeout(() => window.location.reload(), 900);
       } else if (networkMode === "server") {
-        notify(t("حالت سرور شبکه ذخیره شد. برنامه را کاملاً ببندید و دوباره باز کنید تا کامپیوترهای دیگر بتوانند وصل شوند."));
+        notify(t("حالت سرور شبکه ذخیره شد. {hint}", { hint: devRestartHint }));
       } else {
-        notify(t("حالت تک‌کامپیوتر ذخیره شد. برنامه را کاملاً ببندید و دوباره باز کنید."));
+        notify(t("حالت تک‌کامپیوتر ذخیره شد. {hint}", { hint: devRestartHint }));
       }
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setNetworkBusy(false); }
   };
@@ -1155,10 +1160,10 @@ export function SettingsPage({ notify }: { notify: Notify }) {
     {tab === "network" && <><section className="surface"><SectionHead title={t("شبکهٔ محلی")} subtitle={t("چند کامپیوتر در فروشگاه؛ یک دستگاه سرور و بقیه مشتری")}/>
       <div className="form-grid single">
         <Field label={t("حالت اجرا")}><select value={networkMode} onChange={(e) => { setNetworkMode(e.target.value as typeof networkMode); setConnTest({ state: "idle" }); }}><option value="local">{t("تک‌کامپیوتر (پیش‌فرض)")}</option><option value="server">{t("سرور شبکه (میزبان دیتابیس)")}</option><option value="client">{t("مشتری شبکه (اتصال به سرور)")}</option></select></Field>
-        {networkMode === "server" && <div className="hint-box"><b className="block" style={{ marginBottom: 4 }}>{t("این دستگاه میزبان دیتابیس فروشگاه می‌شود.")}</b>{t("برنامه را کاملاً ببندید و دوباره باز کنید؛ سپس در ویندوز اجازهٔ دسترسی فایروال برای برنامه بدهید (پورت ۴۳۱۷). راهنمای کامل در فایل network-guide.md همراه برنامه است.")}</div>}
+        {networkMode === "server" && <div className="hint-box"><b className="block" style={{ marginBottom: 4 }}>{t("این دستگاه میزبان دیتابیس فروشگاه می‌شود.")}</b>{t("برنامه را کاملاً ببندید و دوباره باز کنید؛ سپس در ویندوز اجازهٔ دسترسی فایروال برای برنامه بدهید (پورت ۴۳۱۷). راهنمای کامل در فایل network-guide.md همراه برنامه است.")}{import.meta.env.DEV && <b className="block" style={{ marginTop: 6 }}>{t("در حالت توسعه: فرمان npm run dev را کاملاً ببندید (Ctrl+C) و دوباره اجرا کنید تا حالت شبکه اعمال شود.")}</b>}</div>}
         {networkMode === "server" && (netInfo?.mode === "server"
           ? <div className="hint-box green"><b className="block">{t("سرور شبکه فعال است — دستگاه‌های دیگر می‌توانند وصل شوند:")}</b><span className="network-urls">{netInfo.lan.length ? netInfo.lan.map((ip) => <code key={ip} dir="ltr">{`http://${ip}:4317`}</code>) : <span>{t("نشانی شبکه پیدا نشد؛ اتصال شبکهٔ دستگاه را بررسی کنید.")}</span>}</span></div>
-          : <div className="hint-box">{t("وضعیت فعلی این دستگاه: تک‌کامپیوتر. پس از باز و بسته‌کردن برنامه، اینجا حالت سرور فعال دیده می‌شود.")}</div>)}
+          : netInfo && <div className="hint-box">{t("وضعیت فعلی این دستگاه: تک‌کامپیوتر. تا برنامه را باز و بسته نکنید، حالت سرور اعمال نمی‌شود و دستگاه‌های دیگر نمی‌توانند وصل شوند.")}{import.meta.env.DEV && <b className="block" style={{ marginTop: 6 }}>{t("در حالت توسعه: فرمان npm run dev را کاملاً ببندید (Ctrl+C) و دوباره اجرا کنید تا حالت شبکه اعمال شود.")}</b>}</div>)}
         {networkMode === "client" && <Field label={t("نشانی سرور (از صفحهٔ شبکهٔ دستگاه سرور بردارید)")}><input value={clientUrl} onChange={(e) => { setClientUrl(e.target.value); setConnTest({ state: "idle" }); }} placeholder="http://192.168.1.10:4317" dir="ltr"/></Field>}
         {networkMode === "client" && <div className="row-actions">
           <button type="button" className="secondary-button" disabled={connTest.state === "busy"} onClick={() => void testConnection()}>{connTest.state === "busy" ? t("در حال آزمایش…") : t("آزمایش اتصال")}</button>
