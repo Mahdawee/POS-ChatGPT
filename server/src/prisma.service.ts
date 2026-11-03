@@ -95,7 +95,12 @@ export async function ensureColumnMigrations(db: { $queryRawUnsafe(sql: string):
  *  2. within each group of duplicates only the oldest row keeps the number;
  *     the rest get a `-<rowid>` suffix, which is stable across re-runs.
  */
-export async function ensureUniqueInvoiceNos(db: { $executeRawUnsafe(sql: string): Promise<unknown> }): Promise<void> {
+export async function ensureUniqueInvoiceNos(db: { $queryRawUnsafe(sql: string): Promise<unknown>; $executeRawUnsafe(sql: string): Promise<unknown> }): Promise<void> {
+  // A brand-new database has no Sale table yet — schema.sql creates it right
+  // after this step. The repair only concerns upgraded databases that
+  // already carry sales, so a missing table means "nothing to repair".
+  const tables = (await db.$queryRawUnsafe(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'Sale'`)) as Array<{ name: string }>;
+  if (!Array.isArray(tables) || tables.length === 0) return;
   await db.$executeRawUnsafe(`UPDATE "Sale" SET "invoiceNo" = 'INV-' || COALESCE("receiptNo", "id") WHERE "invoiceNo" IS NULL OR "invoiceNo" = ''`);
   await db.$executeRawUnsafe(`UPDATE "Sale" SET "invoiceNo" = "invoiceNo" || '-' || "rowid" WHERE "rowid" NOT IN (SELECT MIN("rowid") FROM "Sale" GROUP BY "invoiceNo")`);
 }

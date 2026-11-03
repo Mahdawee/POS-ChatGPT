@@ -98,15 +98,17 @@ export function machineKeyFromFacts(facts: MachineFacts): string {
 
 const SHADOW_PEPPER = "darpos.shadow.v1";
 
-/** HMAC-bound shadow record — cannot be forged without the machine key. */
-export function sealShadow(record: { maxSeenAt: string; tamperFlag: boolean; licenseId: string | null }, machineKey: string): string {
+/** HMAC-bound shadow record — cannot be forged without the machine key.
+ * `trialStartedAt` (optional, added in round 18) survives database deletion,
+ * so wiping pos.db cannot restart the free trial. */
+export function sealShadow(record: { maxSeenAt: string; tamperFlag: boolean; licenseId: string | null; trialStartedAt?: string | null }, machineKey: string): string {
   const body = JSON.stringify(record);
   const mac = createHmac("sha256", `${SHADOW_PEPPER}:${machineKey}`).update(body).digest("base64url");
   return `${mac}.${b64url(Buffer.from(body, "utf8"))}`;
 }
 
 /** Inverse of sealShadow; returns null when the file was tampered with. */
-export function openShadow(sealed: string, machineKey: string): { maxSeenAt: string; tamperFlag: boolean; licenseId: string | null } | null {
+export function openShadow(sealed: string, machineKey: string): { maxSeenAt: string; tamperFlag: boolean; licenseId: string | null; trialStartedAt?: string | null } | null {
   const dot = sealed.indexOf(".");
   if (dot <= 0) return null;
   const mac = sealed.slice(0, dot);
@@ -119,7 +121,7 @@ export function openShadow(sealed: string, machineKey: string): { maxSeenAt: str
   const expected = createHmac("sha256", `${SHADOW_PEPPER}:${machineKey}`).update(body).digest("base64url");
   if (mac !== expected) return null;
   try {
-    const parsed = JSON.parse(body) as { maxSeenAt: string; tamperFlag: boolean; licenseId: string | null };
+    const parsed = JSON.parse(body) as { maxSeenAt: string; tamperFlag: boolean; licenseId: string | null; trialStartedAt?: string | null };
     if (typeof parsed.maxSeenAt !== "string" || typeof parsed.tamperFlag !== "boolean") return null;
     return parsed;
   } catch {

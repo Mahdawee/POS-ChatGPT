@@ -19,9 +19,9 @@ import { machineKey } from "./machine-key";
 export type LicenseStatus = {
   /** Whether the app currently lets the till operate. */
   ok: boolean;
-  /** TRIAL | LICENSED, or LICENSE_EXPIRED / TRIAL_EXPIRED / TAMPERED reasons when !ok. */
+  /** TRIAL | LICENSED, or an expiry/tamper reason when !ok. */
   mode: "TRIAL" | "LICENSED";
-  reason: "NONE" | "TRIAL_EXPIRED" | "LICENSE_EXPIRED" | "TAMPERED" | "MACHINE_MISMATCH";
+  reason: "NONE" | "TRIAL_NOT_STARTED" | "TRIAL_EXPIRED" | "LICENSE_EXPIRED" | "TAMPERED" | "MACHINE_MISMATCH";
   plan: LicensePayload["plan"] | null;
   licenseId: string | null;
   customer: string | null;
@@ -59,33 +59,37 @@ export class LicenseService {
     const client = tx ?? this.prisma;
     let row = await client.licenseState.findUnique({ where: { id: "1" } });
     if (!row) {
-      // First boot on this machine: the trial clock starts today.
+      // First boot on this machine: NOTHING is unlocked yet. The trial only
+      // starts when the shopkeeper explicitly presses "start trial" on the
+      // license screen (or a license is activated) — a silent auto-start
+      // meant a fresh install never showed the machine key at all.
       row = await client.licenseState.create({
-        data: { id: "1", trialStartedAt: new Date(), maxSeenAt: new Date() },
+        data: { id: "1", maxSeenAt: new Date() },
       });
     }
     return row;
   }
 
-  private readShadow(machine: string): { maxSeenAt: Date; tamperFlag: boolean; licenseId: string | null } | null {
+  private readShadow(machine: string): { maxSeenAt: Date; tamperFlag: boolean; licenseId: string | null; trialStartedAt: Date | null } | null {
     try {
       const sealed = readFileSync(this.shadowPath, "utf8").trim();
       const opened = openShadow(sealed, machine);
       if (!opened) return null;
       const at = new Date(opened.maxSeenAt);
       if (Number.isNaN(at.getTime())) return null;
-      return { maxSeenAt: at, tamperFlag: opened.tamperFlag, licenseId: opened.licenseId };
+      const trialAt = opened.trialStartedAt ? new Date(opened.trialStartedAt) : null;
+      return { maxSeenAt: at, tamperFlag: opened.tamperFlag, licenseId: opened.licenseId, trialStartedAt: trialAt && !Number.isNaN(trialAt.getTime()) ? trialAt : null };
     } catch {
       return null;
     }
   }
 
-  private writeShadow(machine: string, maxSeenAt: Date, tamperFlag: boolean, licenseId: string | null): void {
+  private writeShadow(machine: string, maxSeenAt: Date, tamperFlag: boolean, licenseId: string | null, trialStartedAt: Date | null): void {
     try {
       mkdirSync(configureLocalStorage(), { recursive: true });
       writeFileSync(
         this.shadowPath,
-        sealShadow({ maxSeenAt: maxSeenAt.toISOString(), tamperFlag, licenseId }, machine),
+        sealShadow({ maxSeenAt: maxSeenAt.toISOString(), tamperFlag, licenseId, trialStartedAt: trialStartedAt ? trialStartedAt.toISOString() : null }, machine),
         { encoding: "utf8", mode: 0o600 },
       );
     } catch {
@@ -94,29 +98,41 @@ export class LicenseService {
   }
 
   /**
-   * Advances (never rewinds) the licensing clock. Returns the effective now
-   * and persists the new high-water mark + tamper flag.
+   * Advances (never rewinds) the licensing clock. Returns the effective now,
+   * the tamper flag, and the effective trial start (merged from the database
+   * AND the shadow file — deleting pos.db alone cannot restart a trial).
    */
-  private async tick(row: LicenseRow, machine: string): Promise<{ effectiveNow: Date; tamper: boolean }> {
+  private async tick(row: LicenseRow, machine: string): Promise<{ effectiveNow: Date; tamper: boolean; trialStartedAt: Date | null }> {
     const now = new Date();
     const shadow = this.readShadow(machine);
     const dbMax = row.maxSeenAt ? new Date(row.maxSeenAt).getTime() : 0;
     const shadowMax = shadow ? shadow.maxSeenAt.getTime() : 0;
     const highWater = Math.max(dbMax, shadowMax, now.getTime());
     const effectiveNow = new Date(highWater);
+    const dbTrial = row.trialStartedAt ? new Date(row.trialStartedAt).getTime() : null;
+    const shadowTrial = shadow?.trialStartedAt ? shadow.trialStartedAt.getTime() : null;
+    // Earliest remembered start wins: neither restoring an old backup nor
+    // wiping the database buys a second free trial.
+    const trialStartedAt = dbTrial != null && shadowTrial != null
+      ? new Date(Math.min(dbTrial, shadowTrial))
+      : dbTrial != null ? new Date(dbTrial) : shadowTrial != null ? new Date(shadowTrial) : null;
     // A clock reading far BELOW the high-water mark means someone rolled the
     // system date back. Small skews (timezone/DST/NTP) stay inside the grace.
     const rolledBack = highWater - now.getTime() > ROLLBACK_GRACE_MS;
     const tamper = row.tamperFlag || (shadow?.tamperFlag ?? false) || rolledBack;
     const licenseId = this.payloadOf(row)?.licenseId ?? shadow?.licenseId ?? null;
-    if (effectiveNow.getTime() !== dbMax || tamper !== row.tamperFlag) {
+    if (
+      effectiveNow.getTime() !== dbMax ||
+      tamper !== row.tamperFlag ||
+      (trialStartedAt ? trialStartedAt.getTime() : null) !== dbTrial
+    ) {
       await this.prisma.licenseState.update({
         where: { id: "1" },
-        data: { maxSeenAt: effectiveNow, tamperFlag: tamper },
+        data: { maxSeenAt: effectiveNow, tamperFlag: tamper, ...(trialStartedAt ? { trialStartedAt } : {}) },
       }).catch(() => undefined);
     }
-    this.writeShadow(machine, effectiveNow, tamper, licenseId);
-    return { effectiveNow, tamper };
+    this.writeShadow(machine, effectiveNow, tamper, licenseId, trialStartedAt);
+    return { effectiveNow, tamper, trialStartedAt };
   }
 
   private payloadOf(row: { licenseText: string | null }): LicensePayload | null {
@@ -132,11 +148,11 @@ export class LicenseService {
   async status(): Promise<LicenseStatus> {
     const machine = machineKey();
     const row = await this.row();
-    const { effectiveNow, tamper } = await this.tick(row, machine);
+    const { effectiveNow, tamper, trialStartedAt } = await this.tick(row, machine);
     const payload = this.payloadOf(row);
     const base = {
       effectiveNow: effectiveNow.toISOString(),
-      trialStartedAt: row.trialStartedAt ? new Date(row.trialStartedAt).toISOString() : null,
+      trialStartedAt: trialStartedAt ? trialStartedAt.toISOString() : null,
       machineKey: machine,
     };
     if (payload) {
@@ -154,9 +170,21 @@ export class LicenseService {
         expiresAt: payload.expiresAt, daysLeft: days, trialDaysLeft: null, features: payload.features,
       };
     }
-    const trialEnd = row.trialStartedAt ? new Date(row.trialStartedAt).getTime() + TRIAL_DAYS * 86400000 : 0;
-    const trialLeft = trialEnd ? Math.ceil((trialEnd - effectiveNow.getTime()) / 86400000) : null;
-    const trialExpired = trialEnd > 0 && effectiveNow.getTime() > trialEnd;
+    // No license: the trial must have been EXPLICITLY started from the license
+    // screen. Until then the whole app stays locked on that screen.
+    if (!trialStartedAt) {
+      return {
+        ...base,
+        ok: false,
+        mode: "TRIAL",
+        reason: "TRIAL_NOT_STARTED",
+        plan: null, licenseId: null, customer: null, expiresAt: null, daysLeft: null,
+        trialDaysLeft: TRIAL_DAYS, features: [],
+      };
+    }
+    const trialEnd = trialStartedAt.getTime() + TRIAL_DAYS * 86400000;
+    const trialLeft = Math.ceil((trialEnd - effectiveNow.getTime()) / 86400000);
+    const trialExpired = effectiveNow.getTime() > trialEnd;
     return {
       ...base,
       ok: !tamper && !trialExpired,
@@ -167,12 +195,33 @@ export class LicenseService {
     };
   }
 
+  /**
+   * Starts the 14-day trial on explicit request from the license screen.
+   * Idempotent: pressing the button twice (or after a reinstall) never buys
+   * extra days — the earliest remembered start always wins.
+   */
+  async startTrial(): Promise<LicenseStatus> {
+    const machine = machineKey();
+    const row = await this.row();
+    const { effectiveNow, trialStartedAt } = await this.tick(row, machine);
+    if (!trialStartedAt) {
+      await this.prisma.licenseState.update({
+        where: { id: "1" },
+        data: { trialStartedAt: effectiveNow },
+      });
+      const fresh = await this.row();
+      await this.tick(fresh, machine); // seals the start into the shadow file
+    }
+    return this.status();
+  }
+
   /** Fast gate used by the middleware and by checkout: may this till sell? */
   async assertLicensed(): Promise<void> {
     const s = await this.status();
     if (s.ok) return;
     const messages: Record<LicenseStatus["reason"], string> = {
       NONE: "لایسنس فعال نیست.",
+      TRIAL_NOT_STARTED: "دورهٔ آزمایشی هنوز شروع نشده است. از صفحهٔ لایسنس، دورهٔ آزمایشی را شروع کنید یا لایسنس فعال کنید.",
       TRIAL_EXPIRED: "دورهٔ آزمایشی ۱۴ روزه به پایان رسیده است. برای ادامه، لایسنس فعال کنید.",
       LICENSE_EXPIRED: "مدت لایسنس به پایان رسیده است. برای ادامه، لایسنس جدید فعال کنید.",
       TAMPERED: "تاریخ سیستم دستکاری شده است. برای ادامه، لایسنس معتبر فعال کنید.",

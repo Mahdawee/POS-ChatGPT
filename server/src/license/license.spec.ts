@@ -131,7 +131,7 @@ function makeDb(row: Row) {
     updates,
     licenseState: {
       findUnique: async () => (state.maxSeenAt || state.trialStartedAt || state.licenseText ? state : null),
-      create: async ({ data }: { data: { trialStartedAt: Date; maxSeenAt: Date } }) => {
+      create: async ({ data }: { data: { maxSeenAt: Date; trialStartedAt?: Date } }) => {
         Object.assign(state, data, { id: "1" });
         return state;
       },
@@ -151,15 +151,44 @@ const serviceWith = (row: Row) => {
 };
 
 describe("LicenseService state machine", () => {
-  it("starts a 14-day trial on first boot", async () => {
-    const now = Date.now();
+  it("keeps a fresh install LOCKED until the trial is explicitly started", async () => {
     const { svc } = serviceWith({ licenseText: null, maxSeenAt: null, trialStartedAt: null, tamperFlag: false });
-    const status = await svc.status();
-    expect(status.ok).toBe(true);
-    expect(status.mode).toBe("TRIAL");
-    expect(status.trialDaysLeft).not.toBeNull();
-    expect(status.trialDaysLeft! <= 14 && status.trialDaysLeft! >= 13).toBe(true);
-    expect(Date.now() >= now).toBe(true);
+    const locked = await svc.status();
+    expect(locked.ok).toBe(false);
+    expect(locked.mode).toBe("TRIAL");
+    expect(locked.reason).toBe("TRIAL_NOT_STARTED");
+    expect(locked.trialDaysLeft).toBe(14);
+    // The API gate and checkout read the same status: nothing works yet.
+    await expect(svc.assertLicensed()).rejects.toThrow(/شروع نشده/);
+  });
+
+  it("startTrial unlocks the app for 14 days and never extends on repeat", async () => {
+    const { svc } = serviceWith({ licenseText: null, maxSeenAt: null, trialStartedAt: null, tamperFlag: false });
+    const started = await svc.startTrial();
+    expect(started.ok).toBe(true);
+    expect(started.reason).toBe("NONE");
+    expect(started.trialDaysLeft!).toBeLessThanOrEqual(14);
+    expect(started.trialDaysLeft!).toBeGreaterThanOrEqual(13);
+    // Pressing the button again (or a reinstall) must not buy extra days.
+    const again = await svc.startTrial();
+    expect(again.trialStartedAt).toBe(started.trialStartedAt);
+    expect(again.trialDaysLeft).toBe(started.trialDaysLeft);
+  });
+
+  it("a wiped database cannot restart the trial — the shadow file remembers", async () => {
+    // Trial started 20 days ago on this machine: status seals that start
+    // into the shadow file outside the database.
+    const first = serviceWith({ licenseText: null, maxSeenAt: new Date(), trialStartedAt: new Date(Date.now() - 20 * 86400000), tamperFlag: false });
+    expect((await first.svc.status()).reason).toBe("TRIAL_EXPIRED");
+    // "Delete pos.db": a brand-new state row, same machine + shadow file.
+    const second = serviceWith({ licenseText: null, maxSeenAt: null, trialStartedAt: null, tamperFlag: false });
+    const wiped = await second.svc.status();
+    expect(wiped.ok).toBe(false);
+    expect(wiped.reason).toBe("TRIAL_EXPIRED");
+    // Explicitly trying to start a fresh trial buys nothing either.
+    const retry = await second.svc.startTrial();
+    expect(retry.ok).toBe(false);
+    expect(retry.reason).toBe("TRIAL_EXPIRED");
   });
 
   it("expires the trial when the trial window passes", async () => {

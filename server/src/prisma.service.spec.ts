@@ -105,7 +105,10 @@ describe("Payment-parts backfill for pre-parts databases", () => {
 describe("Invoice-number repair before the unique index is built", () => {
   it("backfills blank numbers and only suffixes later duplicates", async () => {
     const statements: string[] = [];
-    const client = { $executeRawUnsafe: jest.fn().mockImplementation((sql: string) => { statements.push(sql); return Promise.resolve(0); }) };
+    const client = {
+      $queryRawUnsafe: jest.fn().mockResolvedValue([{ name: "Sale" }]),
+      $executeRawUnsafe: jest.fn().mockImplementation((sql: string) => { statements.push(sql); return Promise.resolve(0); }),
+    };
     await ensureUniqueInvoiceNos(client);
     expect(statements).toEqual([
       // 1) sales without a number inherit one from their receipt number…
@@ -117,5 +120,17 @@ describe("Invoice-number repair before the unique index is built", () => {
     // Both statements are unconditional full-table passes that converge after
     // one run: on a second run every number is present and unique, so both
     // UPDATEs simply match zero rows (idempotent by construction).
+  });
+
+  it("does nothing on a brand-new database (Sale table not created yet)", async () => {
+    // schema.sql runs AFTER this step, so a fresh install reaches here with
+    // no Sale table — the repair must skip instead of crashing the boot.
+    const statements: string[] = [];
+    const client = {
+      $queryRawUnsafe: jest.fn().mockResolvedValue([]),
+      $executeRawUnsafe: jest.fn().mockImplementation((sql: string) => { statements.push(sql); return Promise.resolve(0); }),
+    };
+    await ensureUniqueInvoiceNos(client);
+    expect(statements).toEqual([]);
   });
 });

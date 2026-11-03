@@ -11,6 +11,7 @@ const numberValue = (event: { target: { value: string } }): number => Number(eve
 /** علائم وضعیت لایسنس به فارسی. */
 function licenseReasonText(status: LicenseStatus): string {
   switch (status.reason) {
+    case "TRIAL_NOT_STARTED": return t("برای استفاده، لایسنس فعال کنید یا دورهٔ آزمایشی ۱۴ روزه را از همین صفحه شروع کنید.");
     case "TRIAL_EXPIRED": return t("دورهٔ آزمایشی ۱۴ روزه به پایان رسیده است. برای ادامهٔ کار، لایسنس فعال کنید.");
     case "LICENSE_EXPIRED": return t("مدت لایسنس به پایان رسیده است. برای ادامه، لایسنس جدید فعال کنید.");
     case "TAMPERED": return t("تاریخ سیستم دستکاری شده است. ساعت دستگاه را درست کنید و لایسنس معتبر فعال کنید.");
@@ -27,6 +28,7 @@ export function LicenseScreen({ onActivated }: { onActivated: () => void }) {
   const [status, setStatus] = useState<LicenseStatus | null>(null);
   const [licenseText, setLicenseText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [startingTrial, setStartingTrial] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   useEffect(() => { get<LicenseStatus>("/license/status").then(setStatus).catch((e) => setError(e.message)); }, []);
@@ -38,9 +40,17 @@ export function LicenseScreen({ onActivated }: { onActivated: () => void }) {
       onActivated();
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   };
+  const startTrial = async () => {
+    setStartingTrial(true); setError("");
+    try {
+      await post("/license/trial-start", {});
+      onActivated();
+    } catch (e) { setError((e as Error).message); } finally { setStartingTrial(false); }
+  };
   const copyKey = async () => {
     try { await navigator.clipboard.writeText(status?.machineKey || ""); setCopied(true); window.setTimeout(() => setCopied(false), 2000); } catch { /* clipboard unavailable */ }
   };
+  const trialNotStarted = status != null && !status.ok && status.reason === "TRIAL_NOT_STARTED";
   return <div className="license-screen">
     <form className="license-card" onSubmit={activate}>
       <div className="license-logo">{t("رو")}</div>
@@ -58,6 +68,7 @@ export function LicenseScreen({ onActivated }: { onActivated: () => void }) {
       {error && <div className="form-error">{error}</div>}
       <div className="form-actions">
         <button type="button" className="secondary-button" onClick={() => window.location.reload()}><RefreshCw size={16}/>{t("بررسی دوباره")}</button>
+        {trialNotStarted && <button type="button" className="primary-button" disabled={startingTrial} onClick={() => void startTrial()}><CalendarClock size={16}/>{startingTrial ? t("در حال شروع…") : t("شروع دورهٔ آزمایشی ۱۴ روزه")}</button>}
         <button className="primary-button" disabled={busy || licenseText.trim().length < 30}><Send size={16}/>{busy ? t("در حال فعال‌سازی…") : t("فعال‌سازی لایسنس")}</button>
       </div>
       <p className="muted small">{t("پرداخت هزینهٔ لایسنس به فروشنده؛ بعد از دریافت بلوک لایسنس، آن را همین‌جا بچسبانید. لایسنس فقط روی همین دستگاه کار می‌کند.")}</p>

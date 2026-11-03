@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS "Product" (
     "stock" REAL NOT NULL DEFAULT 0,
     "minStock" REAL NOT NULL DEFAULT 0,
     "backstock" REAL NOT NULL DEFAULT 0,
+    "isBundle" BOOLEAN NOT NULL DEFAULT false,
+    "isSerialized" BOOLEAN NOT NULL DEFAULT false,
+    "reserved" REAL NOT NULL DEFAULT 0,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "categoryId" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -39,6 +42,8 @@ CREATE TABLE IF NOT EXISTS "Customer" (
     "note" TEXT,
     "creditLimit" INTEGER NOT NULL DEFAULT 0,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "walletBalance" INTEGER NOT NULL DEFAULT 0,
+    "tier" TEXT NOT NULL DEFAULT 'RETAIL',
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL
 );
@@ -87,6 +92,7 @@ CREATE TABLE IF NOT EXISTS "Sale" (
     "cashPart" INTEGER NOT NULL DEFAULT 0,
     "mobilePart" INTEGER NOT NULL DEFAULT 0,
     "creditPart" INTEGER NOT NULL DEFAULT 0,
+    "walletPart" INTEGER NOT NULL DEFAULT 0,
     "invoiceNo" TEXT,
     "paymentMethod" TEXT NOT NULL,
     "note" TEXT,

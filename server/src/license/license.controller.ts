@@ -31,6 +31,13 @@ export class LicenseController {
     return this.license.activate(dto.licenseText);
   }
 
+  /** Explicit "start the 14-day trial" from the license screen. */
+  @Public()
+  @Post("trial-start")
+  startTrial() {
+    return this.license.startTrial();
+  }
+
   @AdminOnly()
   @Post("deactivate")
   deactivate(@CurrentUser() _user: SessionUser) {
