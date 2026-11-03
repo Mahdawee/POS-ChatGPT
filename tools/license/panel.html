@@ -236,6 +236,13 @@
     از سربرگ «کلیدها و راهنما» اقدام کنید. اگر قبلاً کلید ساخته‌اید، فایل
     <span dir="ltr">private.pem</span> را در پوشهٔ کلیدها برگردانید.</div>
   </div>
+  <div class="banner bad" id="bannerBrokenKey">
+    ⚠️ <div><b>فایل کلید خصوصی (private.pem) موجود است اما محتوایش معتبر نیست.</b>
+    صدور لایسنس به همین دلیل با خطای OpenSSL مواجه می‌شود (فایل خالی، ناقص کپی‌شده یا کلید اشتباه است).
+    از سربرگ «کلیدها و راهنما» دکمهٔ <b>«بازسازی جفت‌کلید»</b> را بزنید — چون کلید فعلی قابل امضا نیست،
+    تأیید «مطمئنم» لازم نیست و چیزی از دست نمی‌دهید. بعد از بازسازی، کلید عمومی تازه را با
+    «همگام‌سازی کلید عمومی با سورس برنامه» جایگزین کنید و برنامه را دوباره بسازید.</div>
+  </div>
 
   <nav class="tabs">
     <button data-tab="issue" class="active">🖨️ صدور لایسنس</button>
@@ -382,8 +389,8 @@
       </div>
       <div id="embeddedStatus" style="margin-top:14px;"></div>
       <div class="danger-zone">
-        <h3>ساخت جفت‌کلید تازه (منطقهٔ خطر)</h3>
-        <p>فقط وقتی لازم است که هنوز هیچ کلیدی ندارید، یا عمداً می‌خواهید همهٔ لایسنس‌های قبلی را باطل کنید. بعد از ساخت، باید کلید عمومی تازه را در فایل <span dir="ltr">server/src/license/license-public-key.ts</span> جایگزین و برنامه را دوباره بسازید و توزیع کنید.</p>
+        <h3 id="keygenTitle">ساخت جفت‌کلید تازه (منطقهٔ خطر)</h3>
+        <p>فقط وقتی لازم است که هنوز هیچ کلیدی ندارید، یا عمداً می‌خواهید همهٔ لایسنس‌های قبلی را باطل کنید. اگر فایل <span dir="ltr">private.pem</span> موجود است اما خراب/ناخواناست (مثلاً صدور لایسنس با خطای <span dir="ltr">DECODER routines</span> شکست می‌خورد)، بازسازی لازم و بی‌خطر است: چون کلید خراب هیچ لایسنسی را امضا نکرده، چیزی از دست نمی‌دهید و تأیید «مطمئنم» لازم نیست. بعد از ساخت، باید کلید عمومی تازه را در فایل <span dir="ltr">server/src/license/license-public-key.ts</span> جایگزین و برنامه را دوباره بسازید و توزیع کنید.</p>
         <div class="confirm-row">
           <button class="primary" id="btnKeygen">ساخت جفت‌کلید</button>
           <label style="font-size:13px; display:flex; gap:6px; align-items:center;">
@@ -470,19 +477,27 @@ document.querySelectorAll("nav.tabs button").forEach((btn) => {
 async function loadState() {
   let s;
   try { s = await api("/api/state"); } catch { return; }
+  KEY_BROKEN = s.hasPrivate && s.privateKeyOk === false;
   const chip = $("keyChip");
-  if (s.hasPrivate) {
-    chip.classList.remove("bad");
-    $("keyChipText").textContent = "کلید امضا آماده است";
-  } else {
+  if (!s.hasPrivate) {
     chip.classList.add("bad");
     $("keyChipText").textContent = "کلید خصوصی موجود نیست";
+  } else if (KEY_BROKEN) {
+    chip.classList.add("bad");
+    $("keyChipText").textContent = "کلید خصوصی خراب/ناخواناست";
+  } else {
+    chip.classList.remove("bad");
+    $("keyChipText").textContent = "کلید امضا آماده است";
   }
   $("bannerNoKey").classList.toggle("show", !s.hasPrivate);
+  $("bannerBrokenKey").classList.toggle("show", KEY_BROKEN);
   $("bannerMismatch").classList.toggle("show", s.embeddedMatch === false && s.hasPublic);
+  // A broken key is replaced without the «مطمئنم» dance — nothing to lose.
+  $("btnKeygen").textContent = KEY_BROKEN ? "بازسازی جفت‌کلید (کلید فعلی خراب است)" : "ساخت جفت‌کلید";
+  $("btnKeygen").disabled = !KEY_BROKEN && !$("keygenConfirm").checked;
   $("publicKeyBox").textContent = s.publicKey || "— (هنوز جفت‌کلید ساخته نشده)";
   $("keysKv").innerHTML = `
-    <dt>کلید خصوصی</dt><dd dir="ltr" style="font-family:var(--mono); font-size:12px;">${escapeHtml(s.keysDir)}/private.pem — ${s.hasPrivate ? "✅ موجود" : "❌ موجود نیست"}</dd>
+    <dt>کلید خصوصی</dt><dd dir="ltr" style="font-family:var(--mono); font-size:12px;">${escapeHtml(s.keysDir)}/private.pem — ${!s.hasPrivate ? "❌ موجود نیست" : s.privateKeyOk ? "✅ موجود و معتبر" : "⚠️ موجود اما خراب/ناخوانا"}</dd>
     <dt>کلید عمومی</dt><dd dir="ltr" style="font-family:var(--mono); font-size:12px;">${escapeHtml(s.keysDir)}/public.pem — ${s.hasPublic ? "✅ موجود" : "❌ موجود نیست"}</dd>
     <dt>دفتر لایسنس‌ها</dt><dd dir="ltr" style="font-family:var(--mono); font-size:12px;">${escapeHtml(s.ledgerPath)} (${s.ledgerCount} لایسنس)</dd>`;
   const st = $("embeddedStatus");
@@ -693,14 +708,17 @@ $("btnVerify").addEventListener("click", async () => {
 });
 
 // ── keys ────────────────────────────────────────────────────
-$("keygenConfirm").addEventListener("change", () => { $("btnKeygen").disabled = !$("keygenConfirm").checked; });
+let KEY_BROKEN = false; // set by loadState(): private.pem exists but is unreadable
+$("keygenConfirm").addEventListener("change", () => { $("btnKeygen").disabled = !KEY_BROKEN && !$("keygenConfirm").checked; });
 $("btnKeygen").disabled = true;
 $("btnKeygen").addEventListener("click", async () => {
-  if (!$("keygenConfirm").checked) return;
-  if (!confirm("مطمئنید؟ با ساخت جفت‌کلید تازه، همهٔ لایسنس‌های قبلی نامعتبر می‌شوند!")) return;
+  // A broken key can be replaced freely (it never signed a usable license),
+  // so the «مطمئنم» checkbox and the scary confirm are only for healthy keys.
+  if (!KEY_BROKEN && !$("keygenConfirm").checked) return;
+  if (!KEY_BROKEN && !confirm("مطمئنید؟ با ساخت جفت‌کلید تازه، همهٔ لایسنس‌های قبلی نامعتبر می‌شوند!")) return;
   try {
-    await api("/api/keygen", { force: true });
-    toast("جفت‌کلید تازه ساخته شد");
+    const r = await api("/api/keygen", { force: true });
+    toast(r.replacedBroken ? "جفت‌کلید تازه ساخته شد (کلید خراب قبلی جایگزین شد)" : "جفت‌کلید تازه ساخته شد");
     $("keygenConfirm").checked = false; $("btnKeygen").disabled = true;
     loadState();
   } catch (e) { toast(e.message); }

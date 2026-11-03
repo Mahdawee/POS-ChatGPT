@@ -63,6 +63,26 @@ function readPublicKey() {
   return existsSync(PUBLIC_KEY_PATH) ? readFileSync(PUBLIC_KEY_PATH, "utf8") : null;
 }
 
+/** Reads AND validates the signing key. Returns:
+ *    { missing: true }        — no private.pem at all
+ *    { ok: true, pem }        — decodable and usable for signing
+ *    { broken: true }         — the file exists but OpenSSL cannot decode it
+ *  (empty file, a truncated copy, a public key pasted by mistake, …).
+ *  The one recoverable case — a BOM saved by Notepad — is tolerated by
+ *  stripping it before parsing, so signing keeps working. */
+function readPrivateKey() {
+  if (!existsSync(PRIVATE_KEY_PATH)) return { missing: true };
+  const raw = readFileSync(PRIVATE_KEY_PATH, "utf8");
+  const stripped = raw.replace(/^\uFEFF/, "");
+  for (const pem of [raw, stripped]) {
+    try {
+      createPrivateKey(pem);
+      return { ok: true, pem };
+    } catch { /* try the next candidate */ }
+  }
+  return { broken: true };
+}
+
 function embeddedPublicKey() {
   try {
     const src = readFileSync(EMBEDDED_KEY_TS, "utf8");
@@ -74,14 +94,17 @@ function embeddedPublicKey() {
 }
 
 function keygen(force) {
-  if (existsSync(PRIVATE_KEY_PATH) && !force) {
-    throw new Error("کلید خصوصی از قبل موجود است. برای ساخت مجدد باید گزینهٔ «مطمئنم» را بزنید — همهٔ لایسنس‌های قبلی نامعتبر می‌شوند!");
+  const existing = readPrivateKey();
+  if (existing.ok && !force) {
+    throw new Error("کلید خصوصی از قبل موجود و سالم است. برای ساخت مجدد باید گزینهٔ «مطمئنم» را بزنید — همهٔ لایسنس‌های قبلی نامعتبر می‌شوند!");
   }
+  // A missing OR broken key may be replaced freely: it never signed a usable
+  // license, so overwriting it loses nothing (no «مطمئنم» needed).
   mkdirSync(KEYS_DIR, { recursive: true });
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   writeFileSync(PRIVATE_KEY_PATH, privateKey.export({ type: "pkcs8", format: "pem" }), { mode: 0o600 });
   writeFileSync(PUBLIC_KEY_PATH, publicKey.export({ type: "spki", format: "pem" }));
-  return readPublicKey();
+  return { publicKey: readPublicKey(), replacedBroken: existing.broken === true };
 }
 
 // ── ledger ─────────────────────────────────────────────────────────────────
@@ -208,11 +231,12 @@ async function handle(req, res) {
     const same = pub && embedded
       ? pub.replace(/\s+/g, "") === embedded.replace(/\s+/g, "")
       : null;
+    const priv = readPrivateKey();
     return send(res, {
       ok: true,
       keysDir: KEYS_DIR,
-      hasPrivate: existsSync(PRIVATE_KEY_PATH),
-      hasPublic: Boolean(pub),
+      hasPrivate: !priv.missing,
+      privateKeyOk: priv.ok === true,
       publicKey: pub,
       embeddedMatch: same,
       embeddedKey: embedded,
@@ -224,8 +248,8 @@ async function handle(req, res) {
 
   if (url.pathname === "/api/keygen" && req.method === "POST") {
     try {
-      const publicKey = keygen(Boolean((await readBody(req)).force));
-      return send(res, { ok: true, publicKey });
+      const { publicKey, replacedBroken } = keygen(Boolean((await readBody(req)).force));
+      return send(res, { ok: true, publicKey, replacedBroken });
     } catch (error) {
       return fail(res, 409, error.message);
     }
@@ -245,8 +269,16 @@ async function handle(req, res) {
     } catch (error) {
       return fail(res, 400, error.message);
     }
-    if (!existsSync(PRIVATE_KEY_PATH)) {
+    // The key file may be missing — or exist yet be unreadable (empty /
+    // truncated / wrong content). Catch both HERE with a clear message
+    // instead of letting OpenSSL surface something like
+    // "error:1E08010C:DECODER routines::unsupported".
+    const priv = readPrivateKey();
+    if (priv.missing) {
       return fail(res, 409, `کلید خصوصی پیدا نشد: ${PRIVATE_KEY_PATH} — اول از سربرگ «کلیدها» جفت‌کلید بسازید.`);
+    }
+    if (priv.broken) {
+      return fail(res, 409, `فایل کلید خصوصی موجود است اما محتوایش معتبر نیست و نمی‌توان با آن لایسنس امضا کرد: ${PRIVATE_KEY_PATH} (فایل خالی، ناقص یا خراب). از سربرگ «کلیدها و راهنما» جفت‌کلید تازه بسازید — چون کلید فعلی عملاً قابل استفاده نیست، چیزی از دست نمی‌دهید. بعد از ساخت، کلید عمومی تازه را با دکمهٔ «همگام‌سازی کلید عمومی با سورس برنامه» جایگزین کنید و برنامه را دوباره بسازید.`);
     }
     const payload = {
       v: 1,
@@ -259,7 +291,12 @@ async function handle(req, res) {
       features: ["*"],
       ...(body.note ? { note: String(body.note) } : {}),
     };
-    const license = signLicense(payload, readFileSync(PRIVATE_KEY_PATH, "utf8"));
+    let license;
+    try {
+      license = signLicense(payload, priv.pem);
+    } catch (error) {
+      return fail(res, 409, `امضای لایسنس با کلید خصوصی ممکن نشد (${error.message}). از سربرگ «کلیدها و راهنما» جفت‌کلید را دوباره بسازید.`);
+    }
 
     const ledger = readLedger();
     ledger.licenses.push({
