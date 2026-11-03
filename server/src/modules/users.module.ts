@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, Get, Module, Param, Patch, Post } from "@nestjs/common";
 import * as bcrypt from "bcryptjs";
 import { AdminOnly, CurrentUser, SessionUser } from "../auth";
-import { UserDto } from "../dto";
+import { ResetPasswordDto, UserDto } from "../dto";
 import { PrismaService } from "../prisma.service";
 
 @AdminOnly()
@@ -15,8 +15,22 @@ class UsersController {
   }
   @Patch(":id/deactivate") async deactivate(@Param("id") id: string, @CurrentUser() actor: SessionUser) {
     if (id === actor.id) throw new BadRequestException("حساب مدیر جاری را نمی‌توان غیرفعال کرد.");
+    if (!(await this.prisma.user.findUnique({ where: { id }, select: { id: true } }))) throw new BadRequestException("کاربر پیدا نشد.");
     const user = await this.prisma.user.update({ where: { id }, data: { isActive: false }, select: { id: true, username: true, displayName: true, role: true, isActive: true } });
     await this.prisma.auditLog.create({ data: { actor: actor.username, action: "DEACTIVATE_USER", entity: "User", entityId: id } });
+    return user;
+  }
+  @Patch(":id/activate") async activate(@Param("id") id: string, @CurrentUser() actor: SessionUser) {
+    if (!(await this.prisma.user.findUnique({ where: { id }, select: { id: true } }))) throw new BadRequestException("کاربر پیدا نشد.");
+    const user = await this.prisma.user.update({ where: { id }, data: { isActive: true }, select: { id: true, username: true, displayName: true, role: true, isActive: true } });
+    await this.prisma.auditLog.create({ data: { actor: actor.username, action: "ACTIVATE_USER", entity: "User", entityId: id } });
+    return user;
+  }
+  @Patch(":id/reset-password") async resetPassword(@Param("id") id: string, @Body() dto: ResetPasswordDto, @CurrentUser() actor: SessionUser) {
+    if (id === actor.id) throw new BadRequestException("برای تغییر گذرواژهٔ خود از بخش تنظیمات استفاده کنید.");
+    if (!(await this.prisma.user.findUnique({ where: { id }, select: { id: true } }))) throw new BadRequestException("کاربر پیدا نشد.");
+    const user = await this.prisma.user.update({ where: { id }, data: { passwordHash: await bcrypt.hash(dto.newPassword, 12) }, select: { id: true, username: true, displayName: true } });
+    await this.prisma.auditLog.create({ data: { actor: actor.username, action: "RESET_PASSWORD", entity: "User", entityId: id } });
     return user;
   }
 }

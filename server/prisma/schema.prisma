@@ -16,6 +16,7 @@ enum PaymentMethod {
   CASH
   MOBILE
   CREDIT
+  WALLET
 }
 
 enum MovementType {
@@ -24,6 +25,7 @@ enum MovementType {
   ADJUSTMENT_IN
   ADJUSTMENT_OUT
   SALE_RETURN
+  PURCHASE_RETURN
 }
 
 enum CashMovementType {
@@ -46,15 +48,38 @@ model Product {
   barcode     String?             @unique
   name        String
   unit        String              @default("عدد")
+  isWeighted  Boolean             @default(false)
+  /// Bundle/kit flag: the product itself is not stock-tracked; selling it
+  /// deducts the configured components instead.
+  isBundle        Boolean         @default(false)
+  /// Serialized flag: each unit is tracked by serial/IMEI (phone, laptop…).
+  isSerialized    Boolean         @default(false)
+  /// Quantity reserved for open customer orders (pre-orders).
+  reserved        Float           @default(0)
+  expiryDate  DateTime?
   price       Int
+  wholesalePrice Int?
+  wholesaleMinQty Float?
   cost        Int                 @default(0)
-  stock       Int                 @default(0)
-  minStock    Int                 @default(0)
+  stock       Float               @default(0)
+  minStock    Float               @default(0)
+  /// Backroom quantity - goods stored away from the sales shelf.
+  backstock   Float               @default(0)
   isActive    Boolean             @default(true)
   categoryId  String?
   category    Category?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   saleItems   SaleItem[]
   movements   InventoryMovement[]
+  purchaseItems PurchaseItem[]
+  returnItems   SaleReturnItem[]
+  purchaseReturnItems PurchaseReturnItem[]
+  batches             ProductBatch[]
+  stocktakeLines      StocktakeLine[]
+  quoteItems          QuoteItem[]
+  bundleComponents    BundleComponent[] @relation("BundleOf")
+  componentOf         BundleComponent[] @relation("ComponentIn")
+  serialUnits         SerialUnit[]
+  orderLines          CustomerOrderLine[]
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
   @@index([name])
@@ -62,13 +87,26 @@ model Product {
 }
 
 model Customer {
-  id        String   @id @default(cuid())
-  name      String
-  phone     String?
-  address   String?
-  note      String?
-  isActive  Boolean  @default(true)
+  id          String  @id @default(cuid())
+  name        String
+  phone       String?
+  address     String?
+  note        String?
+  /// 0 = no credit-limit check.
+  creditLimit Int     @default(0)
+  /// Prepaid wallet balance (whole afghani) — charged by the shop and spent
+  /// at checkout with paymentMethod = WALLET.
+  walletBalance Int   @default(0)
+  /// Price tier: WHOLESALE customers buy at the wholesale price regardless
+  /// of quantity; RETAIL keeps the per-line minimum rule.
+  tier        String  @default("RETAIL") // RETAIL | WHOLESALE
+  isActive    Boolean @default(true)
   sales     Sale[]
+  payments  CustomerPayment[]
+  quotes    Quote[]
+  walletTxns CustomerWalletTxn[]
+  installmentPlans InstallmentPlan[]
+  orders    CustomerOrder[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@index([name])
@@ -76,14 +114,17 @@ model Customer {
 }
 
 model Supplier {
-  id        String   @id @default(cuid())
+  id        String            @id @default(cuid())
   name      String
   phone     String?
   address   String?
   note      String?
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  isActive  Boolean           @default(true)
+  purchases Purchase[]
+  payments  SupplierPayment[]
+  purchaseReturns PurchaseReturn[]
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
   @@index([name])
 }
 
@@ -96,6 +137,14 @@ model User {
   isActive     Boolean     @default(true)
   sales        Sale[]
   cashSessions CashSession[]
+  purchases    Purchase[]
+  saleReturns  SaleReturn[]
+  expenses     Expense[]
+  purchaseReturns PurchaseReturn[]
+  customerPayments CustomerPayment[]
+  supplierPayments SupplierPayment[]
+  stocktakes        Stocktake[]
+  quotes            Quote[]
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 }
@@ -115,6 +164,14 @@ model Sale {
   total          Int
   amountPaid     Int
   change         Int           @default(0)
+  /// How the total was settled; backfilled for old rows from paymentMethod.
+  cashPart       Int           @default(0)
+  mobilePart     Int           @default(0)
+  creditPart     Int           @default(0)
+  /// Portion settled from the customer's prepaid wallet.
+  walletPart     Int           @default(0)
+  /// Daily sequential number for printed invoices (INV-YYYYMMDD-NNNN).
+  invoiceNo      String?       @unique
   paymentMethod  PaymentMethod
   note           String?
   customerId     String?
@@ -124,8 +181,11 @@ model Sale {
   cashSessionId  String?
   cashSession    CashSession?  @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
   items          SaleItem[]
+  returns        SaleReturn[]
+  quotes         Quote[]
   createdAt      DateTime      @default(now())
   @@index([createdAt])
+  @@index([customerId])
 }
 
 model SaleItem {
@@ -136,9 +196,13 @@ model SaleItem {
   product   Product @relation(fields: [productId], references: [id])
   name      String
   sku       String
-  quantity  Int
+  quantity  Float
   unitPrice Int
+  unitCost  Int     @default(0)
+  /// Manual per-line discount in whole afghani.
+  discount  Int     @default(0)
   lineTotal Int
+  @@index([saleId])
 }
 
 model InventoryMovement {
@@ -146,8 +210,8 @@ model InventoryMovement {
   productId String
   product   Product     @relation(fields: [productId], references: [id])
   type      MovementType
-  quantity  Int
-  stockAfter Int
+  quantity  Float
+  stockAfter Float
   reference String?
   note      String?
   createdAt DateTime     @default(now())
@@ -165,6 +229,8 @@ model CashSession {
   user        User         @relation(fields: [userId], references: [id])
   sales       Sale[]
   movements   CashMovement[]
+  customerPayments CustomerPayment[]
+  expenses    Expense[]
   openedAt    DateTime     @default(now())
   closedAt    DateTime?
   @@index([status, openedAt])
@@ -178,6 +244,7 @@ model CashMovement {
   cashSessionId String
   cashSession   CashSession       @relation(fields: [cashSessionId], references: [id], onDelete: Cascade)
   createdAt     DateTime         @default(now())
+  @@index([cashSessionId])
 }
 
 model AuditLog {
@@ -189,4 +256,343 @@ model AuditLog {
   detail    String?
   createdAt DateTime @default(now())
   @@index([entity, createdAt])
+}
+
+model Purchase {
+  id         String         @id @default(cuid())
+  invoiceNo  String?
+  note       String?
+  supplierId String?
+  supplier   Supplier?      @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  userId     String
+  user       User           @relation(fields: [userId], references: [id])
+  total      Int
+  paidAmount Int            @default(0)
+  items      PurchaseItem[]
+  purchaseReturns PurchaseReturn[]
+  batches         ProductBatch[]
+  createdAt  DateTime       @default(now())
+  @@index([createdAt])
+  @@index([supplierId])
+}
+
+model PurchaseItem {
+  id         String   @id @default(cuid())
+  purchaseId String
+  purchase   Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id])
+  name       String
+  sku        String
+  quantity   Float
+  unitCost   Int
+  lineTotal  Int
+  /// Optional batch/lot expiry for this delivery (feeds ProductBatch).
+  expiryDate DateTime?
+  @@index([purchaseId])
+}
+
+model SaleReturn {
+  id        String          @id @default(cuid())
+  returnNo  String          @unique
+  saleId    String
+  sale      Sale            @relation(fields: [saleId], references: [id])
+  total     Int
+  /// Portion of the customer's credit debt forgiven by this return.
+  creditRelief Int          @default(0)
+  /// Portion of `total` that was paid out of the drawer in cash.
+  cashAmount Int            @default(0)
+  /// Portion of `total` refunded to the customer's prepaid wallet.
+  walletRefund Int          @default(0)
+  note      String?
+  userId    String
+  user      User            @relation(fields: [userId], references: [id])
+  items     SaleReturnItem[]
+  createdAt DateTime        @default(now())
+  @@index([saleId])
+  @@index([createdAt])
+}
+
+model SaleReturnItem {
+  id           String     @id @default(cuid())
+  saleReturnId String
+  saleReturn   SaleReturn @relation(fields: [saleReturnId], references: [id], onDelete: Cascade)
+  productId    String
+  product      Product    @relation(fields: [productId], references: [id])
+  name         String
+  sku          String
+  quantity     Float
+  unitPrice    Int
+  unitCost     Int        @default(0)
+  lineTotal    Int
+  @@index([saleReturnId])
+}
+
+model CustomerPayment {
+  id            String       @id @default(cuid())
+  customerId    String
+  customer      Customer     @relation(fields: [customerId], references: [id])
+  amount        Int
+  note          String?
+  cashSessionId String?
+  cashSession   CashSession? @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
+  userId        String
+  user          User         @relation(fields: [userId], references: [id])
+  createdAt     DateTime     @default(now())
+  @@index([customerId, createdAt])
+}
+
+model Expense {
+  id            String       @id @default(cuid())
+  title         String
+  amount        Int
+  category      String?
+  note          String?
+  fromCash      Boolean      @default(false)
+  cashSessionId String?
+  cashSession   CashSession? @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
+  userId        String
+  user          User         @relation(fields: [userId], references: [id])
+  createdAt     DateTime     @default(now())
+  @@index([createdAt])
+}
+
+model PurchaseReturn {
+  id         String               @id @default(cuid())
+  returnNo   String               @unique
+  purchaseId String?
+  purchase   Purchase?            @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+  supplierId String?
+  supplier   Supplier?            @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  total      Int
+  note       String?
+  userId     String
+  user       User                 @relation(fields: [userId], references: [id])
+  items      PurchaseReturnItem[]
+  createdAt  DateTime             @default(now())
+  @@index([createdAt])
+  @@index([supplierId])
+}
+
+model PurchaseReturnItem {
+  id               String         @id @default(cuid())
+  purchaseReturnId String
+  purchaseReturn   PurchaseReturn @relation(fields: [purchaseReturnId], references: [id], onDelete: Cascade)
+  productId        String
+  product          Product        @relation(fields: [productId], references: [id])
+  name             String
+  sku              String
+  quantity         Float
+  unitCost         Int
+  lineTotal        Int
+  @@index([purchaseReturnId])
+}
+
+model SupplierPayment {
+  id         String   @id @default(cuid())
+  supplierId String
+  supplier   Supplier @relation(fields: [supplierId], references: [id])
+  amount     Int
+  note       String?
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  createdAt  DateTime @default(now())
+  @@index([supplierId, createdAt])
+}
+
+
+/// A physical stock count: expected vs counted per product, applied as
+/// adjustments either immediately or later from the history.
+model Stocktake {
+  id        String          @id @default(cuid())
+  name      String?
+  note      String?
+  status    String          @default("OPEN") // OPEN | APPLIED | VOID
+  userId    String
+  user      User            @relation(fields: [userId], references: [id])
+  lines     StocktakeLine[]
+  createdAt DateTime        @default(now())
+  appliedAt DateTime?
+  @@index([createdAt])
+}
+
+model StocktakeLine {
+  id          String    @id @default(cuid())
+  stocktakeId String
+  stocktake   Stocktake @relation(fields: [stocktakeId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id])
+  expected    Float
+  counted     Float
+  diff        Float
+  @@index([stocktakeId])
+}
+
+/// A saved pre-invoice: a cart frozen server-side that can be printed,
+/// voided, or converted into a real sale.
+model Quote {
+  id          String      @id @default(cuid())
+  quoteNo     String      @unique
+  customerId  String?
+  customer    Customer?   @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  userId      String
+  user        User        @relation(fields: [userId], references: [id])
+  note        String?
+  total       Int
+  status      String      @default("OPEN") // OPEN | CONVERTED | VOID
+  saleId      String?
+  sale        Sale?       @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  items       QuoteItem[]
+  createdAt   DateTime    @default(now())
+  convertedAt DateTime?
+  @@index([status, createdAt])
+}
+
+model QuoteItem {
+  id        String  @id @default(cuid())
+  quoteId   String
+  quote     Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  name      String
+  sku       String
+  quantity  Float
+  unitPrice Int
+  lineTotal Int
+  @@index([quoteId])
+}
+
+/// Batch/lot overlay for expiry tracking: quantities are deducted FEFO on
+/// sale (best effort) and never gate the money/stock math.
+model ProductBatch {
+  id           String    @id @default(cuid())
+  productId    String
+  product      Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  expiryDate   DateTime
+  initialQty   Float
+  remainingQty Float
+  purchaseId   String?
+  purchase     Purchase? @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+  createdAt    DateTime  @default(now())
+  @@index([productId, expiryDate])
+}
+
+/// Prepaid wallet ledger: every charge, sale spend and refund as its own row
+/// so the running balance is always reconstructable.
+model CustomerWalletTxn {
+  id            String    @id @default(cuid())
+  customerId    String
+  customer      Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// CHARGE = money in, SALE = checkout spend, REFUND = return to wallet.
+  type          String
+  amount        Int
+  note          String?
+  saleId        String?
+  cashSessionId String?
+  userId        String
+  createdAt     DateTime  @default(now())
+  @@index([customerId, createdAt])
+}
+
+/// Kit/bill-of-materials line: one component of a bundle product.
+model BundleComponent {
+  id            String  @id @default(cuid())
+  bundleId      String
+  bundle        Product @relation("BundleOf", fields: [bundleId], references: [id], onDelete: Cascade)
+  componentId   String
+  component     Product @relation("ComponentIn", fields: [componentId], references: [id])
+  quantity      Float
+  @@unique([bundleId, componentId])
+}
+
+/// A single serialized unit (IMEI/serial number) of a tracked product.
+model SerialUnit {
+  id             String   @id @default(cuid())
+  productId      String
+  product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  serial         String   @unique
+  /// IN_STOCK = sellable, SOLD = handed over, RETURNED = came back.
+  status         String   @default("IN_STOCK")
+  purchaseItemId String?
+  saleItemId     String?
+  note           String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  @@index([productId, status])
+}
+
+/// An installment plan splitting a debt (or a sale) into dated chunks.
+model InstallmentPlan {
+  id          String        @id @default(cuid())
+  customerId  String
+  customer    Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  total       Int
+  paidAmount  Int           @default(0)
+  status      String        @default("OPEN") // OPEN | SETTLED
+  note        String?
+  /// Optional link to the sale the plan finances.
+  saleId      String?
+  userId      String
+  installments Installment[]
+  createdAt   DateTime      @default(now())
+  @@index([customerId, status])
+}
+
+model Installment {
+  id         String          @id @default(cuid())
+  planId     String
+  plan       InstallmentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  seq        Int
+  amount     Int
+  dueDate    DateTime
+  paidAt     DateTime?
+  paidAmount Int             @default(0)
+  @@index([planId, dueDate])
+}
+
+/// A customer pre-order: lines are reserved from available stock and turn
+/// into real sales as they are delivered.
+model CustomerOrder {
+  id          String               @id @default(cuid())
+  orderNo     String               @unique
+  customerId  String?
+  customer    Customer?            @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  status      String               @default("OPEN") // OPEN | FULFILLED | CANCELLED
+  note        String?
+  userId      String
+  lines       CustomerOrderLine[]
+  createdAt   DateTime             @default(now())
+  @@index([status, createdAt])
+}
+
+model CustomerOrderLine {
+  id          String         @id @default(cuid())
+  orderId     String
+  order       CustomerOrder  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product        @relation(fields: [productId], references: [id])
+  name        String
+  sku         String
+  quantity    Float
+  unitPrice   Int
+  deliveredQty Float         @default(0)
+  @@index([orderId])
+}
+
+/// Single-row (id = 1) licensing state: the imported signed license, the
+/// monotonic "max date ever seen" used to defeat clock rollback, and the
+/// trial start. Kept OUT of Setting so shop admins cannot edit it away.
+model LicenseState {
+  id              String    @id @default("1")
+  /// The raw signed license text exactly as imported.
+  licenseText     String?
+  /// ISO timestamp high-water mark of the machine clock.
+  maxSeenAt       DateTime?
+  /// When the 14-day trial started (set on first boot).
+  trialStartedAt  DateTime?
+  /// Set to true once a clock rollback beyond the grace window was seen.
+  tamperFlag      Boolean   @default(false)
+  /// Free-form note (e.g. which install this was, support reference).
+  note            String?
+  updatedAt       DateTime  @updatedAt
 }

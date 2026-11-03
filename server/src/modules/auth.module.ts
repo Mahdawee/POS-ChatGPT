@@ -5,6 +5,8 @@ import { ChangePasswordDto, LoginDto } from "../dto";
 import { PrismaService } from "../prisma.service";
 import { CurrentUser, Public, sessionSecret, SessionUser } from "../auth";
 
+const TOKEN_TTL = "12h" as const;
+
 @Controller("auth")
 export class AuthController {
   constructor(private readonly prisma: PrismaService) {}
@@ -19,9 +21,19 @@ export class AuthController {
     const user = await this.prisma.user.findUnique({ where: { username: dto.username.trim() } });
     if (!user || !user.isActive || !(await bcrypt.compare(dto.password, user.passwordHash))) throw new UnauthorizedException("نام کاربری یا رمز عبور درست نیست.");
     const session = { id: user.id, username: user.username, displayName: user.displayName, role: user.role };
-    const accessToken = jwt.sign(session, sessionSecret(), { expiresIn: "12h" });
+    const accessToken = jwt.sign(session, sessionSecret(), { expiresIn: TOKEN_TTL });
     await this.prisma.auditLog.create({ data: { actor: user.username, action: "LOGIN", entity: "User", entityId: user.id } });
     return { accessToken, user: session };
+  }
+
+  /** Sliding sessions: a signed-in client can exchange a still-valid token
+   *  for a fresh one, so an always-on register never logs out mid-shift. */
+  @Post("refresh")
+  async refresh(@CurrentUser() session: SessionUser) {
+    const user = await this.prisma.user.findUnique({ where: { id: session.id } });
+    if (!user || !user.isActive) throw new UnauthorizedException("نشست معتبر نیست؛ دوباره وارد شوید.");
+    const fresh = { id: user.id, username: user.username, displayName: user.displayName, role: user.role };
+    return { accessToken: jwt.sign(fresh, sessionSecret(), { expiresIn: TOKEN_TTL }), user: fresh };
   }
 
   @Post("change-password")

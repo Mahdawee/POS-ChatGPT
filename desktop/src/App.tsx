@@ -1,20 +1,53 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { CircleAlert, CircleCheck, LoaderCircle, LockKeyhole, ShoppingBasket } from "lucide-react";
-import { get, post, type User } from "./lib/api";
+import { Suspense, lazy, useEffect, useRef, useState, type FormEvent } from "react";
+import { CircleAlert, CircleCheck, Globe, LoaderCircle, LockKeyhole, ShoppingBasket } from "lucide-react";
+import { get, post, type LicenseStatus, type ShopSettings, type User } from "./lib/api";
+import { applyLocaleSettings, LANGS, t, useLanguage } from "./i18n";
 import { type PageId, Shell } from "./components/Shell";
-import { CashPage, CategoriesPage, ContactsPage, DashboardPage, InventoryPage, PosPage, ProductsPage, SalesPage, SettingsPage, UsersPage } from "./components/Pages";
+import { CustomerDisplay } from "./components/CustomerDisplay";
+import { SectionHead } from "./components/SectionHead";
+
+// Rarely-opened screens load on demand: the main bundle stays lean, which
+// the register feels as a faster cold start.
+const DashboardPage = lazy(() => import("./components/Pages").then((m) => ({ default: m.DashboardPage })));
+const PosPage = lazy(() => import("./components/Pages").then((m) => ({ default: m.PosPage })));
+const CategoriesPage = lazy(() => import("./components/Pages").then((m) => ({ default: m.CategoriesPage })));
+const ContactsPage = lazy(() => import("./components/Pages").then((m) => ({ default: m.ContactsPage })));
+const ExpensesPage = lazy(() => import("./components/Pages").then((m) => ({ default: m.ExpensesPage })));
+const InventoryPage = lazy(() => import("./components/Pages").then((m) => ({ default: m.InventoryPage })));
+const ProductsPage = lazy(() => import("./components/Pages").then((m) => ({ default: m.ProductsPage })));
+const PurchasesPage = lazy(() => import("./components/Pages").then((m) => ({ default: m.PurchasesPage })));
+const ReportsPage = lazy(() => import("./components/Pages").then((m) => ({ default: m.ReportsPage })));
+const SalesPage = lazy(() => import("./components/Pages").then((m) => ({ default: m.SalesPage })));
+const SettingsPage = lazy(() => import("./components/Pages").then((m) => ({ default: m.SettingsPage })));
+const UsersPage = lazy(() => import("./components/Pages").then((m) => ({ default: m.UsersPage })));
+const AuditPage = lazy(() => import("./components/Pages").then((m) => ({ default: m.AuditPage })));
+const CashPage = lazy(() => import("./components/Pages").then((m) => ({ default: m.CashPage })));
+const OrdersPage = lazy(() => import("./components/Round16").then((m) => ({ default: m.OrdersPage })));
+const LicenseScreen = lazy(() => import("./components/Round16").then((m) => ({ default: m.LicenseScreen })));
 
 type Notice = { text: string; kind: "success" | "error" };
 type Session = { accessToken: string; user: User };
-const labels: Record<PageId, string> = { dashboard: "نمای کلی", pos: "صندوق فروش", products: "کالاها", categories: "دسته‌بندی‌ها", customers: "مشتریان", suppliers: "تأمین‌کنندگان", inventory: "موجودی انبار", sales: "فروش‌ها", cash: "مدیریت صندوق", users: "کاربران", settings: "تنظیمات" };
 
 export default function App() {
+  // Consuming the language context makes the whole tree re-render (every page
+  // calls the module-level t()) the moment the language changes.
+  const { lang } = useLanguage();
   const [user, setUser] = useState<User | null>(null);
   const [page, setPage] = useState<PageId>("dashboard");
   const [notice, setNotice] = useState<Notice | null>(null);
   const [apiReady, setApiReady] = useState<boolean | null>(null);
+  const [apiSlow, setApiSlow] = useState(false);
   const [restore, setRestore] = useState(true);
-  const notify = (text: string, kind: "success" | "error" = "success") => { setNotice({ text, kind }); window.setTimeout(() => setNotice(null), 4000); };
+  const [shopName, setShopName] = useState("");
+  const [locked, setLocked] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  // Licensing: the gate re-checks on every 402 reply and after activation.
+  const [licenseOk, setLicenseOk] = useState<boolean | null>(null);
+  const [dark, setDark] = useState(() => { try { return localStorage.getItem("darpos-theme") === "dark"; } catch { return false; } });
+  const noticeTimer = useRef<number | undefined>(undefined);
+  // Clearing the previous timer keeps the newest toast on screen for its
+  // full four seconds instead of being cut short by an older one.
+  const notify = (text: string, kind: "success" | "error" = "success") => { setNotice({ text, kind }); window.clearTimeout(noticeTimer.current); noticeTimer.current = window.setTimeout(() => setNotice(null), 4000); };
 
   useEffect(() => {
     let saved: Session | null = null;
@@ -22,10 +55,17 @@ export default function App() {
     if (saved?.accessToken && saved.user) { localStorage.setItem("darpos-token", saved.accessToken); setUser(saved.user); }
     setRestore(false);
     let cancelled = false;
+    const startedAt = Date.now();
     const poll = async () => {
-      for (let attempt = 0; attempt < 30 && !cancelled; attempt++) {
+      while (!cancelled) {
         try { await get<{ ok: boolean }>("/auth/health"); if (!cancelled) setApiReady(true); return; }
-        catch { if (!cancelled) setApiReady(false); await new Promise((resolve) => window.setTimeout(resolve, 1000)); }
+        catch {
+          if (!cancelled) {
+            setApiReady(false);
+            if (Date.now() - startedAt > 20000) setApiSlow(true);
+          }
+          await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        }
       }
     };
     void poll();
@@ -33,45 +73,184 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const checkLicense = () => { get<LicenseStatus>("/license/status").then((state) => setLicenseOk(state.ok)).catch(() => setLicenseOk(true)); };
+    // Any 402 from the API flips the app onto the license screen.
+    const licenseRequired = () => setLicenseOk(false);
+    window.addEventListener("darpos:license-required", licenseRequired);
+    if (apiReady) checkLicense();
+    return () => window.removeEventListener("darpos:license-required", licenseRequired);
+  }, [apiReady]);
+
+  useEffect(() => {
     const expired = () => {
       localStorage.removeItem("darpos-token");
       localStorage.removeItem("darpos-session");
       setUser(null);
-      setNotice({ text: "نشست شما پایان یافته است؛ دوباره وارد شوید.", kind: "error" });
+      setNotice({ text: t("نشست شما پایان یافته است؛ دوباره وارد شوید."), kind: "error" });
     };
     window.addEventListener("darpos:session-expired", expired);
     return () => window.removeEventListener("darpos:session-expired", expired);
   }, []);
 
   useEffect(() => {
-    const handler = (event: KeyboardEvent) => { if (event.key === "F2" && user) { event.preventDefault(); setPage("pos"); } };
+    document.documentElement.classList.toggle("dark", dark);
+    try { localStorage.setItem("darpos-theme", dark ? "dark" : "light"); } catch { /* storage unavailable */ }
+  }, [dark]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === "F2" && user && !locked) { event.preventDefault(); setPage("pos"); }
+      // Quick lock (like Windows-L): hides the register until the password
+      // is re-entered; the session itself stays valid.
+      else if (event.ctrlKey && event.key.toLowerCase() === "l" && user && !locked) { event.preventDefault(); setLocked(true); }
+      // "?" opens the keyboard-shortcut cheat sheet — but never while typing.
+      else if (event.key === "?" && user && !locked) {
+        const element = event.target as HTMLElement | null;
+        const typing = element && (element.tagName === "INPUT" || element.tagName === "TEXTAREA" || element.tagName === "SELECT" || element.isContentEditable);
+        if (!typing) { event.preventDefault(); setShowHelp(true); }
+      }
+    };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
+  }, [user, locked]);
+
+  // Quick print fell back to the dialog (printer offline, non-Windows…):
+  // tell the cashier why a dialog appeared at all.
+  useEffect(() => {
+    const fallback = () => setNotice({ text: t("چاپ سریع ممکن نشد؛ پنجرهٔ چاپ باز شد."), kind: "error" });
+    window.addEventListener("darpos:print-fallback", fallback);
+    return () => window.removeEventListener("darpos:print-fallback", fallback);
+  }, []);
+
+  // Opening heads-up: low stock / near-expiry goods, once per login.
+  useEffect(() => {
+    if (!user || user.role !== "ADMIN") return;
+    let cancelled = false;
+    get<{ lowStockCount: number; expiringCount: number }>("/dashboard/summary").then((summary) => {
+      if (cancelled) return;
+      const low = summary.lowStockCount || 0;
+      const expiring = summary.expiringCount || 0;
+      if (low || expiring) setNotice({ text: t("توجه: {low} کالا کم‌موجود و {expiring} کالا نزدیک انقضا است — نمای کلی را ببینید.", { low, expiring }), kind: "error" });
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) { setShopName(""); return; }
+    get<ShopSettings>("/settings").then((settings) => {
+      setShopName(settings.shopName || "");
+      // Calendar / timezone / currency are display settings: apply them
+      // before any screen renders dates and amounts.
+      applyLocaleSettings({
+        calendar: (settings.calendar === "islamic-umalqura" || settings.calendar === "gregorian" ? settings.calendar : "persian"),
+        timezone: settings.timezone || "",
+        currency: settings.currency || "AFN",
+      });
+    }).catch(() => undefined);
+  }, [user]);
+
+  // Sliding sessions: silently exchange the token for a fresh one every 4
+  // hours so an always-on register never hits the 12h expiry mid-shift.
+  useEffect(() => {
+    if (!user) return;
+    const timer = window.setInterval(() => {
+      post<Session>("/auth/refresh", {}).then((session) => {
+        if (!session.accessToken) return;
+        localStorage.setItem("darpos-token", session.accessToken);
+        localStorage.setItem("darpos-session", JSON.stringify(session));
+      }).catch(() => undefined);
+    }, 4 * 60 * 60 * 1000);
+    return () => window.clearInterval(timer);
   }, [user]);
 
   const logout = () => { localStorage.removeItem("darpos-token"); localStorage.removeItem("darpos-session"); setUser(null); setPage("dashboard"); };
-  if (restore) return <div className="startup-screen"><LoaderCircle className="spin" size={22}/> برنامه در حال آماده‌شدن است…</div>;
-  if (!user) return <LoginScreen apiReady={apiReady} onLogin={(session) => { localStorage.setItem("darpos-token", session.accessToken); localStorage.setItem("darpos-session", JSON.stringify(session)); setUser(session.user); setPage("dashboard"); }} notify={notify}/>;
+  if (restore) return <div className="startup-screen"><LoaderCircle className="spin" size={22}/> {t("برنامه در حال آماده‌شدن است…")}</div>;
+  if (licenseOk === false) return <Suspense fallback={<Loading/>}><LicenseScreen onActivated={() => { setLicenseOk(null); void get<LicenseStatus>("/license/status").then((state) => setLicenseOk(state.ok)).catch(() => setLicenseOk(true)); }}/></Suspense>;
+  if (!user || apiReady === false) return <LoginScreen apiReady={apiReady} apiSlow={apiSlow} onLogin={(session) => { localStorage.setItem("darpos-token", session.accessToken); localStorage.setItem("darpos-session", JSON.stringify(session)); setUser(session.user); setPage("dashboard"); }} notify={notify}/>;
 
-  const content = (() => {
-    switch (page) {
-      case "dashboard": return <DashboardPage onNavigate={setPage}/>;
-      case "pos": return <PosPage notify={notify}/>;
-      case "products": return <ProductsPage notify={notify}/>;
-      case "categories": return <CategoriesPage notify={notify}/>;
-      case "customers": return <ContactsPage kind="customers" notify={notify}/>;
-      case "suppliers": return <ContactsPage kind="suppliers" notify={notify}/>;
-      case "inventory": return <InventoryPage notify={notify}/>;
-      case "sales": return <SalesPage/>;
-      case "cash": return <CashPage notify={notify}/>;
-      case "users": return <UsersPage notify={notify}/>;
-      case "settings": return <SettingsPage notify={notify}/>;
-    }
-  })();
-  return <><Shell page={page} onNavigate={setPage} user={user} onLogout={logout}>{content}</Shell>{notice && <div className={`toast ${notice.kind}`}>{notice.kind === "success" ? <CircleCheck size={18}/> : <CircleAlert size={18}/>}<span>{notice.text}</span></div>}<div className="page-reader" aria-live="polite">{labels[page]}</div></>;
+  const labels: Record<PageId, string> = { dashboard: t("نمای کلی"), pos: t("صندوق فروش"), products: t("کالاها"), categories: t("دسته‌بندی‌ها"), customers: t("مشتریان"), suppliers: t("تأمین‌کنندگان"), purchases: t("خریدها"), orders: t("سفارش‌ها"), inventory: t("موجودی انبار"), sales: t("فروش‌ها"), reports: t("گزارش‌ها"), cash: t("مدیریت صندوق"), expenses: t("دخل و خرج"), users: t("کاربران"), audit: t("لاگ فعالیت"), settings: t("تنظیمات") };
+  // The second window (customer display) renders standalone, without the Shell.
+  if (typeof window !== "undefined" && window.location.hash === "#customer-display") return <CustomerDisplay/>;
+  const content = <Suspense fallback={<Loading/>}>{(() => {
+        switch (page) {
+          case "dashboard": return <DashboardPage onNavigate={setPage}/>;
+          case "pos": return <PosPage notify={notify} user={user}/>;
+          case "products": return <ProductsPage notify={notify} user={user}/>;
+          case "categories": return <CategoriesPage notify={notify}/>;
+          case "customers": return <ContactsPage kind="customers" notify={notify}/>;
+          case "suppliers": return <ContactsPage kind="suppliers" notify={notify}/>;
+          case "inventory": return <InventoryPage notify={notify}/>;
+          case "purchases": return <PurchasesPage notify={notify}/>;
+          case "orders": return <OrdersPage notify={notify}/>;
+          case "sales": return <SalesPage notify={notify}/>;
+          case "reports": return <ReportsPage notify={notify}/>;
+          case "expenses": return <ExpensesPage notify={notify} user={user}/>;
+          case "cash": return <CashPage notify={notify}/>;
+          case "users": return <UsersPage notify={notify}/>;
+          case "audit": return <AuditPage/>;
+          case "settings": return <SettingsPage notify={notify}/>;
+          default: return null;
+        }
+      })()}</Suspense>;
+  if (locked) return <LockScreen username={user.username} onUnlock={() => setLocked(false)}/>;
+  return <><Shell page={page} onNavigate={setPage} user={user} onLogout={logout} shopName={shopName} onLock={() => setLocked(true)} onHelp={() => setShowHelp(true)} dark={dark} onToggleDark={() => setDark((value) => !value)}>{content}</Shell>{notice && <div className={`toast ${notice.kind}`}>{notice.kind === "success" ? <CircleCheck size={18}/> : <CircleAlert size={18}/>}<span>{t(notice.text)}</span></div>}{showHelp && <ShortcutsHelp onClose={() => setShowHelp(false)}/>}<div className="page-reader" aria-live="polite" lang={lang}>{labels[page]}</div></>;
 }
 
-function LoginScreen({ apiReady, onLogin, notify }: { apiReady: boolean | null; onLogin: (session: Session) => void; notify: (text: string, kind?: "success" | "error") => void }) {
+function LoginScreen({ apiReady, apiSlow, onLogin, notify }: { apiReady: boolean | null; apiSlow: boolean; onLogin: (session: Session) => void; notify: (text: string, kind?: "success" | "error") => void }) {
+  const { lang, setLang } = useLanguage();
   const [username, setUsername] = useState("admin"); const [password, setPassword] = useState(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
-  const submit = async (event: FormEvent) => { event.preventDefault(); setBusy(true); setError(""); try { const session = await post<Session>("/auth/login", { username, password }); onLogin(session); notify(`خوش آمدید، ${session.user.displayName}`); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } };
-  return <div className="login-screen"><div className="login-decor decor-one"/><div className="login-decor decor-two"/><section className="login-card"><div className="login-logo"><div className="brand-mark">رو</div><div><strong>روشن</strong><span>فروش و مدیریت فروشگاه</span></div></div><div className="login-welcome"><div className="login-icon"><ShoppingBasket size={23}/></div><span className="eyebrow">سامانه فروشگاهی محلی</span><h1>به فروشگاه خوش آمدید</h1><p>برای آغاز کار، وارد حساب کاربری خود شوید.</p></div>{apiReady === false && <div className="api-offline"><CircleAlert size={17}/><div><b>برنامه محلی اجرا نشده</b><small>در پوشه برنامه دستور <code>npm run dev</code> را اجرا کنید.</small></div></div>}<form onSubmit={submit} className="login-form"><label className="field"><span>نام کاربری</span><div className="login-input"><CircleAlert size={16}/><input required autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="نام کاربری" dir="ltr"/></div></label><label className="field"><span>گذرواژه</span><div className="login-input"><LockKeyhole size={16}/><input required type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="گذرواژه خود را وارد کنید" dir="ltr"/></div></label>{error && <div className="form-error">{error}</div>}<button className="primary-button login-submit" disabled={busy || apiReady === false}>{busy ? <><LoaderCircle className="spin" size={17}/> در حال ورود…</> : "ورود به فروشگاه"}</button></form><div className="login-foot"><span className="lock-dot"/> داده‌های شما روی همین دستگاه نگهداری می‌شود</div></section><div className="login-version">روشن · نسخه ۰.۱ آزمایشی</div></div>;
+  const submit = async (event: FormEvent) => { event.preventDefault(); setBusy(true); setError(""); try { const session = await post<Session>("/auth/login", { username, password }); onLogin(session); notify(t("خوش آمدید، {name}", { name: session.user.displayName })); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } };
+  return <div className="login-screen"><div className="login-decor decor-one"/><div className="login-decor decor-two"/><section className="login-card"><div className="login-logo"><div className="brand-mark">{t("رو")}</div><div><strong>{t("روشن")}</strong><span>{t("فروش و مدیریت فروشگاه")}</span></div></div><div className="lang-switch" role="group" aria-label={t("زبان برنامه")}>{LANGS.map((item) => <button key={item.id} type="button" className={`lang-option ${lang === item.id ? "active" : ""}`} onClick={() => setLang(item.id)}><Globe size={13}/>{item.label}</button>)}</div><div className="login-welcome"><div className="login-icon"><ShoppingBasket size={23}/></div><span className="eyebrow">{t("سامانه فروشگاهی محلی")}</span><h1>{t("به فروشگاه خوش آمدید")}</h1><p>{t("برای آغاز کار، وارد حساب کاربری خود شوید.")}</p></div>{apiReady === false && <div className="api-offline"><CircleAlert size={17}/><div><b>{apiSlow ? t("برنامه محلی اجرا نشد") : t("برنامه محلی در حال آماده‌سازی است")}</b><small>{apiSlow ? t("برنامه را ببندید و دوباره باز کنید. اگر مشکل ادامه یافت، فایل api.log در مسیر %APPDATA%\\DarPOSERP را بررسی کنید.") : t("چند لحظه صبر کنید…")}</small></div></div>}<form onSubmit={submit} className="login-form"><label className="field"><span>{t("نام کاربری")}</span><div className="login-input"><CircleAlert size={16}/><input required autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder={t("نام کاربری")} dir="ltr"/></div></label><label className="field"><span>{t("گذرواژه")}</span><div className="login-input"><LockKeyhole size={16}/><input required type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={t("گذرواژه خود را وارد کنید")} dir="ltr"/></div></label>{error && <div className="form-error">{t(error)}</div>}<button className="primary-button login-submit" disabled={busy || apiReady === false}>{busy ? <><LoaderCircle className="spin" size={17}/> {t("در حال ورود…")}</> : t("ورود به فروشگاه")}</button></form><div className="login-foot"><span className="lock-dot"/> {t("داده‌های شما روی همین دستگاه نگهداری می‌شود")}</div></section><div className="login-version">{t("روشن")} · {t("نسخه ۰.۸")}</div></div>;
+}
+
+function Loading() {
+  return <div className="startup-screen"><LoaderCircle className="spin" size={22}/> {t("در حال بارگذاری…")}</div>;
+}
+
+/** Screen veil shown after Ctrl+L: password re-entry, session kept alive. */
+function LockScreen({ username, onUnlock }: { username: string; onUnlock: () => void }) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault(); setBusy(true); setError("");
+    try {
+      const session = await post<Session>("/auth/login", { username, password });
+      localStorage.setItem("darpos-token", session.accessToken);
+      localStorage.setItem("darpos-session", JSON.stringify(session));
+      onUnlock();
+    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  };
+  return <div className="lock-screen"><div className="login-decor decor-one"/><div className="login-decor decor-two"/>
+    <section className="login-card lock-card">
+      <div className="login-logo"><div className="brand-mark">{t("رو")}</div><div><strong>{t("روشن")}</strong><span>{t("صفحه قفل است")}</span></div></div>
+      <div className="login-welcome"><div className="login-icon"><LockKeyhole size={23}/></div><h1>{username}</h1><p>{t("برای ادامه، گذرواژهٔ خود را وارد کنید.")}</p></div>
+      <form onSubmit={submit} className="login-form">
+        <label className="field"><span>{t("گذرواژه")}</span><div className="login-input"><LockKeyhole size={16}/><input autoFocus required type="password" value={password} onChange={(e) => setPassword(e.target.value)} dir="ltr"/></div></label>
+        {error && <div className="form-error">{t(error)}</div>}
+        <button className="primary-button login-submit" disabled={busy}>{busy ? <><LoaderCircle className="spin" size={17}/> {t("در حال بررسی…")}</> : t("بازکردن صفحه")}</button>
+      </form>
+    </section>
+  </div>;
+}
+
+/** Keyboard cheat sheet ("?" key). */
+function ShortcutsHelp({ onClose }: { onClose: () => void }) {
+  const rows: Array<[string, string]> = [
+    ["F2", t("رفتن به صندوق فروش")],
+    ["F1", t("جست‌وجوی کالا در صندوق")],
+    ["F4", t("معلق‌کردن فاکتور")],
+    ["F6", t("مبلغ دریافتی از مشتری")],
+    ["F9", t("چاپ دوبارهٔ آخرین رسید")],
+    ["Alt + 1…9", t("افزودن کالا به فاکتور")],
+    ["Ctrl + L", t("قفل سریع صفحه")],
+    ["Esc", t("بستن پنجره یا لغو آزمون اسکنر")],
+    ["?", t("نمایش همین راهنما")],
+  ];
+  return <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-card" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+      <SectionHead title={t("میان‌برهای صفحه‌کلید")} subtitle={t("برای کار سریع‌تر در صندوق")}/>
+      <table className="shortcut-table"><tbody>{rows.map(([keys, label]) => <tr key={keys}><td><kbd>{keys}</kbd></td><td>{label}</td></tr>)}</tbody></table>
+      <div className="form-actions"><button className="primary-button" onClick={onClose}>{t("بستن")}</button></div>
+    </div>
+  </div>;
 }

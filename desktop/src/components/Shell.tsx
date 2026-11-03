@@ -1,34 +1,49 @@
 import { type ReactNode } from "react";
-import { Activity, Banknote, Box, Boxes, CircleUserRound, FileText, LayoutDashboard, LogOut, PackagePlus, Settings2, ShoppingCart, Tags, UsersRound, type LucideIcon } from "lucide-react";
+import { Activity, Banknote, BarChart3, Box, Boxes, CircleUserRound, ClipboardList, FileText, Globe, Keyboard, LayoutDashboard, Lock, LogOut, Moon, PackagePlus, ReceiptText, ScrollText, Settings2, ShoppingCart, Sun, Tags, Truck, UsersRound, type LucideIcon } from "lucide-react";
 import type { User } from "../lib/api";
+import { LANGS, t, todayLabel, useLanguage } from "../i18n";
 
-export type PageId = "dashboard" | "pos" | "products" | "categories" | "customers" | "suppliers" | "inventory" | "sales" | "cash" | "users" | "settings";
+export type PageId = "dashboard" | "pos" | "products" | "categories" | "customers" | "suppliers" | "purchases" | "orders" | "inventory" | "sales" | "reports" | "cash" | "expenses" | "users" | "audit" | "settings";
+// Labels/groups are Dari keys; t() runs at render time so switching the
+// language updates the sidebar immediately.
 const navigation: { id: PageId; label: string; icon: LucideIcon; group: string; admin?: boolean }[] = [
   { id: "dashboard", label: "نمای کلی", icon: LayoutDashboard, group: "اصلی" },
   { id: "pos", label: "صندوق فروش", icon: ShoppingCart, group: "اصلی" },
   { id: "sales", label: "فروش‌ها", icon: FileText, group: "فروش و انبار" },
+  { id: "purchases", label: "خریدها", icon: Truck, group: "فروش و انبار" },
   { id: "products", label: "کالاها", icon: Box, group: "فروش و انبار" },
   { id: "categories", label: "دسته‌بندی‌ها", icon: Tags, group: "فروش و انبار" },
+  { id: "orders", label: "سفارش‌ها", icon: ClipboardList, group: "فروش و انبار" },
   { id: "inventory", label: "موجودی انبار", icon: Boxes, group: "فروش و انبار" },
   { id: "customers", label: "مشتریان", icon: UsersRound, group: "اشخاص" },
   { id: "suppliers", label: "تأمین‌کنندگان", icon: PackagePlus, group: "اشخاص" },
+  { id: "reports", label: "گزارش‌ها", icon: BarChart3, group: "مدیریت", admin: true },
   { id: "cash", label: "مدیریت صندوق", icon: Banknote, group: "مدیریت" },
+  { id: "expenses", label: "دخل و خرج", icon: ReceiptText, group: "مدیریت", admin: true },
   { id: "users", label: "کاربران", icon: CircleUserRound, group: "مدیریت", admin: true },
+  { id: "audit", label: "لاگ فعالیت", icon: ScrollText, group: "مدیریت", admin: true },
   { id: "settings", label: "تنظیمات", icon: Settings2, group: "مدیریت", admin: true },
 ];
-const titles: Record<PageId, string> = Object.fromEntries(navigation.map((item) => [item.id, item.label])) as Record<PageId, string>;
 
-export function Shell({ page, onNavigate, user, onLogout, children }: { page: PageId; onNavigate: (page: PageId) => void; user: User; onLogout: () => void; children: ReactNode }) {
-  const groups = [...new Set(navigation.map((item) => item.group))];
+export function Shell({ page, onNavigate, user, onLogout, shopName, onLock, onHelp, dark, onToggleDark, children }: { page: PageId; onNavigate: (page: PageId) => void; user: User; onLogout: () => void; shopName?: string; onLock: () => void; onHelp: () => void; dark: boolean; onToggleDark: () => void; children: ReactNode }) {
+  const { lang, setLang } = useLanguage();
+  const items = navigation.map((item) => ({ ...item, label: t(item.label), group: t(item.group) }));
+  const titles: Record<PageId, string> = Object.fromEntries(items.map((item) => [item.id, item.label])) as Record<PageId, string>;
+  const groups = [...new Set(items.map((item) => item.group))];
+  const store = shopName?.trim() || t("فروشگاه من");
   return <div className="app-shell">
     <aside className="sidebar">
-      <div className="brand"><div className="brand-mark">رو</div><div><strong>روشن</strong><span>فروش و مدیریت فروشگاه</span></div></div>
-      <div className="store-chip"><span className="store-dot"/><span>فروشگاه من</span><small>محلی · آماده کار</small></div>
+      <div className="brand"><div className="brand-mark">{t("رو")}</div><div><strong>{t("روشن")}</strong><span>{t("فروش و مدیریت فروشگاه")}</span></div></div>
+      <div className="store-chip"><span className="store-dot"/><span>{store}</span><small>{t("محلی · آماده کار")}</small></div>
       <nav className="side-nav">
-        {groups.map((group) => <section className="nav-group" key={group}><div className="nav-label">{group}</div>{navigation.filter((item) => item.group === group && (!item.admin || user.role === "ADMIN")).map(({ id, label, icon: Icon }) => <button key={id} className={`nav-item ${page === id ? "active" : ""}`} onClick={() => onNavigate(id)}><Icon size={18} strokeWidth={1.8}/><span>{label}</span>{id === "pos" && <kbd>F2</kbd>}</button>)}</section>)}
+        {groups.map((group) => <section className="nav-group" key={group}><div className="nav-label">{group}</div>{items.filter((item) => item.group === group && (!item.admin || user.role === "ADMIN")).map(({ id, label, icon: Icon }) => <button key={id} className={`nav-item ${page === id ? "active" : ""}`} onClick={() => onNavigate(id)}><Icon size={18} strokeWidth={1.8}/><span>{label}</span>{id === "pos" && <kbd>F2</kbd>}</button>)}</section>)}
       </nav>
-      <div className="sidebar-bottom"><div className="offline"><span/><div><b>حالت آفلاین</b><small>داده‌ها روی همین دستگاه ذخیره می‌شوند</small></div></div><div className="user-strip"><div className="avatar">{user.displayName.slice(0, 1)}</div><div className="user-name"><b>{user.displayName}</b><small>{user.role === "ADMIN" ? "مدیر فروشگاه" : "صندوقدار"}</small></div><button title="خروج" className="icon-button" onClick={onLogout}><LogOut size={17}/></button></div></div>
+      <div className="sidebar-bottom">
+        <div className="lang-switch" role="group" aria-label={t("زبان برنامه")}>{LANGS.map((item) => <button key={item.id} className={`lang-option ${lang === item.id ? "active" : ""}`} onClick={() => setLang(item.id)}><Globe size={13}/>{item.label}</button>)}</div>
+        <div className="offline"><span/><div><b>{t("حالت آفلاین")}</b><small>{t("داده‌ها روی همین دستگاه ذخیره می‌شوند")}</small></div></div>
+        <div className="user-strip"><div className="avatar">{user.displayName.slice(0, 1)}</div><div className="user-name"><b>{user.displayName}</b><small>{user.role === "ADMIN" ? t("مدیر فروشگاه") : t("صندوقدار")}</small></div><button title={t("خروج")} className="icon-button" onClick={onLogout}><LogOut size={17}/></button></div>
+      </div>
     </aside>
-    <main className="main-area"><header className="topbar"><div><div className="breadcrumb">روشن <span>/</span> {titles[page]}</div><h1>{titles[page]}</h1></div><div className="topbar-right"><div className="today"><Activity size={15}/><span>امروز</span><b>{new Intl.DateTimeFormat("fa-AF", { dateStyle: "medium" }).format(new Date())}</b></div><button className="primary-button top-pos" onClick={() => onNavigate("pos")}><ShoppingCart size={17}/> فروش جدید <kbd>F2</kbd></button></div></header><div className="page-content">{children}</div></main>
+    <main className="main-area"><header className="topbar"><div><div className="breadcrumb">{t("روشن")} <span>/</span> {titles[page]}</div><h1>{titles[page]}</h1></div><div className="topbar-right"><div className="today"><Activity size={15}/><span>{t("امروز")}</span><b>{todayLabel()}</b></div><button title={t("حالت تیره")} className="icon-button" onClick={onToggleDark}>{dark ? <Sun size={17}/> : <Moon size={17}/>}</button><button title={t("میان‌برهای صفحه‌کلید")} className="icon-button" onClick={onHelp}><Keyboard size={17}/></button><button title={t("قفل سریع صفحه")} className="icon-button" onClick={onLock}><Lock size={17}/></button><button className="primary-button top-pos" onClick={() => onNavigate("pos")}><ShoppingCart size={17}/> {t("فروش جدید")} <kbd>F2</kbd></button></div></header><div className="page-content">{children}</div></main>
   </div>;
 }

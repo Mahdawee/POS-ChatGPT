@@ -7,13 +7,22 @@ import { CatalogModule } from "./modules/catalog.module";
 import { ContactsModule } from "./modules/contacts.module";
 import { InventoryModule } from "./modules/inventory.module";
 import { SalesModule } from "./modules/sales.module";
+import { PurchasesModule } from "./modules/purchases.module";
 import { CashModule } from "./modules/cash.module";
 import { UsersModule } from "./modules/users.module";
 import { SettingsModule } from "./modules/settings.module";
 import { DashboardModule } from "./modules/dashboard.module";
+import { ReportsModule } from "./modules/reports.module";
+import { ExpensesModule } from "./modules/expenses.module";
+import { AuditModule } from "./modules/audit.module";
+import { StocktakeModule } from "./modules/stocktake.module";
+import { QuotesModule } from "./modules/quotes.module";
+import { LicenseModule } from "./license/license.module";
+import { InstallmentsModule } from "./modules/installments.module";
+import { OrdersModule } from "./modules/orders.module";
 
 @Module({
-  imports: [PrismaModule, AuthModule, CatalogModule, ContactsModule, InventoryModule, SalesModule, CashModule, UsersModule, SettingsModule, DashboardModule],
+  imports: [PrismaModule, LicenseModule, AuthModule, CatalogModule, ContactsModule, InventoryModule, SalesModule, PurchasesModule, CashModule, UsersModule, SettingsModule, DashboardModule, ReportsModule, ExpensesModule, AuditModule, StocktakeModule, QuotesModule, InstallmentsModule, OrdersModule],
   providers: [{ provide: APP_GUARD, useClass: LocalAuthGuard }],
 })
 export class AppModule {}
