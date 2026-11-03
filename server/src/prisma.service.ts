@@ -108,6 +108,12 @@ export async function ensureUniqueInvoiceNos(db: { $queryRawUnsafe(sql: string):
 /**
  * SQLite tuning applied to every database at boot:
  * - WAL lets reads (reports, lists) continue while a sale is being written.
+ *   (WAL is a property of the database file, so this one statement covers
+ *   every pooled connection.)
+ * - busy_timeout is NOT set here: PRAGMAs issued via $queryRawUnsafe reach a
+ *   single pooled connection only. It lives in the connection URL instead —
+ *   see storage.ts (`?socket_timeout=15`), which the connector applies to
+ *   every connection it opens.
  * - `PRAGMA optimize` refreshes the query planner's statistics; we repeat it
  *   once a day because long-running POS processes never see the connections
  *   that would normally trigger it automatically.

@@ -248,7 +248,7 @@ export function OrdersPage({ notify }: { notify: Notify }) {
       <form className="form-grid" onSubmit={createOrder}>
         <label className="field"><span>{t("مشتری")}</span><select value={form.customerId} onChange={(e) => setForm({ ...form, customerId: e.target.value })}><option value="">{t("مشتری گذری")}</option>{customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
         <label className="field full"><span>{t("یادداشت")}</span><input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder={t("اختیاری")}/></label>
-        {form.lines.map((line, index) => <div className="bundle-row" key={index}>
+        {form.lines.map((line, index) => <div className="bundle-row full" key={index}>
           <select value={line.productId} onChange={(e) => setForm({ ...form, lines: form.lines.map((row, i) => i === index ? { ...row, productId: e.target.value } : row) })}><option value="">{t("انتخاب کالا…")}</option>{products.filter((p) => !p.isBundle).map((p) => <option key={p.id} value={p.id}>{p.name} — {t("آزاد")}: {p.stock - (p.reserved || 0)}</option>)}</select>
           <input type="number" min="0.001" step="0.001" dir="ltr" value={line.quantity} onChange={(e) => setForm({ ...form, lines: form.lines.map((row, i) => i === index ? { ...row, quantity: numberValue(e) } : row) })}/>
           <button type="button" className="text-button danger-text" onClick={() => setForm({ ...form, lines: form.lines.length > 1 ? form.lines.filter((_, i) => i !== index) : form.lines })}><Trash2 size={15}/></button>
