@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -135,6 +135,21 @@ fn report_startup_failure(api_log: &Path, message: &str) {
     eprintln!("{full}");
 }
 
+/// Asks the API already listening on 127.0.0.1:4317 which mode it bound to.
+/// Offline shops have no internet route, so the LAN-IP probe above returns
+/// nothing there — this check keeps server mode from silently failing.
+#[cfg(not(debug_assertions))]
+fn local_api_reports_server_mode() -> Option<bool> {
+    let mut stream = TcpStream::connect(("127.0.0.1", 4317)).ok()?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let request = b"GET /api/auth/health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    stream.write_all(request).ok()?;
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).ok()?;
+    let text = String::from_utf8_lossy(&response);
+    Some(text.contains("\"mode\":\"server\""))
+}
+
 /// Starts the bundled Node.js API in the background.
 /// The main window is shown immediately; the frontend polls /api/auth/health
 /// until this API is ready, so a slow first start (antivirus scans, cold disk)
@@ -203,16 +218,20 @@ fn start_bundled_api(app: tauri::AppHandle, closing: Arc<AtomicBool>) {
         // this app "reused" a listening API. Probe the LAN address too and
         // tell the user plainly instead of failing silently.
         if network_mode == "server" {
-            if let Some(lan_ip) = primary_lan_ip() {
-                if TcpStream::connect((lan_ip.as_str(), 4317)).is_err() {
-                    let message = "An older single-computer instance of the API is still listening on 127.0.0.1 only, so network-server mode cannot take effect. Close the app fully (end any leftover node.exe in Task Manager) or restart Windows, then open the app again.";
-                    append_log(&api_log, message);
-                    report_startup_failure(
-                        &api_log,
-                        "برای فعال شدن حالت «سرور شبکه»، یک نمونهٔ قدیمی برنامهٔ تک‌کامپیوتری هنوز در پس‌زمینه فعال است.\n\nبرنامه را کاملاً ببندید و در Task Manager هر پروسهٔ node.exe باقی‌مانده را پایان دهید (یا ویندوز را ری‌استارت کنید)، سپس برنامه را دوباره باز کنید.",
-                    );
-                    return;
-                }
+            // Reachable on the LAN address → the running API is already in
+            // server mode. Offline machines get no LAN IP from the 8.8.8.8
+            // trick, so fall back to asking the API itself what it bound to.
+            let lan_ok = primary_lan_ip()
+                .map(|lan_ip| TcpStream::connect((lan_ip.as_str(), 4317)).is_ok())
+                .unwrap_or(false);
+            if !lan_ok && !local_api_reports_server_mode().unwrap_or(false) {
+                let message = "An older single-computer instance of the API is still listening on 127.0.0.1 only, so network-server mode cannot take effect. Close the app fully (end any leftover node.exe in Task Manager) or restart Windows, then open the app again.";
+                append_log(&api_log, message);
+                report_startup_failure(
+                    &api_log,
+                    "برای فعال شدن حالت «سرور شبکه»، یک نمونهٔ قدیمی برنامهٔ تک‌کامپیوتری هنوز در پس‌زمینه فعال است.\n\nبرنامه را کاملاً ببندید و در Task Manager هر پروسهٔ node.exe باقی‌مانده را پایان دهید (یا ویندوز را ری‌استارت کنید)، سپس برنامه را دوباره باز کنید.",
+                );
+                return;
             }
         }
         append_log(&api_log, "Port 4317 is already in use; reusing the existing local API.");
@@ -539,7 +558,7 @@ fn main() {
     let closing_for_exit = closing.clone();
     tauri::Builder::default()
         .manage(child_state)
-        .invoke_handler(tauri::generate_handler![set_network_mode, open_url, quick_print, save_backup_file, download_update, install_update])
+        .invoke_handler(tauri::generate_handler![set_network_mode, get_network_mode, open_url, quick_print, save_backup_file, download_update, install_update])
         .setup(move |app| {
             #[cfg(not(debug_assertions))]
             {
@@ -589,6 +608,17 @@ fn set_network_mode(app: tauri::AppHandle, mode: String) -> Result<(), String> {
         return Err("unsupported network mode".into());
     }
     std::fs::write(dir.join("network-mode"), normalized).map_err(|error| error.to_string())
+}
+
+/// Reads the persisted LAN mode so the Settings page can restore the saved
+/// selection ("" when nothing was saved yet). Without this the dropdown
+/// always fell back to «تک‌کامپیوتر» after an app restart.
+#[tauri::command]
+fn get_network_mode(app: tauri::AppHandle) -> Result<String, String> {
+    match std::fs::read_to_string(app_data_directory(&app).join("network-mode")) {
+        Ok(content) => Ok(content.trim().to_string()),
+        Err(_) => Ok(String::new()),
+    }
 }
 
 /// Opens a URL in the system browser (used for release downloads).
