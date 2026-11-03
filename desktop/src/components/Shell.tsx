@@ -1,8 +1,8 @@
 import { type ReactNode } from "react";
-import { Hourglass } from "lucide-react";
+import { CalendarClock, Hourglass } from "lucide-react";
 import { Activity, Banknote, BarChart3, Box, Boxes, CircleUserRound, ClipboardList, FileText, Globe, Keyboard, LayoutDashboard, Lock, LogOut, Moon, PackagePlus, ReceiptText, ScrollText, Settings2, ShoppingCart, Sun, Tags, Truck, UsersRound, type LucideIcon } from "lucide-react";
 import type { User } from "../lib/api";
-import { LANGS, t, todayLabel, useLanguage } from "../i18n";
+import { dateOnly, LANGS, t, todayLabel, useLanguage } from "../i18n";
 
 export type PageId = "dashboard" | "pos" | "products" | "categories" | "customers" | "suppliers" | "purchases" | "orders" | "inventory" | "sales" | "reports" | "cash" | "expenses" | "users" | "audit" | "settings";
 // Labels/groups are Dari keys; t() runs at render time so switching the
@@ -36,6 +36,19 @@ export function TrialBanner({ daysLeft, onActivate }: { daysLeft: number; onActi
       <span>{t("{days} روز از دورهٔ آزمایشی ۱۴ روزه باقی مانده است. برای ادامهٔ کار پس از پایان این دوره، لایسنس فعال کنید.", { days: String(daysLeft) })}</span>
     </div>
     <button className="primary-button" onClick={onActivate}>{t("فعال‌سازی لایسنس")}</button>
+  </div>;
+}
+
+/** بنر «نزدیک انقضای لایسنس» — برای لایسنس‌دار وقتی ≤ ۷ روز مانده.
+ *  صندوقدار باید قبل از قفل‌شدن برنامه خبردار شود تا سر وقت تمدید کند. */
+export function LicenseExpiryBanner({ plan, expiresAt, daysLeft, onActivate }: { plan: string; expiresAt: string; daysLeft: number; onActivate: () => void }) {
+  return <div className="trial-banner expiry" role="status">
+    <CalendarClock size={18}/>
+    <div className="trial-banner-text">
+      <b>{t("لایسنس {plan} شما رو به پایان است", { plan })}</b>
+      <span>{t("اعتبار لایسنس تا {date} است ({days} روز باقی مانده). برای تمدید، کلید دستگاه را برای فروشنده بفرستید و لایسنس تازه را از دکمهٔ کنار فعال کنید.", { date: dateOnly(`${expiresAt.slice(0, 10)}T00:00:00`), days: String(daysLeft) })}</span>
+    </div>
+    <button className="primary-button" onClick={onActivate}>{t("تمدید لایسنس")}</button>
   </div>;
 }
 

@@ -1,8 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { AlertTriangle, CalendarClock, ClipboardList, Copy, Check, Mail, MessageCircle, PackageCheck, RefreshCw, Send, Smartphone, Trash2, X } from "lucide-react";
 import { get, post, type Contact, type CustomerOrder, type InstallmentPlan, type LicenseStatus, type Product, type ReceiptText, type ReorderRow, type Sale, type SerialUnit } from "../lib/api";
-import { dateOnly, dateTime, money, t } from "../i18n";
+import { dateOnly, dateTime, licensePlanLabel, money, t } from "../i18n";
+import { DateField } from "./DatePicker";
 import { Modal } from "./Pages";
+import { SectionHead } from "./SectionHead";
 
 export type Notify = (text: string, kind?: "success" | "error") => void;
 
@@ -93,6 +95,81 @@ export function ActivationModal({ onClose, onActivated, notify }: { onClose: () 
   return <Modal title={t("فعال‌سازی لایسنس")} onClose={onClose} wide>
     <LicenseCard onActivated={() => { onActivated(); notify(t("لایسنس فعال شد؛ از خرید شما سپاس‌گزاریم!")); }}/>
   </Modal>;
+}
+
+/**
+ * تب «لایسنس» در تنظیمات — وضعیت کامل لایسنس همین دستگاه: نوع پلن، مشتری،
+ * تاریخ انقضا و روزهای باقی‌مانده، کلید دستگاه و دکمه‌های فعال‌سازی/تمدید
+ * و لغو. صندوقدار قبل از همه در بنر بالای برنامه از نزدیک‌شدن انقضا خبر
+ * دار می‌شود؛ این صفحه جزئیات کامل را نشان می‌دهد.
+ */
+export function LicensePanel({ notify }: { notify: Notify }) {
+  const [status, setStatus] = useState<LicenseStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [showActivate, setShowActivate] = useState(false);
+  const [error, setError] = useState("");
+  const load = () => get<LicenseStatus>("/license/status").then(setStatus).catch((e) => setError(e.message));
+  useEffect(() => { void load(); }, []);
+  const deactivate = async () => {
+    if (!window.confirm(t("لایسنس لغو شود؟ برنامه قفل می‌شود تا لایسنس تازه فعال کنید یا (اگر مانده باشد) دورهٔ آزمایشی را شروع کنید."))) return;
+    setBusy(true);
+    try { await post("/license/deactivate", {}); notify(t("لایسنس لغو شد.")); await load(); }
+    catch (e) { notify((e as Error).message, "error"); } finally { setBusy(false); }
+  };
+  const trial = status?.mode === "TRIAL";
+  const days = trial ? (status?.trialDaysLeft ?? 0) : status?.daysLeft;
+  const trialUsed = trial ? Math.max(0, Math.min(100, Math.round(((14 - (status?.trialDaysLeft ?? 0)) / 14) * 100))) : 0;
+  return <div className="settings-grid">
+    <div className="page-stack">
+      <section className="surface">
+        <SectionHead title={t("وضعیت لایسنس")} subtitle={t("نوع لایسنس، اعتبار و روزهای باقی‌ماندهٔ همین دستگاه")} action={<button className="secondary-button" onClick={() => void load()} disabled={busy}><RefreshCw size={16}/>{t("بررسی دوباره")}</button>}/>
+        {error && <div className="error-box"><AlertTriangle size={16}/>{error}</div>}
+        {status && <>
+          <div className={`license-status-card ${status.ok ? "ok" : "bad"}`}>
+            <div className="license-status-icon">{status.ok ? <PackageCheck size={22}/> : <AlertTriangle size={22}/>}</div>
+            <div className="grow">
+              <b>{status.ok ? (trial ? t("دورهٔ آزمایشی فعال است") : t("لایسنس فعال است")) : licenseReasonText(status)}</b>
+              <span>{trial
+                ? t("شما در دورهٔ آزمایشی ۱۴ روزه هستید؛ پس از آن برای ادامهٔ کار لایسنس لازم است.")
+                : status.ok
+                  ? t("پلن {plan} برای «{customer}» فعال است.", { plan: licensePlanLabel(status.plan), customer: status.customer || t("مشتری") })
+                  : t("برای بازگشایی برنامه، لایسنس معتبر همین دستگاه را فعال کنید.")}</span>
+            </div>
+            {!trial && status.plan && <span className="status-pill paid">{licensePlanLabel(status.plan)}</span>}
+          </div>
+          <div className="info-row"><span>{t("نوع استفاده")}</span><b>{trial ? t("دورهٔ آزمایشی (۱۴ روزه)") : t("لایسنس")}</b></div>
+          {!trial && status.customer && <div className="info-row"><span>{t("نام مشتری")}</span><b>{status.customer}</b></div>}
+          {!trial && status.licenseId && <div className="info-row"><span>{t("شناسهٔ لایسنس")}</span><b dir="ltr" className="mono">{status.licenseId.slice(0, 8)}…</b></div>}
+          {trial && status.trialStartedAt && <div className="info-row"><span>{t("شروع دورهٔ آزمایشی")}</span><b>{dateOnly(status.trialStartedAt)}</b></div>}
+          <div className="info-row"><span>{t("اعتبار تا")}</span><b>{trial ? t("{days} روز بعد", { days: String(days ?? 0) }) : status.expiresAt ? dateOnly(status.expiresAt) : t("ابدی (بدون انقضا)")}</b></div>
+          {days != null && <div className="info-row"><span>{t("روزهای باقی‌مانده")}</span><b className={days <= 7 ? "stock-low" : ""}>{t("{days} روز", { days: String(days) })}</b></div>}
+          {trial && <div className="license-progress" title={t("مصرف‌شدهٔ دورهٔ آزمایشی")}><span style={{ width: `${trialUsed}%` }}/></div>}
+          <div className="info-row"><span>{t("کلید دستگاه")}</span><div className="row-actions"><b dir="ltr" className="mono">{status.machineKey}</b><button className="text-button" onClick={() => { void navigator.clipboard.writeText(status.machineKey).then(() => notify(t("کلید دستگاه کپی شد."))); }}><ClipboardList size={14}/>{t("کپی")}</button></div></div>
+          <div className="form-actions">
+            <button className="primary-button" onClick={() => setShowActivate(true)}><Send size={16}/>{trial || !status.ok ? t("فعال‌سازی لایسنس") : t("تمدید لایسنس")}</button>
+            {!trial && status.ok && <button className="danger-button" onClick={() => void deactivate()} disabled={busy}>{t("لغو لایسنس")}</button>}
+          </div>
+        </>}
+        {!status && !error && <div className="loading"><RefreshCw className="spin" size={18}/>{t("در حال خواندن وضعیت…")}</div>}
+      </section>
+      <section className="surface">
+        <SectionHead title={t("راهنمای لایسنس")} subtitle={t("چطور تمدید کنیم؟")}/>
+        <div className="hint-box">{t("لایسنس فقط روی همین دستگاه کار می‌کند و تاریخ سیستم را نمی‌توان برای طولانی‌کردن آن عقب برد. برای تمدید: کلید دستگاه را بالا کپی و برای فروشنده بفرستید؛ پس از پرداخت، بلوک لایسنس تازه را در همین صفحه بچسبانید. لایسنس تازه بلافاصله فعال می‌شود و روزهای باقی‌ماندهٔ لایسنس قبلی از دست می‌رود، پس بهتر است نزدیک انقضا تمدید کنید.")}</div>
+      </section>
+    </div>
+    <div className="page-stack">
+      <section className="surface local-info">
+        <div className="offline large-offline"><span/><div><b>{t("محافظت از برنامه")}</b><small>{t("امضای دیجیتال + قفل به دستگاه")}</small></div></div>
+        <div className="info-row"><span>{t("امضا")}</span><b>{t("Ed25519")}</b></div>
+        <div className="info-row"><span>{t("قفل دستگاه")}</span><b>{t("فعال")}</b></div>
+        <div className="info-row"><span>{t("ضد جابه‌جایی ساعت")}</span><b>{t("فعال (۲۴ ساعت تلورانس)")}</b></div>
+        <div className="info-row"><span>{t("سنجهٔ زمان")}</span><b title={t("بزرگ‌ترین تاریخی که برنامه دیده است")}>{status ? dateOnly(status.effectiveNow) : "—"}</b></div>
+      </section>
+    </div>
+    {showActivate && <Modal title={trial || !status?.ok ? t("فعال‌سازی لایسنس") : t("تمدید لایسنس")} onClose={() => setShowActivate(false)} wide>
+      <LicenseCard onActivated={() => { setShowActivate(false); notify(t("لایسنس فعال شد؛ از خرید شما سپاس‌گزاریم!")); void load(); }}/>
+    </Modal>}
+  </div>;
 }
 
 /** سفارش/رزرو مشتری — فهرست، ثبت، تحویل و لغو. */
@@ -281,7 +358,7 @@ export function InstallmentsPanel({ customerId, notify }: { customerId: string; 
         <label className="field"><span>{t("مبلغ کل بدهی (افغانی)")}</span><input required type="number" min="1" dir="ltr" value={form.total} onChange={(e) => setForm({ ...form, total: numberValue(e) })}/></label>
         <label className="field"><span>{t("تعداد اقساط")}</span><input required type="number" min="2" max="60" dir="ltr" value={form.installmentCount} onChange={(e) => setForm({ ...form, installmentCount: numberValue(e) })}/></label>
         <label className="field"><span>{t("فاصلهٔ اقساط (روز)")}</span><input type="number" min="1" max="365" dir="ltr" value={form.intervalDays} onChange={(e) => setForm({ ...form, intervalDays: numberValue(e) || 30 })}/></label>
-        <label className="field"><span>{t("تاریخ اولین قسط")}</span><input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })}/></label>
+        <label className="field"><span>{t("تاریخ اولین قسط")}</span><DateField value={form.startDate || ""} onChange={(iso) => setForm({ ...form, startDate: iso })}/></label>
         <label className="field full"><span>{t("یادداشت")}</span><input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder={t("اختیاری")}/></label>
         {error && <div className="form-error full">{error}</div>}
         <div className="form-actions full"><button type="button" className="secondary-button" onClick={() => setShow(false)}>{t("انصراف")}</button><button className="primary-button" disabled={busy || form.total <= 0}>{busy ? t("در حال ثبت…") : t("ثبت پلن")}</button></div>

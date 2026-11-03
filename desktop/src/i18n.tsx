@@ -100,6 +100,17 @@ export const todayLabel = (): string => new Intl.DateTimeFormat(activeLocale(), 
 export const fullDate = (value: string | Date): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "full", ...dateOptions() }).format(new Date(value));
 export const percent = (value: number): string => `${new Intl.NumberFormat(activeLocale(), { maximumFractionDigits: 0 }).format(value)}${currentLang === "en" ? "%" : "٪"}`;
 
+/** نام پلن لایسنس به زبان فعال. */
+export function licensePlanLabel(plan: string | null): string {
+  switch (plan) {
+    case "MONTHLY": return t("ماهانه");
+    case "YEARLY": return t("سالانه");
+    case "CUSTOM": return t("دلخواه");
+    case "LIFETIME": return t("ابدی");
+    default: return plan || "";
+  }
+}
+
 /** Applies the language to the document (direction, lang, title) — called by the provider and at boot. */
 export function applyDocumentLanguage(which: Lang): void {
   const root = document.documentElement;

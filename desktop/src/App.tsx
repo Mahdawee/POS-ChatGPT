@@ -2,8 +2,8 @@ import { Suspense, lazy, useEffect, useRef, useState, type FormEvent } from "rea
 import { invoke } from "@tauri-apps/api/core";
 import { CircleAlert, CircleCheck, Globe, LoaderCircle, LockKeyhole, RefreshCw, ShoppingBasket, Undo2 } from "lucide-react";
 import { get, post, serverOrigin, setServerOrigin, type LicenseStatus, type ShopSettings, type User } from "./lib/api";
-import { applyCurrencyList, applyLocaleSettings, LANGS, t, useLanguage } from "./i18n";
-import { type PageId, Shell, TrialBanner } from "./components/Shell";
+import { applyCurrencyList, applyLocaleSettings, LANGS, licensePlanLabel, t, useLanguage } from "./i18n";
+import { LicenseExpiryBanner, type PageId, Shell, TrialBanner } from "./components/Shell";
 import { CustomerDisplay } from "./components/CustomerDisplay";
 import { SectionHead } from "./components/SectionHead";
 
@@ -188,7 +188,9 @@ export default function App() {
   // هیچ پیامی نشان داده نمی‌شود تا زمان انقضای لایسنس.
   const banner = license?.ok && license.mode === "TRIAL"
     ? <TrialBanner daysLeft={license.trialDaysLeft ?? 0} onActivate={() => setShowActivation(true)}/>
-    : null;
+    : license?.ok && license.mode === "LICENSED" && license.daysLeft != null && license.daysLeft <= 7
+      ? <LicenseExpiryBanner plan={licensePlanLabel(license.plan)} expiresAt={license.expiresAt || ""} daysLeft={license.daysLeft} onActivate={() => setShowActivation(true)}/>
+      : null;
   if (restore) return <div className="startup-screen"><LoaderCircle className="spin" size={22}/> {t("برنامه در حال آماده‌شدن است…")}</div>;
   if (licenseOk === false) return <Suspense fallback={<Loading/>}><LicenseScreen onActivated={() => { setLicenseOk(null); refreshLicense(); }}/></Suspense>;
   if (!user || apiReady === false) return <LoginScreen apiReady={apiReady} apiSlow={apiSlow} onLogin={(session) => { localStorage.setItem("darpos-token", session.accessToken); localStorage.setItem("darpos-session", JSON.stringify(session)); setUser(session.user); setPage("dashboard"); }} notify={notify} onExitClientMode={exitClientMode}/>;
