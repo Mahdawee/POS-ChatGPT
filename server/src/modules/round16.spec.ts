@@ -210,7 +210,13 @@ describe("Round 16 — backup scheduler", () => {
 
 describe("Round 16 — settings validation", () => {
   function settingsSetup() {
-    const prisma = { setting: { upsert: jest.fn().mockResolvedValue({}) }, auditLog: { create: jest.fn().mockResolvedValue({}) } };
+    const prisma = {
+      setting: {
+        upsert: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
     return { controller: new SettingsController(prisma as never), prisma };
   }
   it("accepts valid calendar/timezone/currency values", async () => {
@@ -232,6 +238,37 @@ describe("Round 16 — settings validation", () => {
     const { controller } = settingsSetup();
     await expect(controller.put({ key: "lastScheduledBackupAt", value: "2000-01-01" }, admin)).rejects.toThrow(BadRequestException);
     await expect(controller.put({ key: "invoiceSeq:20261102", value: "0" }, admin)).rejects.toThrow(BadRequestException);
+  });
+  it("manages the shop currency list: AFN is permanent, extras come and go", async () => {
+    const { controller, prisma } = settingsSetup();
+    // A custom list with AFN + USD + a shop-added currency is accepted…
+    const list = [{ code: "AFN", label: "افغانی" }, { code: "USD", label: "دلار امریکا" }, { code: "EUR", label: "یورو" }];
+    await controller.put({ key: "currencies", value: JSON.stringify(list) }, admin);
+    expect(prisma.setting.upsert).toHaveBeenCalledWith({ where: { key: "currencies" }, create: { key: "currencies", value: JSON.stringify(list) }, update: { value: JSON.stringify(list) } });
+    // …and once stored, EUR becomes a valid base currency.
+    (prisma.setting.findUnique as jest.Mock).mockResolvedValue({ key: "currencies", value: JSON.stringify(list) });
+    await controller.put({ key: "currency", value: "EUR" }, admin);
+    // Removing AFN from the list is refused — it is the permanent base currency.
+    const withoutAfn = list.slice(1);
+    await expect(controller.put({ key: "currencies", value: JSON.stringify(withoutAfn) }, admin)).rejects.toThrow(BadRequestException);
+    // Malformed lists (bad codes, duplicates, wrong shapes) are refused too.
+    await expect(controller.put({ key: "currencies", value: JSON.stringify([{ code: "afn", label: "افغانی" }]) }, admin)).rejects.toThrow(BadRequestException);
+    await expect(controller.put({ key: "currencies", value: JSON.stringify([{ code: "AFN", label: "افغانی" }, { code: "AFN", label: "افغانی دیگر" }]) }, admin)).rejects.toThrow(BadRequestException);
+    await expect(controller.put({ key: "currencies", value: "not json" }, admin)).rejects.toThrow(BadRequestException);
+    await expect(controller.put({ key: "currencies", value: JSON.stringify([{ code: "AFN" }]) }, admin)).rejects.toThrow(BadRequestException);
+    // A base currency outside the stored list stays rejected.
+    (prisma.setting.findUnique as jest.Mock).mockResolvedValue({ key: "currencies", value: JSON.stringify(list) });
+    await expect(controller.put({ key: "currency", value: "PKR" }, admin)).rejects.toThrow(BadRequestException);
+  });
+  it("falls back to the default currency list when the stored one is missing", async () => {
+    const { controller } = settingsSetup();
+    // findUnique → null: defaults are AFN + USD only.
+    await expect(controller.put({ key: "currency", value: "EUR" }, admin)).rejects.toThrow(BadRequestException);
+    await controller.put({ key: "currency", value: "USD" }, admin);
+    // A corrupt stored value also falls back to the defaults.
+    const { controller: broken, prisma } = settingsSetup();
+    (prisma.setting.findUnique as jest.Mock).mockResolvedValue({ key: "currencies", value: "{not-json" });
+    await expect(broken.put({ key: "currency", value: "EUR" }, admin)).rejects.toThrow(BadRequestException);
   });
 });
 

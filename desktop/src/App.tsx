@@ -1,8 +1,9 @@
 import { Suspense, lazy, useEffect, useRef, useState, type FormEvent } from "react";
-import { CircleAlert, CircleCheck, Globe, LoaderCircle, LockKeyhole, ShoppingBasket } from "lucide-react";
-import { get, post, type LicenseStatus, type ShopSettings, type User } from "./lib/api";
-import { applyLocaleSettings, LANGS, t, useLanguage } from "./i18n";
-import { type PageId, Shell } from "./components/Shell";
+import { invoke } from "@tauri-apps/api/core";
+import { CircleAlert, CircleCheck, Globe, LoaderCircle, LockKeyhole, RefreshCw, ShoppingBasket, Undo2 } from "lucide-react";
+import { get, post, serverOrigin, setServerOrigin, type LicenseStatus, type ShopSettings, type User } from "./lib/api";
+import { applyCurrencyList, applyLocaleSettings, LANGS, t, useLanguage } from "./i18n";
+import { type PageId, Shell, TrialBanner } from "./components/Shell";
 import { CustomerDisplay } from "./components/CustomerDisplay";
 import { SectionHead } from "./components/SectionHead";
 
@@ -24,6 +25,7 @@ const AuditPage = lazy(() => import("./components/Pages").then((m) => ({ default
 const CashPage = lazy(() => import("./components/Pages").then((m) => ({ default: m.CashPage })));
 const OrdersPage = lazy(() => import("./components/Round16").then((m) => ({ default: m.OrdersPage })));
 const LicenseScreen = lazy(() => import("./components/Round16").then((m) => ({ default: m.LicenseScreen })));
+const ActivationModal = lazy(() => import("./components/Round16").then((m) => ({ default: m.ActivationModal })));
 
 type Notice = { text: string; kind: "success" | "error" };
 type Session = { accessToken: string; user: User };
@@ -43,6 +45,10 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(false);
   // Licensing: the gate re-checks on every 402 reply and after activation.
   const [licenseOk, setLicenseOk] = useState<boolean | null>(null);
+  // Full license state drives the in-app trial banner (and stays null for a
+  // licensed shop, so nothing is shown until the license actually expires).
+  const [license, setLicense] = useState<LicenseStatus | null>(null);
+  const [showActivation, setShowActivation] = useState(false);
   const [dark, setDark] = useState(() => { try { return localStorage.getItem("darpos-theme") === "dark"; } catch { return false; } });
   const noticeTimer = useRef<number | undefined>(undefined);
   // Clearing the previous timer keeps the newest toast on screen for its
@@ -73,7 +79,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const checkLicense = () => { get<LicenseStatus>("/license/status").then((state) => setLicenseOk(state.ok)).catch(() => setLicenseOk(true)); };
+    const checkLicense = () => { get<LicenseStatus>("/license/status").then((state) => { setLicenseOk(state.ok); setLicense(state); }).catch(() => setLicenseOk(true)); };
     // Any 402 from the API flips the app onto the license screen.
     const licenseRequired = () => setLicenseOk(false);
     window.addEventListener("darpos:license-required", licenseRequired);
@@ -138,6 +144,12 @@ export default function App() {
     if (!user) { setShopName(""); return; }
     get<ShopSettings>("/settings").then((settings) => {
       setShopName(settings.shopName || "");
+      // The shop's currency list (AFN + USD + any custom entries) must be
+      // applied before the base currency, or unknown codes fall back to AFN.
+      try {
+        const rows = settings.currencies ? JSON.parse(settings.currencies) : null;
+        if (Array.isArray(rows)) applyCurrencyList(rows);
+      } catch { /* keep the default AFN + USD list */ }
       // Calendar / timezone / currency are display settings: apply them
       // before any screen renders dates and amounts.
       applyLocaleSettings({
@@ -163,9 +175,23 @@ export default function App() {
   }, [user]);
 
   const logout = () => { localStorage.removeItem("darpos-token"); localStorage.removeItem("darpos-session"); setUser(null); setPage("dashboard"); };
+  const refreshLicense = () => { void get<LicenseStatus>("/license/status").then((state) => { setLicenseOk(state.ok); setLicense(state); }).catch(() => undefined); };
+  // Network client machines whose server is unreachable must be able to fall
+  // back to standalone mode right from the login screen (no settings access
+  // before signing in) — otherwise a wrong server URL locks the register out.
+  const exitClientMode = async () => {
+    setServerOrigin("");
+    try { if (inTauri()) await invoke("set_network_mode", { mode: "local" }); } catch { /* not running inside Tauri */ }
+    window.location.reload();
+  };
+  // بنر نسخهٔ آزمایشی: فقط وقتی تریال فعال است. با فعال‌سازی لایسنس دیگر
+  // هیچ پیامی نشان داده نمی‌شود تا زمان انقضای لایسنس.
+  const banner = license?.ok && license.mode === "TRIAL"
+    ? <TrialBanner daysLeft={license.trialDaysLeft ?? 0} onActivate={() => setShowActivation(true)}/>
+    : null;
   if (restore) return <div className="startup-screen"><LoaderCircle className="spin" size={22}/> {t("برنامه در حال آماده‌شدن است…")}</div>;
-  if (licenseOk === false) return <Suspense fallback={<Loading/>}><LicenseScreen onActivated={() => { setLicenseOk(null); void get<LicenseStatus>("/license/status").then((state) => setLicenseOk(state.ok)).catch(() => setLicenseOk(true)); }}/></Suspense>;
-  if (!user || apiReady === false) return <LoginScreen apiReady={apiReady} apiSlow={apiSlow} onLogin={(session) => { localStorage.setItem("darpos-token", session.accessToken); localStorage.setItem("darpos-session", JSON.stringify(session)); setUser(session.user); setPage("dashboard"); }} notify={notify}/>;
+  if (licenseOk === false) return <Suspense fallback={<Loading/>}><LicenseScreen onActivated={() => { setLicenseOk(null); refreshLicense(); }}/></Suspense>;
+  if (!user || apiReady === false) return <LoginScreen apiReady={apiReady} apiSlow={apiSlow} onLogin={(session) => { localStorage.setItem("darpos-token", session.accessToken); localStorage.setItem("darpos-session", JSON.stringify(session)); setUser(session.user); setPage("dashboard"); }} notify={notify} onExitClientMode={exitClientMode}/>;
 
   const labels: Record<PageId, string> = { dashboard: t("نمای کلی"), pos: t("صندوق فروش"), products: t("کالاها"), categories: t("دسته‌بندی‌ها"), customers: t("مشتریان"), suppliers: t("تأمین‌کنندگان"), purchases: t("خریدها"), orders: t("سفارش‌ها"), inventory: t("موجودی انبار"), sales: t("فروش‌ها"), reports: t("گزارش‌ها"), cash: t("مدیریت صندوق"), expenses: t("دخل و خرج"), users: t("کاربران"), audit: t("لاگ فعالیت"), settings: t("تنظیمات") };
   // The second window (customer display) renders standalone, without the Shell.
@@ -192,14 +218,24 @@ export default function App() {
         }
       })()}</Suspense>;
   if (locked) return <LockScreen username={user.username} onUnlock={() => setLocked(false)}/>;
-  return <><Shell page={page} onNavigate={setPage} user={user} onLogout={logout} shopName={shopName} onLock={() => setLocked(true)} onHelp={() => setShowHelp(true)} dark={dark} onToggleDark={() => setDark((value) => !value)}>{content}</Shell>{notice && <div className={`toast ${notice.kind}`}>{notice.kind === "success" ? <CircleCheck size={18}/> : <CircleAlert size={18}/>}<span>{t(notice.text)}</span></div>}{showHelp && <ShortcutsHelp onClose={() => setShowHelp(false)}/>}<div className="page-reader" aria-live="polite" lang={lang}>{labels[page]}</div></>;
+  return <><Shell page={page} onNavigate={setPage} user={user} onLogout={logout} shopName={shopName} onLock={() => setLocked(true)} onHelp={() => setShowHelp(true)} dark={dark} onToggleDark={() => setDark((value) => !value)} banner={banner}>{content}</Shell>{showActivation && <Suspense fallback={<Loading/>}><ActivationModal onClose={() => setShowActivation(false)} onActivated={() => { setShowActivation(false); refreshLicense(); }} notify={notify}/></Suspense>}{notice && <div className={`toast ${notice.kind}`}>{notice.kind === "success" ? <CircleCheck size={18}/> : <CircleAlert size={18}/>}<span>{t(notice.text)}</span></div>}{showHelp && <ShortcutsHelp onClose={() => setShowHelp(false)}/>}<div className="page-reader" aria-live="polite" lang={lang}>{labels[page]}</div></>;
 }
 
-function LoginScreen({ apiReady, apiSlow, onLogin, notify }: { apiReady: boolean | null; apiSlow: boolean; onLogin: (session: Session) => void; notify: (text: string, kind?: "success" | "error") => void }) {
+/** True when running inside the Tauri desktop shell (not a plain browser). */
+const inTauri = (): boolean => typeof window !== "undefined" && Boolean((window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+
+function LoginScreen({ apiReady, apiSlow, onLogin, notify, onExitClientMode }: { apiReady: boolean | null; apiSlow: boolean; onLogin: (session: Session) => void; notify: (text: string, kind?: "success" | "error") => void; onExitClientMode: () => void }) {
   const { lang, setLang } = useLanguage();
+  const remote = serverOrigin(); // نشانی سرور وقتی این دستگاه مشتری شبکه است
   const [username, setUsername] = useState("admin"); const [password, setPassword] = useState(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
   const submit = async (event: FormEvent) => { event.preventDefault(); setBusy(true); setError(""); try { const session = await post<Session>("/auth/login", { username, password }); onLogin(session); notify(t("خوش آمدید، {name}", { name: session.user.displayName })); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } };
-  return <div className="login-screen"><div className="login-decor decor-one"/><div className="login-decor decor-two"/><section className="login-card"><div className="login-logo"><div className="brand-mark">{t("رو")}</div><div><strong>{t("روشن")}</strong><span>{t("فروش و مدیریت فروشگاه")}</span></div></div><div className="lang-switch" role="group" aria-label={t("زبان برنامه")}>{LANGS.map((item) => <button key={item.id} type="button" className={`lang-option ${lang === item.id ? "active" : ""}`} onClick={() => setLang(item.id)}><Globe size={13}/>{item.label}</button>)}</div><div className="login-welcome"><div className="login-icon"><ShoppingBasket size={23}/></div><span className="eyebrow">{t("سامانه فروشگاهی محلی")}</span><h1>{t("به فروشگاه خوش آمدید")}</h1><p>{t("برای آغاز کار، وارد حساب کاربری خود شوید.")}</p></div>{apiReady === false && <div className="api-offline"><CircleAlert size={17}/><div><b>{apiSlow ? t("برنامه محلی اجرا نشد") : t("برنامه محلی در حال آماده‌سازی است")}</b><small>{apiSlow ? t("برنامه را ببندید و دوباره باز کنید. اگر مشکل ادامه یافت، فایل api.log در مسیر %APPDATA%\\DarPOSERP را بررسی کنید.") : t("چند لحظه صبر کنید…")}</small></div></div>}<form onSubmit={submit} className="login-form"><label className="field"><span>{t("نام کاربری")}</span><div className="login-input"><CircleAlert size={16}/><input required autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder={t("نام کاربری")} dir="ltr"/></div></label><label className="field"><span>{t("گذرواژه")}</span><div className="login-input"><LockKeyhole size={16}/><input required type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={t("گذرواژه خود را وارد کنید")} dir="ltr"/></div></label>{error && <div className="form-error">{t(error)}</div>}<button className="primary-button login-submit" disabled={busy || apiReady === false}>{busy ? <><LoaderCircle className="spin" size={17}/> {t("در حال ورود…")}</> : t("ورود به فروشگاه")}</button></form><div className="login-foot"><span className="lock-dot"/> {t("داده‌های شما روی همین دستگاه نگهداری می‌شود")}</div></section><div className="login-version">{t("روشن")} · {t("نسخه ۰.۸")}</div></div>;
+  return <div className="login-screen"><div className="login-decor decor-one"/><div className="login-decor decor-two"/><section className="login-card"><div className="login-logo"><div className="brand-mark">{t("رو")}</div><div><strong>{t("روشن")}</strong><span>{t("فروش و مدیریت فروشگاه")}</span></div></div><div className="lang-switch" role="group" aria-label={t("زبان برنامه")}>{LANGS.map((item) => <button key={item.id} type="button" className={`lang-option ${lang === item.id ? "active" : ""}`} onClick={() => setLang(item.id)}><Globe size={13}/>{item.label}</button>)}</div><div className="login-welcome"><div className="login-icon"><ShoppingBasket size={23}/></div><span className="eyebrow">{t("سامانه فروشگاهی محلی")}</span><h1>{t("به فروشگاه خوش آمدید")}</h1><p>{t("برای آغاز کار، وارد حساب کاربری خود شوید.")}</p></div>{apiReady === false && !remote && <div className="api-offline"><CircleAlert size={17}/><div><b>{apiSlow ? t("برنامه محلی اجرا نشد") : t("برنامه محلی در حال آماده‌سازی است")}</b><small>{apiSlow ? t("برنامه را ببندید و دوباره باز کنید. اگر مشکل ادامه یافت، فایل api.log در مسیر %APPDATA%\\DarPOSERP را بررسی کنید.") : t("چند لحظه صبر کنید…")}</small></div></div>}
+          {apiReady === false && remote && <div className="api-offline"><CircleAlert size={17}/><div><b>{apiSlow ? t("اتصال به سرور فروشگاه ممکن نشد") : t("در حال اتصال به سرور فروشگاه…")}</b><small dir="ltr">{remote}</small>{apiSlow && <small>{t("برنامهٔ دستگاه سرور روشن و در شبکهٔ فروشگاه باشد. اگر می‌خواهید این دستگاه مستقل کار کند، به حالت تک‌کامپیوتر برگردید.")}</small>}</div>
+            <div className="api-offline-actions">
+              <button type="button" className="secondary-button" onClick={() => window.location.reload()}><RefreshCw size={15}/>{t("تلاش دوباره")}</button>
+              <button type="button" className="secondary-button" onClick={onExitClientMode}><Undo2 size={15}/>{t("بازگشت به حالت تک‌کامپیوتر")}</button>
+            </div>
+          </div>}<form onSubmit={submit} className="login-form"><label className="field"><span>{t("نام کاربری")}</span><div className="login-input"><CircleAlert size={16}/><input required autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder={t("نام کاربری")} dir="ltr"/></div></label><label className="field"><span>{t("گذرواژه")}</span><div className="login-input"><LockKeyhole size={16}/><input required type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={t("گذرواژه خود را وارد کنید")} dir="ltr"/></div></label>{error && <div className="form-error">{t(error)}</div>}<button className="primary-button login-submit" disabled={busy || apiReady === false}>{busy ? <><LoaderCircle className="spin" size={17}/> {t("در حال ورود…")}</> : t("ورود به فروشگاه")}</button></form><div className="login-foot"><span className="lock-dot"/> {t("داده‌های شما روی همین دستگاه نگهداری می‌شود")}</div></section><div className="login-version">{t("روشن")} · {t("نسخه ۰.۸")}</div></div>;
 }
 
 function Loading() {

@@ -39,32 +39,29 @@ let currentCalendar: CalendarId = "persian";
 let currentTimezone = "";
 let currentCurrency = "AFN";
 
-/** Dari labels double as translation keys (see i18n-dictionaries). */
-export const CURRENCIES: Array<{ code: string; label: string }> = [
+/** ارزهای نمایش مبالغ. پیش‌فرض فقط افغانی و دلار؛ فهرست کامل از تنظیمات
+ *  فروشگاه (کلید currencies) بارگذاری می‌شود و افغانی همیشه موجود است. */
+export type CurrencyRow = { code: string; label: string };
+export const BASE_CURRENCIES: CurrencyRow[] = [
   { code: "AFN", label: "افغانی" },
   { code: "USD", label: "دلار امریکا" },
-  { code: "EUR", label: "یورو" },
-  { code: "GBP", label: "پوند" },
-  { code: "IRR", label: "تومان" },
-  { code: "PKR", label: "روپیهٔ پاکستان" },
-  { code: "AED", label: "درهم امارات" },
-  { code: "SAR", label: "ریال سعودی" },
-  { code: "INR", label: "روپیهٔ هند" },
-  { code: "CNY", label: "یوان" },
-  { code: "TRY", label: "لیر" },
-  { code: "KZT", label: "تنگه" },
-  { code: "UZS", label: "سوم" },
-  { code: "TJS", label: "سامانی" },
-  { code: "IQD", label: "دینار عراق" },
-  { code: "JOD", label: "دینار اردن" },
 ];
-export const currencyLabel = (code: string): string => CURRENCIES.find((row) => row.code === code)?.label ?? code;
+let currencyList: CurrencyRow[] = BASE_CURRENCIES;
+export const currencies = (): CurrencyRow[] => currencyList;
+/** فهرست ارزها را از تنظیمات فروشگاه اعمال می‌کند؛ ارز پایهٔ فعلی اگر در
+ *  فهرست نباشد به افغانی برمی‌گردد و افغانی هرگز حذف نمی‌شود. */
+export function applyCurrencyList(rows: CurrencyRow[]): void {
+  const valid = rows.filter((row) => row && typeof row.code === "string" && typeof row.label === "string" && row.label.trim().length > 0);
+  currencyList = valid.some((row) => row.code === "AFN") ? valid : [{ code: "AFN", label: "افغانی" }, ...valid];
+  if (!currencyList.some((row) => row.code === currentCurrency)) currentCurrency = "AFN";
+}
+export const currencyLabel = (code: string): string => currencyList.find((row) => row.code === code)?.label ?? code;
 
 /** Applies shop display settings; unknown values fall back to the defaults. */
 export function applyLocaleSettings(settings: Partial<LocaleSettings>): void {
   if (settings.calendar === "persian" || settings.calendar === "islamic-umalqura" || settings.calendar === "gregorian") currentCalendar = settings.calendar;
   if (typeof settings.timezone === "string") currentTimezone = settings.timezone;
-  if (typeof settings.currency === "string" && CURRENCIES.some((row) => row.code === settings.currency)) currentCurrency = settings.currency;
+  if (typeof settings.currency === "string" && currencyList.some((row) => row.code === settings.currency)) currentCurrency = settings.currency;
 }
 export const localeSettings = (): LocaleSettings => ({ calendar: currentCalendar, timezone: currentTimezone, currency: currentCurrency });
 

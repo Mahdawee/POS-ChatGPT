@@ -1,4 +1,5 @@
 import { type ReactNode } from "react";
+import { Hourglass } from "lucide-react";
 import { Activity, Banknote, BarChart3, Box, Boxes, CircleUserRound, ClipboardList, FileText, Globe, Keyboard, LayoutDashboard, Lock, LogOut, Moon, PackagePlus, ReceiptText, ScrollText, Settings2, ShoppingCart, Sun, Tags, Truck, UsersRound, type LucideIcon } from "lucide-react";
 import type { User } from "../lib/api";
 import { LANGS, t, todayLabel, useLanguage } from "../i18n";
@@ -25,7 +26,20 @@ const navigation: { id: PageId; label: string; icon: LucideIcon; group: string; 
   { id: "settings", label: "تنظیمات", icon: Settings2, group: "مدیریت", admin: true },
 ];
 
-export function Shell({ page, onNavigate, user, onLogout, shopName, onLock, onHelp, dark, onToggleDark, children }: { page: PageId; onNavigate: (page: PageId) => void; user: User; onLogout: () => void; shopName?: string; onLock: () => void; onHelp: () => void; dark: boolean; onToggleDark: () => void; children: ReactNode }) {
+/** بنر «نسخهٔ آزمایشی» — فقط تا وقتی تریال فعال است دیده می‌شود؛ با
+ *  فعال‌سازی لایسنس کاملاً ناپدید می‌شود تا پایان اعتبار لایسنس. */
+export function TrialBanner({ daysLeft, onActivate }: { daysLeft: number; onActivate: () => void }) {
+  return <div className="trial-banner" role="status">
+    <Hourglass size={18}/>
+    <div className="trial-banner-text">
+      <b>{t("نسخهٔ آزمایشی فعال است")}</b>
+      <span>{t("{days} روز از دورهٔ آزمایشی ۱۴ روزه باقی مانده است. برای ادامهٔ کار پس از پایان این دوره، لایسنس فعال کنید.", { days: String(daysLeft) })}</span>
+    </div>
+    <button className="primary-button" onClick={onActivate}>{t("فعال‌سازی لایسنس")}</button>
+  </div>;
+}
+
+export function Shell({ page, onNavigate, user, onLogout, shopName, onLock, onHelp, dark, onToggleDark, banner, children }: { page: PageId; onNavigate: (page: PageId) => void; user: User; onLogout: () => void; shopName?: string; onLock: () => void; onHelp: () => void; dark: boolean; onToggleDark: () => void; banner?: ReactNode; children: ReactNode }) {
   const { lang, setLang } = useLanguage();
   const items = navigation.map((item) => ({ ...item, label: t(item.label), group: t(item.group) }));
   const titles: Record<PageId, string> = Object.fromEntries(items.map((item) => [item.id, item.label])) as Record<PageId, string>;
@@ -44,6 +58,6 @@ export function Shell({ page, onNavigate, user, onLogout, shopName, onLock, onHe
         <div className="user-strip"><div className="avatar">{user.displayName.slice(0, 1)}</div><div className="user-name"><b>{user.displayName}</b><small>{user.role === "ADMIN" ? t("مدیر فروشگاه") : t("صندوقدار")}</small></div><button title={t("خروج")} className="icon-button" onClick={onLogout}><LogOut size={17}/></button></div>
       </div>
     </aside>
-    <main className="main-area"><header className="topbar"><div><div className="breadcrumb">{t("روشن")} <span>/</span> {titles[page]}</div><h1>{titles[page]}</h1></div><div className="topbar-right"><div className="today"><Activity size={15}/><span>{t("امروز")}</span><b>{todayLabel()}</b></div><button title={t("حالت تیره")} className="icon-button" onClick={onToggleDark}>{dark ? <Sun size={17}/> : <Moon size={17}/>}</button><button title={t("میان‌برهای صفحه‌کلید")} className="icon-button" onClick={onHelp}><Keyboard size={17}/></button><button title={t("قفل سریع صفحه")} className="icon-button" onClick={onLock}><Lock size={17}/></button><button className="primary-button top-pos" onClick={() => onNavigate("pos")}><ShoppingCart size={17}/> {t("فروش جدید")} <kbd>F2</kbd></button></div></header><div className="page-content">{children}</div></main>
+    <main className="main-area"><header className="topbar"><div><div className="breadcrumb">{t("روشن")} <span>/</span> {titles[page]}</div><h1>{titles[page]}</h1></div><div className="topbar-right"><div className="today"><Activity size={15}/><span>{t("امروز")}</span><b>{todayLabel()}</b></div><button title={t("حالت تیره")} className="icon-button" onClick={onToggleDark}>{dark ? <Sun size={17}/> : <Moon size={17}/>}</button><button title={t("میان‌برهای صفحه‌کلید")} className="icon-button" onClick={onHelp}><Keyboard size={17}/></button><button title={t("قفل سریع صفحه")} className="icon-button" onClick={onLock}><Lock size={17}/></button><button className="primary-button top-pos" onClick={() => onNavigate("pos")}><ShoppingCart size={17}/> {t("فروش جدید")} <kbd>F2</kbd></button></div></header><div className="page-content">{banner}{children}</div></main>
   </div>;
 }

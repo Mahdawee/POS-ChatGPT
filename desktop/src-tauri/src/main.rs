@@ -91,6 +91,18 @@ fn cap_log(path: &Path) {
 }
 
 /// Tauri resolves `current_exe()` through `Path::canonicalize()`, which on
+/// Best-effort primary LAN IPv4 of this machine: a UDP "connect" only picks
+/// the route (no packet leaves the machine), then local_addr names it.
+/// Returns None without a default route — callers must treat that as "unknown".
+#[cfg(not(debug_assertions))]
+fn primary_lan_ip() -> Option<String> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    let address = socket.local_addr().ok()?;
+    let ip = address.ip().to_string();
+    if ip.starts_with("127.") { None } else { Some(ip) }
+}
+
 /// Windows returns verbatim paths (`\\?\C:\...`). Node.js 22+ crashes with
 /// `EISDIR: illegal operation on a directory, lstat 'C:'` when its main
 /// script path carries that prefix, so convert the resolved runtime path
@@ -186,6 +198,23 @@ fn start_bundled_api(app: tauri::AppHandle, closing: Arc<AtomicBool>) {
     // Another copy of the app (or a leftover API) is already serving the port:
     // reuse it instead of spawning a Node child that would die with EADDRINUSE.
     if TcpStream::connect(("127.0.0.1", 4317)).is_ok() {
+        // Server-mode trap: a leftover single-computer instance is bound to
+        // 127.0.0.1 only, so other registers would never reach it even though
+        // this app "reused" a listening API. Probe the LAN address too and
+        // tell the user plainly instead of failing silently.
+        if network_mode == "server" {
+            if let Some(lan_ip) = primary_lan_ip() {
+                if TcpStream::connect((lan_ip.as_str(), 4317)).is_err() {
+                    let message = "An older single-computer instance of the API is still listening on 127.0.0.1 only, so network-server mode cannot take effect. Close the app fully (end any leftover node.exe in Task Manager) or restart Windows, then open the app again.";
+                    append_log(&api_log, message);
+                    report_startup_failure(
+                        &api_log,
+                        "برای فعال شدن حالت «سرور شبکه»، یک نمونهٔ قدیمی برنامهٔ تک‌کامپیوتری هنوز در پس‌زمینه فعال است.\n\nبرنامه را کاملاً ببندید و در Task Manager هر پروسهٔ node.exe باقی‌مانده را پایان دهید (یا ویندوز را ری‌استارت کنید)، سپس برنامه را دوباره باز کنید.",
+                    );
+                    return;
+                }
+            }
+        }
         append_log(&api_log, "Port 4317 is already in use; reusing the existing local API.");
         return;
     }
@@ -266,7 +295,7 @@ fn start_bundled_api(app: tauri::AppHandle, closing: Arc<AtomicBool>) {
         report_startup_failure(&api_log, "The local POS API did not start within 180 seconds.");
         return;
     }
-    append_log(&api_log, "Bundled API is ready on 127.0.0.1:4317.");
+    append_log(&api_log, &format!("Bundled API is ready on {api_host}:4317."));
     if closing.load(Ordering::SeqCst) {
         let _ = child.kill();
         let _ = child.wait();

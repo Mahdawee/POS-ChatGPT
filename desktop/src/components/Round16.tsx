@@ -25,6 +25,15 @@ function licenseReasonText(status: LicenseStatus): string {
  * کلید دستگاه برای ارسال به فروشنده، و محل چسباندن بلوک لایسنس.
  */
 export function LicenseScreen({ onActivated }: { onActivated: () => void }) {
+  return <div className="license-screen"><LicenseCard onActivated={onActivated}/></div>;
+}
+
+/**
+ * کارت فعال‌سازی لایسنس — هم در صفحهٔ لایسنس (قبل از ورود) و هم داخل برنامه
+ * (از بنر «نسخهٔ آزمایشی») نشان داده می‌شود: کلید دستگاه آمادهٔ کپی برای
+ * فرستادن به فروشنده، و جای چسباندن بلوک لایسنس خریداری‌شده.
+ */
+export function LicenseCard({ onActivated }: { onActivated: () => void }) {
   const [status, setStatus] = useState<LicenseStatus | null>(null);
   const [licenseText, setLicenseText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -51,8 +60,7 @@ export function LicenseScreen({ onActivated }: { onActivated: () => void }) {
     try { await navigator.clipboard.writeText(status?.machineKey || ""); setCopied(true); window.setTimeout(() => setCopied(false), 2000); } catch { /* clipboard unavailable */ }
   };
   const trialNotStarted = status != null && !status.ok && status.reason === "TRIAL_NOT_STARTED";
-  return <div className="license-screen">
-    <form className="license-card" onSubmit={activate}>
+  return <form className="license-card" onSubmit={activate}>
       <div className="license-logo">{t("رو")}</div>
       <h1>{t("روشن")} <small>{t("فروش و مدیریت فروشگاه")}</small></h1>
       {status?.ok && status.mode === "TRIAL" && <div className="hint-box">{t("شما در دورهٔ آزمایشی هستید — {days} روز باقی مانده.", { days: String(status.trialDaysLeft ?? 0) })}</div>}
@@ -72,8 +80,19 @@ export function LicenseScreen({ onActivated }: { onActivated: () => void }) {
         <button className="primary-button" disabled={busy || licenseText.trim().length < 30}><Send size={16}/>{busy ? t("در حال فعال‌سازی…") : t("فعال‌سازی لایسنس")}</button>
       </div>
       <p className="muted small">{t("پرداخت هزینهٔ لایسنس به فروشنده؛ بعد از دریافت بلوک لایسنس، آن را همین‌جا بچسبانید. لایسنس فقط روی همین دستگاه کار می‌کند.")}</p>
-    </form>
-  </div>;
+    </form>;
+}
+
+/**
+ * پنجرهٔ فعال‌سازی داخل برنامه — از بنر «نسخهٔ آزمایشی» بالای صفحه باز
+ * می‌شود؛ مشتری کلید دستگاه را کپی می‌کند، برای فروشنده می‌فرستد و پس از
+ * خرید، بلوک لایسنس را همین‌جا می‌چسباند. با فعال‌سازی، بنر برای همیشه
+ * (تا پایان اعتبار لایسنس) ناپدید می‌شود.
+ */
+export function ActivationModal({ onClose, onActivated, notify }: { onClose: () => void; onActivated: () => void; notify: Notify }) {
+  return <Modal title={t("فعال‌سازی لایسنس")} onClose={onClose} wide>
+    <LicenseCard onActivated={() => { onActivated(); notify(t("لایسنس فعال شد؛ از خرید شما سپاس‌گزاریم!")); }}/>
+  </Modal>;
 }
 
 /** سفارش/رزرو مشتری — فهرست، ثبت، تحویل و لغو. */

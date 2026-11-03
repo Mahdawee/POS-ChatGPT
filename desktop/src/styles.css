@@ -183,3 +183,50 @@ html.dark .receipt-text{background:#1d2620;border-color:#2a332c}
 .hint-box.green{background:#e7f3ec;color:#1f5b3a;border-color:#bcdcc9}
 .amber-text{color:#b25e09}
 html.dark .amber-text{color:#e8a33d}
+
+/* ── Round 17: trial banner, currency manager, clearer returns, network tab ── */
+.trial-banner{display:flex;align-items:center;gap:13px;margin:0 0 18px;padding:11px 15px;border:1px solid #f0e2c8;background:#fdf8ee;border-radius:12px;color:#8a611f;flex-wrap:wrap}
+.trial-banner svg{flex:0 0 auto;color:#c08a2e}
+.trial-banner-text{flex:1;min-width:220px;display:flex;flex-direction:column;gap:3px}
+.trial-banner-text b{font-size:12px;color:#7c5a1d}
+.trial-banner-text span{font-size:10.5px;color:#94743a;line-height:1.8}
+html.dark .trial-banner{background:#2b2313;border-color:#4a3c1e;color:#d9b96c}
+html.dark .trial-banner-text b{color:#e8c97a}
+html.dark .trial-banner-text span{color:#c2a05a}
+/* currency manager (Settings → فروشگاه) */
+.currency-list{display:flex;flex-direction:column;gap:7px;margin-bottom:14px}
+.currency-row{display:flex;align-items:center;gap:9px;border:1px solid #e9edf0;border-radius:9px;padding:9px 12px;background:#fbfcfc}
+.currency-row>b{font-family:ui-monospace,monospace;font-size:12px;color:#3c6e53;min-width:44px}
+.currency-row>span{font-size:11px;color:#4a5763}
+html.dark .currency-row{background:#10171c;border-color:#263040}
+html.dark .currency-row>b{color:#8fd0ac}
+/* returns: per-line cards with quantity steppers */
+.return-guide{align-items:flex-start;line-height:1.9}
+.return-guide b{display:block;margin-bottom:3px}
+.return-guide span{display:block}
+.return-lines{display:flex;flex-direction:column;gap:9px;margin-top:12px;max-height:44vh;overflow:auto;padding:2px}
+.return-line{display:flex;align-items:center;gap:13px;border:1px solid #e9edf0;border-radius:11px;padding:11px 13px;background:#fff;flex-wrap:wrap}
+.return-line.spent,.return-line.quiet{opacity:.62}
+.return-line-info{flex:1;min-width:200px;display:flex;flex-direction:column;gap:3px}
+.return-line-info b{font-size:12px}
+.return-line-refund{font-size:12px;color:#8a4a20;white-space:nowrap}
+html.dark .return-line{background:#151d23;border-color:#263040}
+.qty-stepper{display:flex;align-items:center;gap:6px}
+.qty-stepper button{width:30px;height:30px;border:1px solid #d7ded9;border-radius:8px;background:#fff;font-size:15px;line-height:1;color:#4a5763;display:grid;place-items:center}
+.qty-stepper button:hover:not(:disabled){border-color:#8fbfa3;background:#f4faf6}
+.qty-stepper .chip{width:auto;padding:4px 11px;font-size:10px;height:30px}
+.qty-stepper input{width:64px;height:30px;text-align:center;border:1px solid #d7ded9;border-radius:8px;font-size:12px;background:#fff}
+.qty-stepper input::-webkit-outer-spin-button,.qty-stepper input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.qty-stepper input[type=number]{-moz-appearance:textfield}
+html.dark .qty-stepper button{background:#1b252c;border-color:#2c373e;color:#c0ccd1}
+html.dark .qty-stepper input{background:#10171c;border-color:#2a343b;color:var(--ink)}
+.return-summary{display:flex;align-items:center;gap:12px;flex-wrap:wrap;border:1px dashed #cfd9d2;border-radius:11px;padding:11px 14px;margin-top:13px;background:#f8fbf9}
+.return-summary>span{font-size:11px;color:#68766e}
+.return-summary>b{font-size:13px;color:#1f5b3a}
+.return-summary small{flex-basis:100%;font-size:10px}
+html.dark .return-summary{background:#10171c;border-color:#2a343b}
+html.dark .return-summary>b{color:#8fd0ac}
+/* network tab */
+.network-urls{display:flex;flex-wrap:wrap;gap:7px;margin-top:7px}
+.network-urls code{border:1px solid #bcdcc9;border-radius:7px;padding:4px 9px;font-size:11px;background:#fff}
+.api-offline-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
