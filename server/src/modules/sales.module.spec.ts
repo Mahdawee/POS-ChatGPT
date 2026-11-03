@@ -219,9 +219,11 @@ function returnSetup(sale: typeof saleFixture = saleFixture) {
     saleReturn: { create: jest.fn().mockImplementation(({ data }: { data: { total: number; returnNo: string } }) => Promise.resolve({ id: "return-1", ...data })) },
     customerWalletTxn: { create: jest.fn().mockResolvedValue({}) },
     customer: { update: jest.fn().mockResolvedValue({}) },
-    cashSession: { findFirst: jest.fn().mockResolvedValue({ id: "cash-1" }) },
+    cashSession: { findFirst: jest.fn().mockResolvedValue({ id: "cash-1" }), findUnique: jest.fn().mockResolvedValue(null) },
     cashMovement: { create: jest.fn().mockResolvedValue({}) },
     inventoryMovement: { create: jest.fn().mockResolvedValue({}) },
+    serialUnit: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn().mockResolvedValue({}) },
+    bundleComponent: { findMany: jest.fn().mockResolvedValue([]) },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
   };
   const prisma = { $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)) };
@@ -302,6 +304,51 @@ describe("Sale returns", () => {
     expect(tx.customerWalletTxn.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "REFUND", amount: 10 }) }));
     expect(tx.customer.update).toHaveBeenCalledWith({ where: { id: "customer-1" }, data: { walletBalance: { increment: 10 } } });
     expect(tx.cashMovement.create).not.toHaveBeenCalled();
+  });
+
+  it("flips a named serial back to IN_STOCK when a serialized line is returned", async () => {
+    const sale = { ...saleFixture, items: [{ ...saleFixture.items[0], productId: "phone-1", name: "گوشی", quantity: 2 }] };
+    const { controller, tx } = returnSetup(sale as never);
+    tx.product.findMany.mockResolvedValue([{ ...product, id: "phone-1", name: "گوشی", isSerialized: true, stock: 0 }]);
+    tx.serialUnit.findMany.mockResolvedValue([{ serial: "IMEI-1", productId: "phone-1", status: "SOLD", saleItemId: "item-1" }]);
+    await controller.returnSale("sale-1", { items: [{ productId: "phone-1", quantity: 1, serials: ["IMEI-1"] }] }, admin);
+    expect(tx.serialUnit.update).toHaveBeenCalledWith({ where: { serial: "IMEI-1" }, data: expect.objectContaining({ status: "IN_STOCK", saleItemId: null }) });
+  });
+
+  it("returns a kit's serialized components through the serials on the bundle line", async () => {
+    const sale = { ...saleFixture, items: [{ ...saleFixture.items[0], productId: "bundle-1", name: "بستهٔ گوشی", quantity: 1 }] };
+    const { controller, tx } = returnSetup(sale as never);
+    const phone = { ...product, id: "phone-1", name: "گوشی", isSerialized: true, stock: 0 };
+    tx.product.findMany.mockResolvedValue([{ ...product, id: "bundle-1", name: "بستهٔ گوشی", isBundle: true, stock: 0 }]);
+    tx.bundleComponent.findMany.mockResolvedValue([{ bundleId: "bundle-1", componentId: "phone-1", quantity: 1, component: phone }]);
+    tx.serialUnit.findMany.mockResolvedValue([{ serial: "IMEI-1", productId: "phone-1", status: "SOLD", saleItemId: "item-1" }]);
+    await controller.returnSale("sale-1", { items: [{ productId: "bundle-1", quantity: 1, serials: ["IMEI-1"] }] }, admin);
+    // The component comes back to the shelf…
+    expect(tx.product.update).toHaveBeenCalledWith({ where: { id: "phone-1" }, data: { stock: { increment: 1 } } });
+    // …and its serial is sellable again instead of stranded as SOLD.
+    expect(tx.serialUnit.update).toHaveBeenCalledWith({ where: { serial: "IMEI-1" }, data: expect.objectContaining({ status: "IN_STOCK" }) });
+  });
+
+  it("refuses a kit return that does not name the components' serials", async () => {
+    const sale = { ...saleFixture, items: [{ ...saleFixture.items[0], productId: "bundle-1", name: "بستهٔ گوشی", quantity: 1 }] };
+    const { controller, tx } = returnSetup(sale as never);
+    const phone = { ...product, id: "phone-1", name: "گوشی", isSerialized: true, stock: 0 };
+    tx.product.findMany.mockResolvedValue([{ ...product, id: "bundle-1", name: "بستهٔ گوشی", isBundle: true, stock: 0 }]);
+    tx.bundleComponent.findMany.mockResolvedValue([{ bundleId: "bundle-1", componentId: "phone-1", quantity: 1, component: phone }]);
+    await expect(controller.returnSale("sale-1", { items: [{ productId: "bundle-1", quantity: 1 }] }, admin)).rejects.toThrow(/اجزای سریال‌دار هر بسته را وارد کنید/);
+    expect(tx.product.update).not.toHaveBeenCalled();
+    expect(tx.serialUnit.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses a kit return serial belonging to a product outside the kit", async () => {
+    const sale = { ...saleFixture, items: [{ ...saleFixture.items[0], productId: "bundle-1", name: "بستهٔ گوشی", quantity: 1 }] };
+    const { controller, tx } = returnSetup(sale as never);
+    const phone = { ...product, id: "phone-1", name: "گوشی", isSerialized: true, stock: 0 };
+    tx.product.findMany.mockResolvedValue([{ ...product, id: "bundle-1", name: "بستهٔ گوشی", isBundle: true, stock: 0 }]);
+    tx.bundleComponent.findMany.mockResolvedValue([{ bundleId: "bundle-1", componentId: "phone-1", quantity: 1, component: phone }]);
+    tx.serialUnit.findMany.mockResolvedValue([{ serial: "IMEI-9", productId: "other-1", status: "SOLD", saleItemId: "item-1" }]);
+    await expect(controller.returnSale("sale-1", { items: [{ productId: "bundle-1", quantity: 1, serials: ["IMEI-9"] }] }, admin)).rejects.toThrow(/برای اجزای بستهٔ/);
+    expect(tx.serialUnit.update).not.toHaveBeenCalled();
   });
 
   it("relieves a partial return of a full-credit sale at the returned line value", async () => {

@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Module, Param, Post } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Module, Param, Post, Query } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
 import { CurrentUser, SessionUser } from "../auth";
 import { QuoteDto , ConvertQuoteDto } from "../dto";
@@ -15,9 +15,14 @@ export class QuotesController {
   constructor(private readonly prisma: PrismaService, private readonly checkoutService: CheckoutService) {}
 
   @Get()
-  list() {
+  list(@Query("skip") skip?: string, @Query("take") take?: string) {
+    // Windowed like sales/purchases, so quotes beyond the first page stay
+    // reachable through "load more" instead of disappearing.
+    const limit = Math.min(300, Math.max(1, Number(take) || 100));
+    const offset = Math.max(0, Number(skip) || 0);
     return this.prisma.quote.findMany({
-      take: 100,
+      skip: offset,
+      take: limit,
       include: { customer: { select: { id: true, name: true } }, _count: { select: { items: true } } },
       orderBy: { createdAt: "desc" },
     });

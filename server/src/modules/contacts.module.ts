@@ -47,7 +47,11 @@ export class CustomersController {
         const session = await tx.cashSession.findFirst({ where: { status: "OPEN" }, orderBy: { openedAt: "desc" } });
         if (!session) throw new BadRequestException("صندوق باز وجود ندارد.");
         cashSessionId = session.id;
-        await tx.cashMovement.create({ data: { type: "OUT", amount: dto.amount, description: `شارژ کیف پول ${customer.name}`, cashSessionId: session.id } });
+        // The customer hands cash OVER and receives wallet credit: money
+        // enters the drawer (IN), exactly like an installment collection.
+        // Booking it as OUT used to shrink the expected cash and surface a
+        // false surplus on every Z-report.
+        await tx.cashMovement.create({ data: { type: "IN", amount: dto.amount, description: `شارژ کیف پول ${customer.name}`, cashSessionId: session.id } });
       }
       const updated = await tx.customer.update({ where: { id }, data: { walletBalance: { increment: dto.amount } } });
       const txn = await tx.customerWalletTxn.create({ data: { customerId: id, type: "CHARGE", amount: dto.amount, note: dto.note?.trim(), cashSessionId, userId: user.id } });

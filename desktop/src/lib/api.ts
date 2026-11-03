@@ -70,7 +70,7 @@ export type Product = { id: string; sku: string; barcode: string | null; name: s
 export type Contact = { id: string; name: string; phone: string | null; address: string | null; note: string | null; balance?: number; creditLimit?: number; walletBalance?: number; tier?: "RETAIL" | "WHOLESALE" };
 export type SaleItem = { id: string; name: string; sku: string; quantity: number; unitPrice: number; lineTotal: number; productId: string; discount?: number };
 export type SaleReturnItem = { id: string; productId: string; name: string; sku: string; quantity: number; unitPrice: number; lineTotal: number };
-export type SaleReturn = { id: string; returnNo: string; total: number; creditRelief?: number; cashAmount?: number; note: string | null; createdAt: string; user?: { displayName: string }; items?: SaleReturnItem[] };
+export type SaleReturn = { id: string; returnNo: string; total: number; creditRelief?: number; cashAmount?: number; walletRefund?: number; note: string | null; createdAt: string; user?: { displayName: string }; items?: SaleReturnItem[] };
 export type Sale = { id: string; receiptNo: string; invoiceNo?: string | null; subtotal: number; discount: number; total: number; amountPaid: number; change: number; cashPart?: number; mobilePart?: number; creditPart?: number; walletPart?: number; paymentMethod: "CASH" | "MOBILE" | "CREDIT" | "WALLET"; createdAt: string; customer?: Contact | null; user?: { displayName: string }; items: SaleItem[]; returns?: SaleReturn[] };
 export type PurchaseItem = { id: string; productId: string; name: string; sku: string; quantity: number; unitCost: number; lineTotal: number; expiryDate?: string | null };
 export type Purchase = { id: string; invoiceNo: string | null; note: string | null; total: number; paidAmount: number; createdAt: string; supplier?: Contact | null; user?: { displayName: string }; items: PurchaseItem[] };
@@ -117,7 +117,7 @@ export type CashSession = { id: string; status: "OPEN" | "CLOSED"; openingCash: 
 /** End-of-shift (Z) report returned when a cash session is closed. */
 export type ZReport = {
   sessionId: string; cashier: string; openedAt: string; closedAt: string;
-  openingCash: number; cashIn: number; cashOut: number; cashSales: number; mobileSales: number; creditSales: number;
+  openingCash: number; cashIn: number; cashOut: number; cashSales: number; mobileSales: number; creditSales: number; walletSales: number; mobileRefunds?: number;
   invoiceCount: number; returnsTotal: number; expected: number; counted: number; difference: number;
 };
 export type ProductImportResult = { created: number; updated: number; errors: Array<{ row: number; message: string }> };

@@ -87,20 +87,48 @@ export class SalesController {
       const walletRefund = Math.min(total - cashAmount, walletLeft);
       const products = await tx.product.findMany({ where: { id: { in: lines.map((line) => line.productId) } } });
       const productMap = new Map(products.map((product) => [product.id, product]));
-      // Serialized goods: the exact units coming back must be named.
+      // Serialized goods — and kits carrying serialized components: the exact
+      // units coming back must be named, or the serial list starts lying.
+      const saleItemIds = new Set(sale.items.map((item) => item.id));
       for (const line of lines) {
         const product = productMap.get(line.productId);
-        if (!product || !product.isSerialized) continue;
-        const serials = serialsByProduct.get(line.productId) || [];
-        if (!serials.length || serials.length !== Math.round(line.quantity)) throw new BadRequestException(`برای برگشت «${line.name}» شمارهٔ سریال هر دستگاه را وارد کنید (${Math.round(line.quantity)} عدد).`);
-        if (new Set(serials).size !== serials.length) throw new BadRequestException(`سریال تکراری در برگشت «${line.name}» هست؛ هر دستگاه را یک بار وارد کنید.`);
-        const saleItemIds = new Set(sale.items.map((item) => item.id));
-        const units = await tx.serialUnit.findMany({ where: { serial: { in: serials } } });
-        const unitMap = new Map(units.map((unit) => [unit.serial, unit]));
-        for (const serial of serials) {
-          const unit = unitMap.get(serial);
-          if (!unit || !unit.saleItemId || !saleItemIds.has(unit.saleItemId)) throw new BadRequestException(`سریال ${serial} در فاکتور اصلی نیست.`);
-          if (unit.status !== "SOLD") throw new BadRequestException(`سریال ${serial} قبلاً برگشت داده شده است.`);
+        if (!product) continue;
+        const serials = (serialsByProduct.get(line.productId) || []).map((value) => value.trim()).filter(Boolean);
+        if (product.isSerialized) {
+          if (!serials.length || serials.length !== Math.round(line.quantity)) throw new BadRequestException(`برای برگشت «${line.name}» شمارهٔ سریال هر دستگاه را وارد کنید (${Math.round(line.quantity)} عدد).`);
+          if (new Set(serials).size !== serials.length) throw new BadRequestException(`سریال تکراری در برگشت «${line.name}» هست؛ هر دستگاه را یک بار وارد کنید.`);
+          const units = await tx.serialUnit.findMany({ where: { serial: { in: serials } } });
+          const unitMap = new Map(units.map((unit) => [unit.serial, unit]));
+          for (const serial of serials) {
+            const unit = unitMap.get(serial);
+            if (!unit || !unit.saleItemId || !saleItemIds.has(unit.saleItemId)) throw new BadRequestException(`سریال ${serial} در فاکتور اصلی نیست.`);
+            if (unit.status !== "SOLD") throw new BadRequestException(`سریال ${serial} قبلاً برگشت داده شده است.`);
+          }
+        } else if (product.isBundle) {
+          // A returned kit brings its serialized components home: their units
+          // were SOLD against this invoice's bundle line and must flip back,
+          // otherwise the device sits on the shelf as unsellable forever.
+          const rows = await tx.bundleComponent.findMany({ where: { bundleId: line.productId }, include: { component: true } });
+          const serializedParts = rows.filter((row) => row.component.isSerialized).map((row) => ({ id: row.component.id, name: row.component.name, quantity: row.quantity * line.quantity }));
+          if (!serializedParts.length) continue;
+          const needed = serializedParts.reduce((sum, part) => sum + part.quantity, 0);
+          if (!serials.length) throw new BadRequestException(`برای برگشت «${line.name}» شمارهٔ سریال/IMEI اجزای سریال‌دار هر بسته را وارد کنید (${needed} عدد).`);
+          if (new Set(serials).size !== serials.length) throw new BadRequestException(`سریال تکراری در برگشت «${line.name}» هست؛ هر دستگاه را یک بار وارد کنید.`);
+          const units = await tx.serialUnit.findMany({ where: { serial: { in: serials } } });
+          const unitMap = new Map(units.map((unit) => [unit.serial, unit]));
+          const perComponent = new Map<string, number>();
+          for (const serial of serials) {
+            const unit = unitMap.get(serial);
+            const part = unit ? serializedParts.find((row) => row.id === unit.productId) : undefined;
+            if (!unit || !part) throw new BadRequestException(`سریال ${serial} برای اجزای بستهٔ «${line.name}» ثبت نشده است.`);
+            if (!unit.saleItemId || !saleItemIds.has(unit.saleItemId)) throw new BadRequestException(`سریال ${serial} در فاکتور اصلی نیست.`);
+            if (unit.status !== "SOLD") throw new BadRequestException(`سریال ${serial} قبلاً برگشت داده شده است.`);
+            perComponent.set(unit.productId, (perComponent.get(unit.productId) || 0) + 1);
+          }
+          for (const part of serializedParts) {
+            const have = perComponent.get(part.id) || 0;
+            if (have !== part.quantity) throw new BadRequestException(`برای جزء «${part.name}» از بستهٔ «${line.name}» دقیقاً ${part.quantity} سریال لازم است (${have} عدد وارد شد).`);
+          }
         }
       }
       const returnNo = `RET-${Date.now()}-${randomBytes(2).toString("hex").toUpperCase()}`;
@@ -129,8 +157,9 @@ export class SalesController {
         } else {
           await restock(product, line.quantity, "برگشت از فروش");
         }
-        // Tracked units re-enter sellable stock.
-        for (const serial of serialsByProduct.get(line.productId) || []) {
+        // Tracked units re-enter sellable stock (kit lines carry the
+        // serials of their serialized components on the bundle line).
+        for (const serial of (serialsByProduct.get(line.productId) || []).map((value) => value.trim()).filter(Boolean)) {
           await tx.serialUnit.update({ where: { serial }, data: { status: "IN_STOCK", saleItemId: null, updatedAt: new Date(), note: `برگشت ${returnNo}` } });
         }
       }
@@ -140,9 +169,13 @@ export class SalesController {
         await tx.customerWalletTxn.create({ data: { customerId: sale.customerId, type: "REFUND", amount: walletRefund, note: `برگشت فاکتور ${sale.receiptNo}`, saleId: sale.id, userId: user.id } });
       }
       // Cash refunds leave the register when a shift is still open; refunds
-      // on closed shifts (or non-cash sales) stay bookkeeping-only.
+      // on closed shifts (or non-cash sales) stay bookkeeping-only. The OUT
+      // movement belongs to the register the invoice was rung up on when that
+      // shift is still open — only otherwise does the currently open one
+      // take it, so a multi-register shop's Z-reports stay attributable.
       if (cashAmount > 0) {
-        const session = await tx.cashSession.findFirst({ where: { status: "OPEN" }, orderBy: { openedAt: "desc" } });
+        const original = sale.cashSessionId ? await tx.cashSession.findUnique({ where: { id: sale.cashSessionId } }) : null;
+        const session = original?.status === "OPEN" ? original : await tx.cashSession.findFirst({ where: { status: "OPEN" }, orderBy: { openedAt: "desc" } });
         if (session) await tx.cashMovement.create({ data: { type: "OUT", amount: cashAmount, description: `برگشت فاکتور ${sale.receiptNo}`, cashSessionId: session.id } });
       }
       await tx.auditLog.create({ data: { actor: user.username, action: "SALE_RETURN", entity: "Sale", entityId: sale.id, detail: `${returnNo} / ${total}` } });

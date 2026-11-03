@@ -14,11 +14,11 @@ function setup() {
     sale: {
       findMany: jest.fn().mockImplementation(({ where }: { where?: { createdAt?: { gte?: Date; lte?: Date } } }) =>
         Promise.resolve(allSales.filter((sale) => (!where?.createdAt?.gte || sale.createdAt >= where.createdAt.gte) && (!where?.createdAt?.lte || sale.createdAt <= where.createdAt.lte)))),
-      aggregate: jest.fn().mockResolvedValue({ _sum: { cashPart: 40, mobilePart: 0, creditPart: 15 } }),
+      aggregate: jest.fn().mockResolvedValue({ _sum: { cashPart: 40, mobilePart: 0, creditPart: 15, walletPart: 0 } }),
     },
     saleReturn: {
       findMany: jest.fn().mockResolvedValue([
-        { id: "return-1", total: 10, creditRelief: 0, createdAt: day("02"), items: [{ productId: "p1", name: "چای", quantity: 1, unitPrice: 10, unitCost: 6, lineTotal: 10 }] },
+        { id: "return-1", total: 10, creditRelief: 0, cashAmount: 10, walletRefund: 0, userId: "user-2", createdAt: day("02"), sale: { cashSessionId: "session-2" }, items: [{ productId: "p1", name: "چای", quantity: 1, unitPrice: 10, unitCost: 6, lineTotal: 10, product: { category: { name: "نوشیدنی" } } }] },
       ]),
     },
     purchase: { aggregate: jest.fn().mockResolvedValue({ _sum: { total: 120 } }) },
@@ -59,19 +59,27 @@ describe("Profit report", () => {
       { method: "CASH", total: 40 },
       { method: "MOBILE", total: 0 },
       { method: "CREDIT", total: 15 },
+      { method: "WALLET", total: 0 },
     ]);
   });
 
-  it("breaks revenue down per cashier and per register shift", async () => {
+  it("breaks revenue down per cashier and per register shift, with returns walked back", async () => {
     const { controller } = setup();
     const report = await controller.profit("2026-11-01", "2026-11-30");
+    // The return was processed by user-2 on session-2: their slices carry it.
     expect(report.byUser).toEqual([
       { userId: "user-1", cashier: "ادمین", revenue: 40, profit: 16, count: 1 },
-      { userId: "user-2", cashier: "صندوقدار", revenue: 15, profit: 9, count: 1 },
+      { userId: "user-2", cashier: "صندوقدار", revenue: 5, profit: 5, count: 1 },
     ]);
     expect(report.bySession).toEqual([
-      { sessionId: "session-2", cashier: "صندوقدار", openedAt: day("02"), closedAt: null, revenue: 15, count: 1 },
+      { sessionId: "session-2", cashier: "صندوقدار", openedAt: day("02"), closedAt: null, revenue: 5, count: 1 },
       { sessionId: "session-1", cashier: "ادمین", openedAt: day("01"), closedAt: day("01"), revenue: 40, count: 1 },
+    ]);
+    // Hourly and category views net the refund out too.
+    expect(report.byHour).toEqual([{ hour: 10, revenue: 45, count: 2 }]);
+    expect(report.byCategory).toEqual([
+      { category: "نوشیدنی", revenue: 25, profit: 13, quantity: 2 },
+      { category: "خواربار", revenue: 20, profit: 8, quantity: 1 },
     ]);
   });
 
@@ -102,6 +110,22 @@ function debtorsSetup() {
 }
 
 describe("Debtors report", () => {
+  it("does not let an advance payment eat a LATER invoice in the aging buckets", async () => {
+    const { controller, prisma } = debtorsSetup();
+    // 200 paid on 01-Nov (an advance), the 500 credit sale happens on 05-Nov.
+    prisma.sale.findMany.mockResolvedValue([{ customerId: "c1", createdAt: day("05"), creditPart: 500 }]);
+    prisma.saleReturn.findMany.mockResolvedValue([]);
+    prisma.customerPayment.findMany.mockResolvedValue([{ customerId: "c1", amount: 200, createdAt: day("01") }]);
+    prisma.sale.groupBy.mockResolvedValue([{ customerId: "c1", _sum: { creditPart: 500 } }]);
+    prisma.customerPayment.groupBy.mockResolvedValue([{ customerId: "c1", _sum: { amount: 200 } }]);
+    const report = await controller.debtors();
+    // Balance nets the advance (300), but the aging report must show the
+    // invoice itself still open (500) — it did not exist when the money came.
+    expect(report.customers[0].balance).toBe(300);
+    expect(report.customers[0].aging.d30).toBe(500);
+    expect(report.customers[0].aging.d30 + report.customers[0].aging.d60 + report.customers[0].aging.older).toBe(500);
+  });
+
   it("lists only customers and suppliers with a positive balance, sorted by debt", async () => {
     const { controller } = debtorsSetup();
     const report = await controller.debtors();

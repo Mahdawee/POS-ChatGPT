@@ -40,3 +40,30 @@ describe("Products page endpoint", () => {
     expect(where.OR).toEqual([{ name: { contains: "شکر" } }, { sku: { contains: "شکر" } }, { barcode: { contains: "شکر" } }]);
   });
 });
+
+describe("Product update — bundle flip", () => {
+  function flipSetup(stored: { isBundle: boolean; isSerialized: boolean }) {
+    const tx = {
+      bundleComponent: { deleteMany: jest.fn().mockResolvedValue({ count: 2 }) },
+      product: { update: jest.fn().mockResolvedValue({ id: "p1", sku: "S-1" }) },
+    };
+    const prisma = {
+      product: { findUnique: jest.fn().mockResolvedValue({ isBundle: stored.isBundle, isSerialized: stored.isSerialized }) },
+      $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)),
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    return { controller: new ProductsController(prisma as never), tx };
+  }
+
+  it("drops the stale BOM when a kit is turned back into a plain product", async () => {
+    const { controller, tx } = flipSetup({ isBundle: true, isSerialized: false });
+    await controller.update("p1", { name: "کالا", sku: "S-1", unit: "عدد", price: 10, isBundle: false } as never);
+    expect(tx.bundleComponent.deleteMany).toHaveBeenCalledWith({ where: { bundleId: "p1" } });
+  });
+
+  it("keeps the BOM when the bundle flag stays on", async () => {
+    const { controller, tx } = flipSetup({ isBundle: true, isSerialized: false });
+    await controller.update("p1", { name: "کالا", sku: "S-1", unit: "عدد", price: 10 } as never);
+    expect(tx.bundleComponent.deleteMany).not.toHaveBeenCalled();
+  });
+});

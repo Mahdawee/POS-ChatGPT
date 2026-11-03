@@ -55,10 +55,12 @@ export class OrdersController {
   }
 
   @Get()
-  list(@Query("status") status?: string) {
+  list(@Query("status") status?: string, @Query("skip") skip?: string, @Query("take") take?: string) {
     const where: { status?: string } = {};
     if (status === "OPEN" || status === "FULFILLED" || status === "CANCELLED") where.status = status;
-    return this.prisma.customerOrder.findMany({ where, include: { lines: true, customer: { select: { id: true, name: true, phone: true } } }, orderBy: { createdAt: "desc" }, take: 200 });
+    const limit = Math.min(300, Math.max(1, Number(take) || 100));
+    const offset = Math.max(0, Number(skip) || 0);
+    return this.prisma.customerOrder.findMany({ where, skip: offset, take: limit, include: { lines: true, customer: { select: { id: true, name: true, phone: true } } }, orderBy: { createdAt: "desc" } });
   }
 
   @Get(":id")

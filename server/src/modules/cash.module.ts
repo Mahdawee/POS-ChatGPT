@@ -57,8 +57,8 @@ class CashController {
       const [cashIn, cashOut, partsAgg, returnsAgg, invoiceCount] = await Promise.all([
         tx.cashMovement.aggregate({ where: { cashSessionId: session.id, type: "IN" }, _sum: { amount: true } }),
         tx.cashMovement.aggregate({ where: { cashSessionId: session.id, type: "OUT" }, _sum: { amount: true } }),
-        tx.sale.aggregate({ _sum: { cashPart: true, mobilePart: true, creditPart: true }, where: { cashSessionId: session.id } }),
-        tx.saleReturn.aggregate({ _sum: { total: true, creditRelief: true }, where: { sale: { cashSessionId: session.id } } }),
+        tx.sale.aggregate({ _sum: { cashPart: true, mobilePart: true, creditPart: true, walletPart: true }, where: { cashSessionId: session.id } }),
+        tx.saleReturn.aggregate({ _sum: { total: true, creditRelief: true, cashAmount: true, walletRefund: true }, where: { sale: { cashSessionId: session.id } } }),
         tx.sale.count({ where: { cashSessionId: session.id } }),
       ]);
       const expected = session.openingCash + (cashIn._sum.amount || 0) - (cashOut._sum.amount || 0) + (partsAgg._sum.cashPart || 0);
@@ -86,8 +86,13 @@ class CashController {
         cashSales: partsAgg._sum.cashPart || 0,
         mobileSales: partsAgg._sum.mobilePart || 0,
         creditSales: partsAgg._sum.creditPart || 0,
+        walletSales: partsAgg._sum.walletPart || 0,
         invoiceCount,
         returnsTotal: (returnsAgg._sum.total || 0) + (returnsAgg._sum.creditRelief || 0),
+        // Refunds that went back over mobile money: total minus the parts
+        // that left the drawer or returned to the wallet. Tracked so the
+        // settlement stays visible instead of vanishing from the books.
+        mobileRefunds: Math.max(0, (returnsAgg._sum.total || 0) - (returnsAgg._sum.cashAmount || 0) - (returnsAgg._sum.walletRefund || 0)),
         expected,
         counted: dto.countedCash,
         difference: dto.countedCash - expected,

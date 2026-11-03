@@ -185,7 +185,7 @@ export function OrdersPage({ notify }: { notify: Notify }) {
   const [deliveries, setDeliveries] = useState<Record<string, { quantity: number; serials: string }>>({});
   const [payment, setPayment] = useState<"CASH" | "CREDIT" | "MOBILE" | "WALLET">("CASH");
   const [busy, setBusy] = useState(false);
-  const load = () => get<CustomerOrder[]>(`/orders?status=${status}`).then(setOrders).catch((e) => setError(e.message));
+  const load = (skip = 0) => get<CustomerOrder[]>(`/orders?status=${status}&skip=${skip}&take=100`).then((rows) => setOrders((current) => skip === 0 ? rows : [...current, ...rows])).catch((e) => setError(e.message));
   useEffect(() => { void load(); }, [status]);
   useEffect(() => { get<Product[]>("/products").then(setProducts).catch(() => undefined); get<Contact[]>("/customers").then(setCustomers).catch(() => undefined); }, []);
   useEffect(() => { void load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -242,7 +242,7 @@ export function OrdersPage({ notify }: { notify: Notify }) {
           <td className="muted">{dateTime(order.createdAt)}</td>
           <td>{order.status === "OPEN" && <div className="row-actions"><button className="text-button" onClick={() => openDeliver(order)}><PackageCheck size={14}/>{t("تحویل")}</button><button className="text-button danger-text" onClick={() => void cancel(order)}><X size={14}/>{t("لغو")}</button></div>}</td>
         </tr>)}</tbody>
-      </table>{!orders.length && <div className="empty"><b>{t("سفارشی نیست")}</b><span>{t("سفارش‌های رزروشدهٔ مشتری‌ها در اینجا دیده می‌شوند.")}</span></div>}</div>
+      </table>{!orders.length && <div className="empty"><b>{t("سفارشی نیست")}</b><span>{t("سفارش‌های رزروشدهٔ مشتری‌ها در اینجا دیده می‌شوند.")}</span></div>}{orders.length >= 100 && <div className="load-more"><button className="secondary-button" onClick={() => void load(orders.length)}>{t("نمایش سفارش‌های بیشتر")}</button><small className="muted">{t("{count} سفارش بارگذاری شد", { count: String(orders.length) })}</small></div>}</div>
     </section>
     {show && <Modal title={t("ثبت سفارش مشتری")} onClose={() => setShow(false)} wide>
       <form className="form-grid" onSubmit={createOrder}>
@@ -250,7 +250,7 @@ export function OrdersPage({ notify }: { notify: Notify }) {
         <label className="field full"><span>{t("یادداشت")}</span><input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder={t("اختیاری")}/></label>
         {form.lines.map((line, index) => <div className="bundle-row full" key={index}>
           <select value={line.productId} onChange={(e) => setForm({ ...form, lines: form.lines.map((row, i) => i === index ? { ...row, productId: e.target.value } : row) })}><option value="">{t("انتخاب کالا…")}</option>{products.filter((p) => !p.isBundle).map((p) => <option key={p.id} value={p.id}>{p.name} — {t("آزاد")}: {p.stock - (p.reserved || 0)}</option>)}</select>
-          <input type="number" min="0.001" step="0.001" dir="ltr" value={line.quantity} onChange={(e) => setForm({ ...form, lines: form.lines.map((row, i) => i === index ? { ...row, quantity: numberValue(e) } : row) })}/>
+          <input type="number" min="0.001" step={products.find((p) => p.id === line.productId)?.isWeighted ? 0.001 : 1} dir="ltr" value={line.quantity} onChange={(e) => setForm({ ...form, lines: form.lines.map((row, i) => i === index ? { ...row, quantity: numberValue(e) } : row) })}/>
           <button type="button" className="text-button danger-text" onClick={() => setForm({ ...form, lines: form.lines.length > 1 ? form.lines.filter((_, i) => i !== index) : form.lines })}><Trash2 size={15}/></button>
         </div>)}
         <div className="form-actions full">
@@ -269,7 +269,7 @@ export function OrdersPage({ notify }: { notify: Notify }) {
           return <div className="order-deliver-line full" key={line.id}>
             <b>{line.name}</b>
             <span className="muted">{t("سفارش: {qty} · تحویل‌شده: {done}", { qty: String(line.quantity), done: String(line.deliveredQty) })}</span>
-            <label className="compact-field"><span>{t("این بار تحویل")}</span><input type="number" min="0" max={max} step="0.001" dir="ltr" value={value.quantity} onChange={(e) => setDeliveries({ ...deliveries, [line.id]: { ...value, quantity: Math.min(max, Math.max(0, numberValue(e))) } })}/></label>
+            <label className="compact-field"><span>{t("این بار تحویل")}</span><input type="number" min="0" max={max} step={product?.isWeighted ? 0.001 : 1} dir="ltr" value={value.quantity} onChange={(e) => setDeliveries({ ...deliveries, [line.id]: { ...value, quantity: Math.min(max, Math.max(0, numberValue(e))) } })}/></label>
             {product?.isSerialized && value.quantity > 0 && <label className="compact-field full"><span>{t("سریال/IMEI هر دستگاه (هر خط یک عدد)")}</span><textarea rows={Math.max(2, Math.ceil(value.quantity))} dir="ltr" value={value.serials} onChange={(e) => setDeliveries({ ...deliveries, [line.id]: { ...value, serials: e.target.value } })}/></label>}
           </div>;
         })}
@@ -394,7 +394,7 @@ export function SerialsPanel({ products }: { products: Product[] }) {
   const [rows, setRows] = useState<SerialUnit[] | null>(null);
   // Returned units re-enter sellable stock (status IN_STOCK with a «برگشت …»
   // note), so there is no permanently-stranded RETURNED state to filter by.
-  const [statusFilter, setStatusFilter] = useState<"IN_STOCK" | "SOLD">("IN_STOCK");
+  const [statusFilter, setStatusFilter] = useState<"IN_STOCK" | "SOLD" | "RETURNED">("IN_STOCK");
   const serialized = products.filter((p) => p.isSerialized);
   useEffect(() => {
     if (!productId) { setRows(null); return; }
@@ -405,7 +405,7 @@ export function SerialsPanel({ products }: { products: Product[] }) {
     <div className="toolbar"><Smartphone size={17}/><b>{t("سریال / IMEI")}</b>
       <select value={productId} onChange={(e) => setProductId(e.target.value)}><option value="">{t("انتخاب کالا…")}</option>{serialized.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
       <div className="grow"/>
-      {(["IN_STOCK", "SOLD"] as const).map((value) => <button key={value} className={`chip ${statusFilter === value ? "active" : ""}`} onClick={() => setStatusFilter(value)}>{statusLabel(value)}</button>)}
+      {(["IN_STOCK", "SOLD", "RETURNED"] as const).map((value) => <button key={value} className={`chip ${statusFilter === value ? "active" : ""}`} onClick={() => setStatusFilter(value)}>{statusLabel(value)}</button>)}
     </div>
     {productId && rows && (rows.length ? <div className="table-wrap"><table>
       <thead><tr><th>{t("سریال")}</th><th>{t("وضعیت")}</th><th>{t("یادداشت")}</th><th>{t("زمان ثبت")}</th></tr></thead>

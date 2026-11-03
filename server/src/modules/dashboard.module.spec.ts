@@ -78,3 +78,19 @@ describe("Dashboard summary — lastBackupAt", () => {
     expect(summary.lastBackupAt).toBeNull();
   });
 });
+
+describe("Dashboard summary — low stock", () => {
+  it("excludes bundles (their stock is always 0) and carries the unit", async () => {
+    const { controller, prisma } = setup(null);
+    (prisma.$queryRaw as jest.Mock).mockImplementation((query: unknown) => {
+      const sql = String(query);
+      if (sql.includes("stock <= minStock")) return Promise.resolve([{ id: "p1", name: "چای", sku: "T-1", unit: "بسته", stock: 2, minStock: 5 }]);
+      return Promise.resolve([]);
+    });
+    const summary = await controller.summary();
+    expect(summary.lowStock).toEqual([{ id: "p1", name: "چای", sku: "T-1", unit: "بسته", stock: 2, minStock: 5 }]);
+    const lowStockSql = (prisma.$queryRaw as jest.Mock).mock.calls.map((call) => String(call[0])).find((sql) => sql.includes("stock <= minStock"));
+    expect(lowStockSql).toContain("isBundle = 0");
+    expect(lowStockSql).toContain("unit");
+  });
+});

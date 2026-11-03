@@ -78,7 +78,12 @@ export class ProductsController {
     const stored = await this.prisma.product.findUnique({ where: { id }, select: { isBundle: true, isSerialized: true } });
     if (!stored) throw new NotFoundException("کالا پیدا نشد.");
     if ((fields.isBundle ?? stored.isBundle) && (fields.isSerialized ?? stored.isSerialized)) throw new BadRequestException("یک کالا نمی‌تواند هم‌زمان بسته و سریال‌دار باشد؛ بسته اجزایی ساده دارد.");
-    const item = await this.prisma.product.update({ where: { id }, data: {
+    // Turning a kit back into a plain product drops its BOM in the same
+    // transaction — stale rows would silently re-apply if it is ever flipped
+    // into a bundle again.
+    const item = await this.prisma.$transaction(async (tx) => {
+      if (stored.isBundle && fields.isBundle === false) await tx.bundleComponent.deleteMany({ where: { bundleId: id } });
+      return tx.product.update({ where: { id }, data: {
       ...fields,
       sku: fields.sku.trim(), barcode: fields.barcode?.trim() || null, name: fields.name.trim(), categoryId: fields.categoryId || null,
       // Same normalisation as create: an absent key leaves the date untouched,
@@ -87,6 +92,7 @@ export class ProductsController {
       // only by Prisma's good graces and could never clear a date.
       expiryDate: fields.expiryDate === undefined ? undefined : fields.expiryDate ? new Date(`${fields.expiryDate}T00:00:00.000Z`) : null,
     } }).catch((error) => { throw mapProductConflict(error); });
+    });
     await this.prisma.auditLog.create({ data: { action: "UPDATE", entity: "Product", entityId: id, detail: item.sku } });
     return item;
   }

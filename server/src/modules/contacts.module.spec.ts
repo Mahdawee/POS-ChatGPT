@@ -3,10 +3,11 @@ import { CustomersController, SuppliersController } from "./contacts.module";
 
 function setup() {
   const tx = {
-    customer: { findUnique: jest.fn().mockResolvedValue({ id: "customer-1", name: "احمد", isActive: true }) },
+    customer: { findUnique: jest.fn().mockResolvedValue({ id: "customer-1", name: "احمد", isActive: true }), update: jest.fn().mockResolvedValue({ walletBalance: 120 }) },
     cashSession: { findFirst: jest.fn().mockResolvedValue({ id: "cash-1" }) },
     cashMovement: { create: jest.fn().mockResolvedValue({}) },
     customerPayment: { create: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ id: "payment-1", ...data })) },
+    customerWalletTxn: { create: jest.fn().mockResolvedValue({ id: "txn-1" }) },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
   };
   const prisma = {
@@ -32,6 +33,15 @@ describe("Customer credit balances", () => {
     const zubeida = list.find((customer) => customer.id === "customer-2");
     expect(ahmad?.balance).toBe(250); // 500 - 100 - 150
     expect(zubeida?.balance).toBe(0); // no credit activity
+  });
+
+  it("books a fromCash wallet charge as money INTO the drawer (Z-report stays honest)", async () => {
+    const { controller, tx } = setup();
+    const user = { id: "user-1", username: "admin", displayName: "Admin", role: "ADMIN" as const };
+    await controller.chargeWallet("customer-1", { amount: 120, fromCash: true }, user);
+    // The customer hands cash over and receives credit: the drawer GAINS.
+    expect(tx.cashMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "IN", amount: 120, cashSessionId: "cash-1" }) }));
+    expect(tx.customer.update).toHaveBeenCalledWith({ where: { id: "customer-1" }, data: { walletBalance: { increment: 120 } } });
   });
 
   it("books a repayment as cash-in on the open session inside one transaction", async () => {

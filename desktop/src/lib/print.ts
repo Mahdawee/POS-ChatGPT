@@ -6,7 +6,7 @@ import type { CustomerDetail, ProfitReport, Product, PurchaseReturn, Sale, SaleR
 /** Escapes user data before it is embedded into the print document. */
 const esc = (value: unknown): string => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char] as string));
 
-const payLabel = (method: string) => ({ CASH: t("نقدی"), MOBILE: t("موبایلی"), CREDIT: t("نسیه") } as Record<string, string>)[method] || method;
+const payLabel = (method: string) => ({ CASH: t("نقدی"), MOBILE: t("موبایلی"), CREDIT: t("نسیه"), WALLET: t("کیف پول") } as Record<string, string>)[method] || method;
 
 const baseStyles = (width: string) => `
   @page { margin: ${width === "auto" ? "12mm" : "2mm"}; ${width === "auto" ? "size: A4;" : ""} }
@@ -98,7 +98,7 @@ function paymentQrSvg(shop: ShopSettings): string {
 export function textReceipt(sale: Sale, shop: ShopSettings): string {
   const line = (left: string, right: string) => `${left}${" ".repeat(Math.max(1, 40 - left.length - right.length))}${right}`;
   const rows: string[] = [];
-  rows.push(shop.shopName?.trim() || "ROSHAN");
+  rows.push(shop.shopName?.trim() || t("فروشگاه"));
   rows.push("=".repeat(40));
   rows.push(line(t("رسید فروش"), sale.receiptNo));
   rows.push(line(t("زمان"), new Date(sale.createdAt).toLocaleString("en-GB")));
@@ -120,7 +120,7 @@ export function invoiceHtml(sale: Sale, shop: ShopSettings): string {
   const rows = sale.items.map((item, index) => `<tr><td class="num">${index + 1}</td><td>${esc(item.name)}</td><td class="num">${item.quantity}</td><td class="num">${money(item.unitPrice)}</td><td class="num">${money(item.lineTotal)}</td></tr>`).join("");
   return `
     <div class="invoice-head">
-      <div>${shop.printLogo === "0" ? "" : shop.logo?.trim() ? `<img class="shop-logo" style="margin:0" src="${esc(shop.logo)}" alt=""/>` : ""}<div class="receipt-brand">ROSHAN</div><p class="shop-name">${esc(shop.shopName?.trim() || t("فروشگاه من"))}</p></div>
+      <div>${shop.printLogo === "0" ? "" : shop.logo?.trim() ? `<img class="shop-logo" style="margin:0" src="${esc(shop.logo)}" alt=""/>` : ""}<div class="receipt-brand">${esc(shop.shopName?.trim() || t("فروشگاه من"))}</div></div>
       <div class="invoice-party">
         <div><b>${esc(t("فاکتور فروش"))}</b></div>
         <div>${esc(t("شماره فاکتور"))}: <span class="num">${esc(sale.receiptNo)}</span></div>
@@ -175,7 +175,8 @@ function shopHeader(shop: ShopSettings): string {
   // The "printLogo" setting (saved from Settings) can turn the logo off for
   // receipts even when one is configured for the screen.
   const logo = shop.printLogo === "0" ? undefined : shop.logo?.trim();
-  return `${logo ? `<img class="shop-logo" src="${esc(logo)}" alt=""/>` : ""}<div class="receipt-brand">ROSHAN</div><p class="shop-name">${esc(shop.shopName?.trim() || t("فروشگاه من"))}</p>`;
+  // The brand line is the shop's own configured name — no hardcoded brand.
+  return `${logo ? `<img class="shop-logo" src="${esc(logo)}" alt=""/>` : ""}<div class="receipt-brand">${esc(shop.shopName?.trim() || t("فروشگاه من"))}</div>`;
 }
 
 /** receipt body shared by sale receipts and return slips */
@@ -213,6 +214,11 @@ export function returnSlipHtml(sale: Sale, record: SaleReturn, shop: ShopSetting
   ];
   const items = (record.items || []).map((item) => `<div class="receipt-item"><span>${esc(item.name)} × ${item.quantity}</span><b>${money(item.lineTotal)}</b></div>`);
   const totals: Array<[string, string, boolean?]> = [[t("مبلغ برگشتی"), money(record.total), true]];
+  // Refund channels, so money sent back over mobile money stays visible.
+  if (record.cashAmount) totals.push([t("بازپرداخت نقدی"), money(record.cashAmount)]);
+  if (record.walletRefund) totals.push([t("بازپرداخت به کیف پول"), money(record.walletRefund)]);
+  const mobilePart = Math.max(0, record.total - (record.cashAmount || 0) - (record.walletRefund || 0));
+  if (mobilePart > 0) totals.push([t("بازپرداخت موبایلی"), money(mobilePart)]);
   if (record.note) totals.push([t("یادداشت"), record.note]);
   return receiptShell(shop, meta, items, totals, t("برگشت کالا با این رسید ثبت شد"));
 }
@@ -227,8 +233,10 @@ export function zReportHtml(z: ZReport, shop: ShopSettings): string {
     [t("فروش نقدی"), money(z.cashSales)],
     [t("پرداخت موبایلی"), money(z.mobileSales)],
     [t("فروش نسیه"), money(z.creditSales)],
+    [t("فروش کیف پول"), money(z.walletSales || 0)],
     [t("تعداد فاکتور"), String(z.invoiceCount)],
     [t("برگشتی‌ها"), money(z.returnsTotal)],
+    ...(z.mobileRefunds ? [[t("برگشت موبایلی"), money(z.mobileRefunds)]] as Array<[string, string, boolean?]> : []),
     [t("ورودی نقدی دستی"), money(z.cashIn)],
     [t("خروجی نقدی دستی"), money(z.cashOut)],
     [t("مبلغ مورد انتظار"), money(z.expected), true],
@@ -279,9 +287,9 @@ export function debtReceiptHtml(detail: CustomerDetail, shop: ShopSettings, qrHt
   return receiptShell(shop, meta, items, totals, t("لطفاً مانده بدهی خود را در اولین فرصت تسویه کنید.")) + qrHtml;
 }
 
-export function reportHtml(report: ProfitReport): string {
+export function reportHtml(report: ProfitReport, shop: ShopSettings = {}): string {
   return `
-    <h1>ROSHAN · ${esc(t("گزارش سود و فروش"))}</h1>
+    <h1>${esc(shop.shopName?.trim() || t("فروشگاه من"))} · ${esc(t("گزارش سود و فروش"))}</h1>
     <p class="muted">${esc(t("بازه"))}: ${esc(report.from ? `${dayLabel(report.from.slice(0, 10))} — ${dayLabel(report.to.slice(0, 10))}` : "")}</p>
     <h2>${esc(t("خلاصهٔ دوره"))}</h2>
     <table>
@@ -299,10 +307,10 @@ export function reportHtml(report: ProfitReport): string {
     <p class="receipt-thanks muted">${esc(t("برای خروجی PDF، در پنجرهٔ چاپ گزینهٔ Microsoft Print to PDF را انتخاب کنید."))}</p>`;
 }
 
-export function debtorsHtml(data: { customers: Array<{ id: string; name: string; phone: string | null; balance: number }>; customersTotal: number; suppliers: Array<{ id: string; name: string; phone: string | null; balance: number }>; suppliersTotal: number }): string {
+export function debtorsHtml(data: { customers: Array<{ id: string; name: string; phone: string | null; balance: number }>; customersTotal: number; suppliers: Array<{ id: string; name: string; phone: string | null; balance: number }>; suppliersTotal: number }, shop: ShopSettings = {}): string {
   const row = (item: { name: string; phone: string | null; balance: number }) => `<tr><td>${esc(item.name)}</td><td class="num">${esc(item.phone || "—")}</td><td class="num">${money(item.balance)}</td></tr>`;
   return `
-    <h1>ROSHAN · ${esc(t("گزارش بدهی‌ها"))}</h1>
+    <h1>${esc(shop.shopName?.trim() || t("فروشگاه من"))} · ${esc(t("گزارش بدهی‌ها"))}</h1>
     <p class="muted">${esc(fullDate(new Date()))}</p>
     <h2>${esc(t("مشتریان بدهکار (نسیه)"))} — ${esc(t("جمع"))}: ${money(data.customersTotal)}</h2>
     <table><thead><tr><th>${esc(t("نام"))}</th><th>${esc(t("تماس"))}</th><th>${esc(t("مانده"))}</th></tr></thead>

@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Module, Param, Post } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Module, Param, Post, Query } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { CurrentUser, SessionUser } from "../auth";
 import { StocktakeDto } from "../dto";
@@ -14,9 +14,12 @@ export class StocktakesController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get()
-  list() {
+  list(@Query("skip") skip?: string, @Query("take") take?: string) {
+    const limit = Math.min(300, Math.max(1, Number(take) || 50));
+    const offset = Math.max(0, Number(skip) || 0);
     return this.prisma.stocktake.findMany({
-      take: 50,
+      skip: offset,
+      take: limit,
       include: { user: { select: { displayName: true } }, _count: { select: { lines: true } } },
       orderBy: { createdAt: "desc" },
     });

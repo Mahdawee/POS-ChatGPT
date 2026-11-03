@@ -48,7 +48,10 @@ export class DashboardController {
     const [sales, productCount, lowStock, expiring, recentSales, purchasesToday, returnsToday, creditSalesTotal, creditReturnsTotal, paymentsTotal, stockValue, chartSales, backroom, overdueInstallments, openOrders] = await Promise.all([
       this.prisma.sale.findMany({ where: { createdAt: { gte: start } }, select: { total: true } }),
       this.prisma.product.count({ where: { isActive: true } }),
-      this.prisma.$queryRaw<Array<{ id: string; name: string; sku: string; stock: number; minStock: number }>>`SELECT id, name, sku, stock, minStock FROM Product WHERE isActive = 1 AND stock <= minStock ORDER BY stock ASC LIMIT 8`,
+      // Bundles never carry their own stock (availability is built from their
+      // components), so a kit's permanent stock=0 must not light up the
+      // low-stock card. The unit travels along for an honest display.
+      this.prisma.$queryRaw<Array<{ id: string; name: string; sku: string; unit: string; stock: number; minStock: number }>>`SELECT id, name, sku, unit, stock, minStock FROM Product WHERE isActive = 1 AND isBundle = 0 AND stock <= minStock ORDER BY stock ASC LIMIT 8`,
       this.prisma.$queryRaw<Array<{ id: string; name: string; sku: string; expiryDate: string }>>`SELECT id, name, sku, expiryDate FROM Product WHERE isActive = 1 AND expiryDate IS NOT NULL AND expiryDate <= datetime('now', '+14 days') ORDER BY expiryDate ASC LIMIT 8`,
       this.prisma.sale.findMany({ take: 6, include: { customer: { select: { name: true } }, user: { select: { displayName: true } }, items: true }, orderBy: { createdAt: "desc" } }),
       this.prisma.purchase.aggregate({ _sum: { total: true }, where: { createdAt: { gte: start } } }),

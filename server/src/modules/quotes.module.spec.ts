@@ -14,6 +14,7 @@ function setup(products = [
     quote: {
       // Resolve with the nested `items.create` flattened, like Prisma does.
       create: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> & { items: { create: unknown[] } } }) => Promise.resolve({ ...quoteRow, ...data, items: data.items.create })),
+      findMany: jest.fn().mockResolvedValue([]),
       findUnique: jest.fn().mockResolvedValue(null),
       update: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...quoteRow, status: "CONVERTED", ...data })),
     },
@@ -24,7 +25,7 @@ function setup(products = [
   const checkoutInTx = jest.fn();
   const prisma = { $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)), quote: tx.quote, auditLog: tx.auditLog };
   const controller = new QuotesController(prisma as never, { checkout, checkoutInTx } as never);
-  return { controller, tx, checkout, checkoutInTx, quoteRow };
+  return { controller, tx, prisma: prisma, checkout, checkoutInTx, quoteRow };
 }
 
 describe("Quotes", () => {
@@ -36,6 +37,12 @@ describe("Quotes", () => {
       expect.objectContaining({ unitPrice: 10, lineTotal: 20 }),
       expect.objectContaining({ unitPrice: 15, lineTotal: 60 }),
     ]);
+  });
+
+  it("windows the quote list so quotes beyond the first page stay reachable", async () => {
+    const { controller, prisma } = setup();
+    await controller.list("30", "50");
+    expect(prisma.quote.findMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 30, take: 50 }));
   });
 
   it("rejects a quote with an unknown product or an unknown customer", async () => {

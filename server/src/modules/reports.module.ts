@@ -70,29 +70,38 @@ export class ReportsController {
       this.prisma.saleReturn.findMany({ where: { sale: { creditPart: { gt: 0 } } }, select: { creditRelief: true, createdAt: true, sale: { select: { customerId: true } } }, orderBy: { createdAt: "asc" } }),
       this.prisma.customerPayment.findMany({ select: { customerId: true, amount: true, createdAt: true }, orderBy: { createdAt: "asc" } }),
     ]);
-    // Age the outstanding credit FIFO: returns and payments settle the oldest
-    // invoices first, then each invoice's remainder lands in an age bucket.
+    // Age the outstanding credit chronologically: invoices, returns and
+    // payments are replayed in the order they happened, and a payment can
+    // only settle invoices that already existed when it was made. (Settling
+    // oldest-first regardless of dates let an advance payment silently eat a
+    // LATER invoice, mis-bucketing the aging report.)
     const dayMs = 86400000;
     const now = Date.now();
+    type LedgerEntry = { at: number; customerId: string | null; kind: "invoice" | "settle"; amount: number };
+    const ledger: LedgerEntry[] = [];
+    for (const sale of creditSales) if (sale.customerId) ledger.push({ at: sale.createdAt.getTime(), customerId: sale.customerId, kind: "invoice", amount: sale.creditPart });
+    for (const record of creditReturns) ledger.push({ at: record.createdAt.getTime(), customerId: record.sale.customerId, kind: "settle", amount: record.creditRelief });
+    for (const payment of payments) ledger.push({ at: payment.createdAt.getTime(), customerId: payment.customerId, kind: "settle", amount: payment.amount });
+    ledger.sort((a, b) => a.at - b.at);
     const invoices = new Map<string, Array<{ at: number; open: number }>>();
-    for (const sale of creditSales) {
-      if (!sale.customerId) continue;
-      const list = invoices.get(sale.customerId) || [];
-      list.push({ at: sale.createdAt.getTime(), open: sale.creditPart });
-      invoices.set(sale.customerId, list);
-    }
-    const settle = (customerId: string | null, amount: number) => {
-      if (!customerId || amount <= 0) return;
-      let left = amount;
-      for (const invoice of invoices.get(customerId) || []) {
+    for (const entry of ledger) {
+      if (!entry.customerId || entry.amount <= 0) continue;
+      if (entry.kind === "invoice") {
+        const list = invoices.get(entry.customerId) || [];
+        list.push({ at: entry.at, open: entry.amount });
+        invoices.set(entry.customerId, list);
+        continue;
+      }
+      let left = entry.amount;
+      for (const invoice of invoices.get(entry.customerId) || []) {
         if (left <= 0) break;
         const take = Math.min(invoice.open, left);
         invoice.open -= take;
         left -= take;
       }
-    };
-    for (const record of creditReturns) settle(record.sale.customerId, record.creditRelief);
-    for (const payment of payments) settle(payment.customerId, payment.amount);
+      // Whatever stays unapplied was an advance payment: it is credit, not
+      // aged debt, so it never lands in a bucket.
+    }
     const aging = new Map<string, { d30: number; d60: number; older: number }>();
     for (const [customerId, list] of invoices) {
       const bucket = { d30: 0, d60: 0, older: 0 };
@@ -125,10 +134,10 @@ export class ReportsController {
       // Hard cap protects memory on very long ranges; a small shop cannot
       // realistically reach 50k sales inside one report window.
       this.prisma.sale.findMany({ where: { createdAt: range }, take: 50000, include: { items: { include: { product: { select: { categoryId: true, category: { select: { name: true } } } } } } } }),
-      this.prisma.saleReturn.findMany({ where: { createdAt: range }, include: { items: true } }),
+      this.prisma.saleReturn.findMany({ where: { createdAt: range }, include: { items: { include: { product: { select: { category: { select: { name: true } } } } } }, sale: { select: { cashSessionId: true } } } }),
       this.prisma.purchase.aggregate({ _sum: { total: true }, where: { createdAt: range } }),
       this.prisma.expense.aggregate({ _sum: { amount: true }, where: { createdAt: range } }),
-      this.prisma.sale.aggregate({ _sum: { cashPart: true, mobilePart: true, creditPart: true }, where: { createdAt: range } }),
+      this.prisma.sale.aggregate({ _sum: { cashPart: true, mobilePart: true, creditPart: true, walletPart: true }, where: { createdAt: range } }),
       this.prisma.user.findMany({ select: { id: true, displayName: true } }),
       this.prisma.cashSession.findMany({ where: { openedAt: { lte: end } }, select: { id: true, userId: true, openedAt: true, closedAt: true }, orderBy: { openedAt: "desc" }, take: 200 }),
     ]);
@@ -213,6 +222,30 @@ export class ReportsController {
       bucket.revenue -= returnedValue;
       bucket.profit -= returnedValue - returnCost;
       perDay.set(day, bucket);
+      // Refunded money must also walk back the per-cashier, per-shift,
+      // per-hour and per-category views — no slice of the report may count
+      // returned money as sales.
+      const userBucket = perUser.get(record.userId) || { userId: record.userId, cashier: userNames.get(record.userId) || "—", revenue: 0, profit: 0, count: 0 };
+      userBucket.revenue -= returnedValue;
+      userBucket.profit -= returnedValue - returnCost;
+      perUser.set(record.userId, userBucket);
+      const returnSessionId = record.sale?.cashSessionId;
+      if (returnSessionId && sessionById.has(returnSessionId)) {
+        const sessionBucket = perSession.get(returnSessionId);
+        if (sessionBucket) sessionBucket.revenue -= returnedValue;
+      }
+      const hourBucket = perHour.get(record.createdAt.getHours()) || { hour: record.createdAt.getHours(), revenue: 0, count: 0 };
+      hourBucket.revenue -= returnedValue;
+      perHour.set(hourBucket.hour, hourBucket);
+      for (const item of record.items) {
+        const categoryName = item.product?.category?.name;
+        if (!categoryName) continue;
+        const categoryBucket = perCategory.get(categoryName) || { category: categoryName, revenue: 0, profit: 0, quantity: 0 };
+        categoryBucket.revenue -= item.lineTotal;
+        categoryBucket.profit -= item.lineTotal - item.unitCost * item.quantity;
+        categoryBucket.quantity -= item.quantity;
+        perCategory.set(categoryName, categoryBucket);
+      }
     }
     const netRevenue = revenue - refunds;
     const netCost = cost - returnsCost;
@@ -272,6 +305,7 @@ export class ReportsController {
         { method: "CASH", total: (data._mix as { _sum: { cashPart: number | null } })._sum.cashPart || 0 },
         { method: "MOBILE", total: (data._mix as { _sum: { mobilePart: number | null } })._sum.mobilePart || 0 },
         { method: "CREDIT", total: (data._mix as { _sum: { creditPart: number | null } })._sum.creditPart || 0 },
+        { method: "WALLET", total: (data._mix as { _sum: { walletPart: number | null } })._sum.walletPart || 0 },
       ],
     });
     const report = build(current);
