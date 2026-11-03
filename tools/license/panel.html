@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>پنل مدیریت لایسنس — Dar POS</title>
+<style>
+  :root {
+    --bg: #eef1f6;
+    --card: #ffffff;
+    --ink: #1c2333;
+    --muted: #6b7385;
+    --line: #dfe4ee;
+    --brand: #3452d9;
+    --brand-dark: #27409f;
+    --ok: #1a8a4c;
+    --ok-bg: #e3f5eb;
+    --warn: #a05a00;
+    --warn-bg: #fdf0dd;
+    --bad: #b3261e;
+    --bad-bg: #fbe7e5;
+    --info-bg: #e7edfd;
+    --mono: "Cascadia Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Segoe UI", Tahoma, "Vazirmatn", sans-serif;
+    font-size: 14.5px; line-height: 1.7;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 18px 16px 60px; }
+
+  header.top {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    background: linear-gradient(135deg, #27409f, #3452d9 60%, #4b6ae0);
+    color: #fff; border-radius: 14px; padding: 16px 20px; margin-bottom: 14px;
+    box-shadow: 0 6px 18px rgba(39, 64, 159, .25);
+  }
+  header.top .logo {
+    width: 44px; height: 44px; border-radius: 12px; background: rgba(255,255,255,.15);
+    display: grid; place-items: center; font-size: 22px;
+  }
+  header.top h1 { font-size: 18px; margin: 0; }
+  header.top .sub { font-size: 12.5px; opacity: .85; }
+  header.top .spacer { flex: 1; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px;
+    border-radius: 999px; font-size: 12.5px; background: rgba(255,255,255,.16);
+    border: 1px solid rgba(255,255,255,.25);
+  }
+  .chip .dot { width: 8px; height: 8px; border-radius: 50%; background: #7ee2a8; }
+  .chip.bad .dot { background: #ffb1a8; }
+
+  .banner {
+    border-radius: 12px; padding: 12px 16px; margin-bottom: 14px; font-size: 13.5px;
+    display: none; align-items: flex-start; gap: 10px;
+  }
+  .banner.show { display: flex; }
+  .banner.warn { background: var(--warn-bg); color: var(--warn); border: 1px solid #f0d9ae; }
+  .banner.bad  { background: var(--bad-bg);  color: var(--bad);  border: 1px solid #efc2be; }
+
+  nav.tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+  nav.tabs button {
+    border: 1px solid var(--line); background: var(--card); color: var(--muted);
+    padding: 9px 18px; border-radius: 999px; cursor: pointer; font: inherit; font-size: 14px;
+    transition: all .15s;
+  }
+  nav.tabs button:hover { border-color: var(--brand); color: var(--brand); }
+  nav.tabs button.active {
+    background: var(--brand); border-color: var(--brand); color: #fff;
+    box-shadow: 0 3px 10px rgba(52, 82, 217, .3);
+  }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 20px; margin-bottom: 14px; box-shadow: 0 2px 8px rgba(28, 35, 51, .04);
+  }
+  .card h2 { font-size: 16px; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
+  .card h2 .n {
+    width: 26px; height: 26px; border-radius: 8px; background: var(--info-bg); color: var(--brand);
+    display: inline-grid; place-items: center; font-size: 13px;
+  }
+  .card .lead { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+  .field label { display: block; font-size: 13px; margin-bottom: 5px; font-weight: 600; }
+  .field input, .field select, .field textarea {
+    width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px;
+    font: inherit; background: #fbfcfe; color: var(--ink); outline: none; transition: border .15s;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--brand); background: #fff; }
+  .field .hint { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .field input.ltr { direction: ltr; text-align: left; font-family: var(--mono); letter-spacing: .5px; }
+  .field .err { font-size: 12px; color: var(--bad); margin-top: 3px; display: none; }
+  .field.invalid input { border-color: var(--bad); }
+  .field.invalid .err { display: block; }
+
+  .radio-row { display: flex; gap: 18px; align-items: center; padding-top: 6px; }
+  .radio-row label { display: flex; gap: 6px; align-items: center; font-weight: 400; cursor: pointer; }
+
+  button.primary {
+    background: var(--brand); color: #fff; border: 0; border-radius: 10px;
+    padding: 11px 26px; font: inherit; font-weight: 600; cursor: pointer; transition: background .15s;
+  }
+  button.primary:hover { background: var(--brand-dark); }
+  button.primary:disabled { background: #a9b4d6; cursor: not-allowed; }
+  button.ghost {
+    background: transparent; border: 1px solid var(--line); border-radius: 8px;
+    padding: 6px 12px; font: inherit; font-size: 12.5px; color: var(--muted); cursor: pointer;
+    transition: all .15s; white-space: nowrap;
+  }
+  button.ghost:hover { border-color: var(--brand); color: var(--brand); }
+  button.ghost.danger:hover { border-color: var(--bad); color: var(--bad); }
+  button.ghost.revoked { border-color: var(--bad); color: var(--bad); }
+
+  .result {
+    display: none; margin-top: 16px; border: 1px solid #bfe3cd; background: var(--ok-bg);
+    border-radius: 12px; padding: 16px;
+  }
+  .result.show { display: block; }
+  .result .title { font-weight: 700; color: var(--ok); margin-bottom: 10px; }
+  .result textarea {
+    width: 100%; min-height: 120px; direction: ltr; text-align: left; font-family: var(--mono);
+    font-size: 12px; border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+    background: #fff; color: var(--ink); resize: vertical; white-space: pre;
+  }
+  .meta-chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+  .meta-chips span {
+    background: #fff; border: 1px solid var(--line); border-radius: 999px;
+    padding: 3px 12px; font-size: 12.5px;
+  }
+  .meta-chips span b { color: var(--brand); }
+
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+  .toolbar input[type="search"] {
+    flex: 1; min-width: 200px; padding: 9px 14px; border: 1px solid var(--line);
+    border-radius: 10px; font: inherit; background: #fbfcfe; outline: none;
+  }
+  .toolbar input[type="search"]:focus { border-color: var(--brand); }
+  .filters { display: flex; gap: 4px; }
+  .filters button {
+    border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px;
+    font: inherit; font-size: 12.5px; color: var(--muted); cursor: pointer;
+  }
+  .filters button.active { background: var(--info-bg); border-color: var(--brand); color: var(--brand); font-weight: 600; }
+  .stats { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .stats .s {
+    background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 8px 16px;
+    font-size: 13px; min-width: 90px; text-align: center;
+  }
+  .stats .s b { display: block; font-size: 18px; }
+
+  .table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+  table { width: 100%; border-collapse: collapse; background: #fff; font-size: 13px; }
+  thead th {
+    background: #f6f8fc; padding: 10px 12px; text-align: right; font-size: 12px;
+    color: var(--muted); border-bottom: 1px solid var(--line); white-space: nowrap;
+  }
+  tbody td { padding: 10px 12px; border-bottom: 1px solid #eef1f7; vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: #f9fbff; }
+  td.mono { direction: ltr; text-align: left; font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+  td .customer { font-weight: 600; }
+  td .note { color: var(--muted); font-size: 12px; }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .empty { text-align: center; color: var(--muted); padding: 34px 10px; }
+
+  .badge { display: inline-block; padding: 3px 11px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .badge.ACTIVE   { background: var(--ok-bg);   color: var(--ok); }
+  .badge.EXPIRED  { background: var(--warn-bg); color: var(--warn); }
+  .badge.REVOKED  { background: var(--bad-bg);  color: var(--bad); }
+  .badge.LIFETIME { background: #efe7fb; color: #6b34b8; }
+
+  pre.keybox {
+    direction: ltr; text-align: left; background: #f6f8fc; border: 1px dashed var(--line);
+    border-radius: 10px; padding: 12px; font-family: var(--mono); font-size: 12px;
+    overflow-x: auto; white-space: pre; margin: 0;
+  }
+  .kv { display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; font-size: 13.5px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; word-break: break-all; }
+
+  .steps { counter-reset: step; list-style: none; padding: 0; margin: 0; }
+  .steps li { position: relative; padding: 0 44px 16px 0; }
+  .steps li::before {
+    counter-increment: step; content: counter(step);
+    position: absolute; right: 0; top: 0; width: 30px; height: 30px; border-radius: 50%;
+    background: var(--info-bg); color: var(--brand); display: grid; place-items: center; font-weight: 700;
+  }
+  .steps li b { display: block; }
+  .steps li span { color: var(--muted); font-size: 13px; }
+
+  .warning-box {
+    background: var(--warn-bg); color: var(--warn); border: 1px solid #f0d9ae;
+    border-radius: 10px; padding: 12px 14px; font-size: 13px; margin-top: 12px;
+  }
+  .danger-zone { border: 1px solid #efc2be; border-radius: 12px; padding: 16px; margin-top: 14px; background: #fffafa; }
+  .danger-zone h3 { margin: 0 0 6px; font-size: 14px; color: var(--bad); }
+  .danger-zone p { font-size: 12.5px; color: var(--muted); margin: 0 0 10px; }
+  .danger-zone .confirm-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+  .toast {
+    position: fixed; bottom: 22px; right: 50%; transform: translateX(50%);
+    background: var(--ink); color: #fff; padding: 10px 22px; border-radius: 999px;
+    font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .25s; z-index: 50;
+  }
+  .toast.show { opacity: .96; }
+  section.page { display: none; }
+  section.page.active { display: block; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="logo">🧾</div>
+    <div>
+      <h1>پنل مدیریت لایسنس — Dar POS</h1>
+      <div class="sub">صدور، تمدید و مدیریت لایسنس‌های برنامهٔ فروشگاهی — آفلاین و روی همین دستگاه</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="chip" id="keyChip"><span class="dot"></span><span id="keyChipText">در حال بررسی کلیدها…</span></div>
+  </header>
+
+  <div class="banner warn" id="bannerMismatch">
+    ⚠️ <div><b>کلید عمومی این پوشه با کلید داخل برنامه یکی نیست.</b>
+    لایسنس‌هایی که الان می‌سازید در نسخهٔ فعلی برنامهٔ مشتریان <b>فعال نمی‌شوند</b>.
+    یا کلید خصوصی اصلی‌تان را در پوشهٔ کلیدها برگردانید، یا کلید عمومی تازه را در
+    <span dir="ltr">server/src/license/license-public-key.ts</span> جایگزین و برنامه را دوباره بسازید.
+    جزئیات در سربرگ «کلیدها و راهنما».</div>
+  </div>
+  <div class="banner bad" id="bannerNoKey">
+    ⚠️ <div><b>کلید خصوصی پیدا نشد.</b> تا جفت‌کلید نسازید نمی‌توانید لایسنس صادر کنید —
+    از سربرگ «کلیدها و راهنما» اقدام کنید. اگر قبلاً کلید ساخته‌اید، فایل
+    <span dir="ltr">private.pem</span> را در پوشهٔ کلیدها برگردانید.</div>
+  </div>
+
+  <nav class="tabs">
+    <button data-tab="issue" class="active">🖨️ صدور لایسنس</button>
+    <button data-tab="ledger">📚 دفتر لایسنس‌ها</button>
+    <button data-tab="verify">🔍 بررسی لایسنس</button>
+    <button data-tab="keys">🗝️ کلیدها و راهنما</button>
+  </nav>
+
+  <!-- ── صدور ─────────────────────────────────────────────── -->
+  <section class="page active" id="page-issue">
+    <div class="card">
+      <h2><span class="n">۱</span> اطلاعات لایسنس</h2>
+      <p class="lead">کلید دستگاه را مشتری از صفحهٔ لایسنس برنامه برایتان می‌فرستد (به شکل MK-…). لایسنس فقط روی همان یک دستگاه کار می‌کند.</p>
+      <div class="grid">
+        <div class="field" id="fCustomer">
+          <label>نام دکان / مشتری *</label>
+          <input id="customer" placeholder="مثلاً: سوپرمارکت احمد">
+          <div class="err">نام مشتری را بنویسید.</div>
+        </div>
+        <div class="field" id="fMachine">
+          <label>کلید دستگاه مشتری *</label>
+          <input id="machineKey" class="ltr" placeholder="MK-XXXX-XXXX-XXXX-XXXX" spellcheck="false">
+          <div class="hint">از صفحهٔ لایسنس برنامهٔ مشتری کپی کنید.</div>
+          <div class="err">کلید دستگاه باید به شکل MK-XXXX-XXXX-XXXX-XXXX باشد.</div>
+        </div>
+        <div class="field">
+          <label>پلن *</label>
+          <select id="plan">
+            <option value="MONTHLY">ماهانه (۳۰ روز)</option>
+            <option value="YEARLY">سالانه (۳۶۵ روز)</option>
+            <option value="CUSTOM">دلخواه</option>
+            <option value="LIFETIME">ابدی (Lifetime)</option>
+          </select>
+        </div>
+        <div class="field" id="fValidity">
+          <label>مدت اعتبار</label>
+          <div class="radio-row">
+            <label><input type="radio" name="validity" value="days" checked> تعداد روز</label>
+            <label><input type="radio" name="validity" value="date"> تا تاریخ مشخص</label>
+          </div>
+        </div>
+        <div class="field" id="fDays">
+          <label>تعداد روز</label>
+          <input id="days" type="number" min="1" max="3650" value="30">
+          <div class="hint">ماهانه = ۳۰ · سالانه = ۳۶۵</div>
+          <div class="err">عددی بین ۱ تا ۳۶۵۰ وارد کنید.</div>
+        </div>
+        <div class="field" id="fDate" style="display:none">
+          <label>تاریخ انقضا</label>
+          <input id="expiresAt" type="date">
+          <div class="hint">تا پایان همان روز اعتبار دارد.</div>
+        </div>
+        <div class="field" style="grid-column:1/-1">
+          <label>یادداشت (اختیاری)</label>
+          <input id="note" placeholder="مثلاً: پرداخت نقدی · تلفن مشتری · قیمت">
+        </div>
+      </div>
+      <div style="margin-top:16px; display:flex; gap:10px; align-items:center;">
+        <button class="primary" id="btnIssue">صدور لایسنس</button>
+        <span style="color:var(--muted); font-size:12.5px;">لایسنس صادرشده در «دفتر لایسنس‌ها» ثبت می‌شود.</span>
+      </div>
+
+      <div class="result" id="issueResult">
+        <div class="title">✅ لایسنس ساخته شد — متن زیر را برای مشتری بفرستید</div>
+        <textarea id="issueLicense" readonly></textarea>
+        <div class="meta-chips" id="issueMeta"></div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:8px;">
+          <button class="primary" id="btnCopyIssue">کپی لایسنس</button>
+          <button class="ghost" id="btnSaveFile">ذخیره در فایل</button>
+        </div>
+        <div id="renewHint" style="display:none; margin-top:10px; font-size:13px; color:var(--warn);"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── دفتر ─────────────────────────────────────────────── -->
+  <section class="page" id="page-ledger">
+    <div class="card">
+      <h2><span class="n">۲</span> دفتر لایسنس‌های صادرشده</h2>
+      <p class="lead">سابقهٔ همهٔ لایسنس‌هایی که از این پنل صادر کرده‌اید. مشتری با کپی دوبارهٔ همان متن، لایسنسش را روی دستگاه تازه فعال می‌کند.</p>
+      <div class="stats" id="ledgerStats"></div>
+      <div class="toolbar">
+        <input type="search" id="ledgerSearch" placeholder="جستجو: نام مشتری، کلید دستگاه، شناسه…">
+        <div class="filters">
+          <button data-filter="ALL" class="active">همه</button>
+          <button data-filter="ACTIVE">فعال</button>
+          <button data-filter="EXPIRED">منقضی</button>
+          <button data-filter="REVOKED">لغوشده</button>
+          <button data-filter="LIFETIME">ابدی</button>
+        </div>
+        <button class="ghost" id="btnCsv">خروجی CSV</button>
+        <button class="ghost" id="btnJson">خروجی JSON</button>
+        <button class="ghost" id="btnRefresh">↻ تازه‌سازی</button>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>مشتری</th><th>کلید دستگاه</th><th>پلن</th><th>صدور</th><th>انقضا</th>
+              <th>مانده</th><th>وضعیت</th><th>عملیات</th>
+            </tr>
+          </thead>
+          <tbody id="ledgerBody"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="ledgerEmpty" style="display:none">
+        هنوز لایسنسی صادر نشده است — از سربرگ «صدور لایسنس» اولین لایسنس را بسازید.
+      </div>
+    </div>
+  </section>
+
+  <!-- ── بررسی ────────────────────────────────────────────── -->
+  <section class="page" id="page-verify">
+    <div class="card">
+      <h2><span class="n">۳</span> بررسی یک لایسنس</h2>
+      <p class="lead">متن لایسنس راPaste کنید تا امضا و محتوایش بررسی شود — مثلاً قبل از فرستادن برای مشتری، یا وقتی مشتری می‌گوید «کار نمی‌کند».</p>
+      <div class="field">
+        <label>متن لایسنس</label>
+        <textarea id="verifyText" style="min-height:130px; direction:ltr; text-align:left; font-family:var(--mono); font-size:12px;" placeholder="-----DARPOS LICENSE-----"></textarea>
+      </div>
+      <div class="grid" style="margin-top:12px;">
+        <div class="field">
+          <label>کلید دستگاه برای مقایسه (اختیاری)</label>
+          <input id="verifyMachine" class="ltr" placeholder="MK-XXXX-XXXX-XXXX-XXXX" spellcheck="false">
+        </div>
+        <div class="field" style="display:flex; align-items:flex-end;">
+          <button class="primary" id="btnVerify" style="width:100%">بررسی لایسنس</button>
+        </div>
+      </div>
+      <div id="verifyResult" style="margin-top:14px;"></div>
+    </div>
+  </section>
+
+  <!-- ── کلیدها ───────────────────────────────────────────── -->
+  <section class="page" id="page-keys">
+    <div class="card">
+      <h2><span class="n">۴</span> وضعیت کلیدها</h2>
+      <p class="lead">لایسنس‌ها با کلید خصوصی Ed25519 امضا می‌شوند و برنامهٔ مشتری فقط با کلید عمومیِ داخل خودش آنها را تأیید می‌کند.</p>
+      <dl class="kv" id="keysKv"></dl>
+      <div style="margin-top:14px;">
+        <div style="font-size:13px; font-weight:600; margin-bottom:6px;">کلید عمومی (این کلید با برنامه توزیع می‌شود):</div>
+        <pre class="keybox" id="publicKeyBox">—</pre>
+        <button class="ghost" id="btnCopyPub" style="margin-top:8px;">کپی کلید عمومی</button>
+      </div>
+      <div id="embeddedStatus" style="margin-top:14px;"></div>
+      <div class="danger-zone">
+        <h3>ساخت جفت‌کلید تازه (منطقهٔ خطر)</h3>
+        <p>فقط وقتی لازم است که هنوز هیچ کلیدی ندارید، یا عمداً می‌خواهید همهٔ لایسنس‌های قبلی را باطل کنید. بعد از ساخت، باید کلید عمومی تازه را در فایل <span dir="ltr">server/src/license/license-public-key.ts</span> جایگزین و برنامه را دوباره بسازید و توزیع کنید.</p>
+        <div class="confirm-row">
+          <button class="primary" id="btnKeygen">ساخت جفت‌کلید</button>
+          <label style="font-size:13px; display:flex; gap:6px; align-items:center;">
+            <input type="checkbox" id="keygenConfirm"> مطمئنم — لایسنس‌های قبلی نامعتبر می‌شوند
+          </label>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>راهنمای جریان فروش</h2>
+      <ol class="steps">
+        <li><b>مشتری برنامه را نصب و باز می‌کند.</b><span>صفحهٔ لایسنس باز می‌شود و تا فعال‌سازی، هیچ بخشی از برنامه کار نمی‌کند. مشتری می‌تواند دورهٔ آزمایشی ۱۴ روزه را شروع کند یا مستقیم لایسنس بگیرد.</span></li>
+        <li><b>مشتری کلید دستگاهش را برای شما می‌فرستد.</b><span>روی صفحهٔ لایسنس برنامه نشان داده می‌شود (MK-…) و با دکمهٔ کپی، قابل فرستادن است.</span></li>
+        <li><b>شما از سربرگ «صدور لایسنس» لایسنس می‌سازید.</b><span>نام مشتری + کلید دستگاه + پلن را وارد کنید؛ متن لایسنس امضاشده ساخته و در دفتر ثبت می‌شود.</span></li>
+        <li><b>متن لایسنس را برای مشتری می‌فرستید.</b><span>پیام‌رسان یا وایل — فرقی ندارد. مشتری آن را در صفحهٔ لایسنس Paste و فعال می‌کند. تمام.</span></li>
+      </ol>
+      <div class="warning-box">⚠️ <b>کلید خصوصی (private.pem) هرگز جایی آپلود یا کامیت نشود</b> و از آن چند بکاپ امن (فلش جدا + قفل) نگه دارید. بدون کلید خصوصی نمی‌توانید لایسنس جدید صادر کنید و با ساخت کلید تازه، همهٔ لایسنس‌های قبلی باطل می‌شوند. دفتر لایسنس‌ها (ledger.json) هم در کنار پنل ذخیره می‌شود — گاهی از آن خروجی JSON بگیرید.</div>
+    </div>
+  </section>
+
+  <footer>Dar POS License Manager — ابزار فروشنده · فقط روی همین دستگاه اجرا می‌شود</footer>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const PLAN_LABEL = { MONTHLY: "ماهانه", YEARLY: "سالانه", CUSTOM: "دلخواه", LIFETIME: "ابدی" };
+const STATUS_LABEL = { ACTIVE: "فعال", EXPIRED: "منقضی", REVOKED: "لغوشده", LIFETIME: "ابدی" };
+let LEDGER = [];
+
+// ── helpers ────────────────────────────────────────────────
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.classList.remove("show"), 2200);
+}
+async function api(path, body) {
+  const opts = body
+    ? { method: "POST", headers: { "Content-Type": "application/json", "x-panel": "1" }, body: JSON.stringify(body) }
+    : {};
+  const res = await fetch(path, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "خطا در ارتباط با پنل.");
+  return data;
+}
+function fmtDate(iso) {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleDateString("fa-AF", { year: "numeric", month: "2-digit", day: "2-digit" });
+  } catch { return String(iso).slice(0, 10); }
+}
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+async function copyText(text, okMsg) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(okMsg || "کپی شد ✅");
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); toast(okMsg || "کپی شد ✅"); }
+    catch { toast("کپی نشد — دستی انتخاب و کپی کنید"); }
+    ta.remove();
+  }
+}
+
+// ── tabs ───────────────────────────────────────────────────
+document.querySelectorAll("nav.tabs button").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll("section.page").forEach((p) => p.classList.remove("active"));
+    btn.classList.add("active");
+    $("page-" + btn.dataset.tab).classList.add("active");
+    if (btn.dataset.tab === "ledger") loadLedger();
+    if (btn.dataset.tab === "keys") loadState();
+  });
+});
+
+// ── state / banners ────────────────────────────────────────
+async function loadState() {
+  let s;
+  try { s = await api("/api/state"); } catch { return; }
+  const chip = $("keyChip");
+  if (s.hasPrivate) {
+    chip.classList.remove("bad");
+    $("keyChipText").textContent = "کلید امضا آماده است";
+  } else {
+    chip.classList.add("bad");
+    $("keyChipText").textContent = "کلید خصوصی موجود نیست";
+  }
+  $("bannerNoKey").classList.toggle("show", !s.hasPrivate);
+  $("bannerMismatch").classList.toggle("show", s.embeddedMatch === false && s.hasPublic);
+  $("publicKeyBox").textContent = s.publicKey || "— (هنوز جفت‌کلید ساخته نشده)";
+  $("keysKv").innerHTML = `
+    <dt>کلید خصوصی</dt><dd dir="ltr" style="font-family:var(--mono); font-size:12px;">${escapeHtml(s.keysDir)}/private.pem — ${s.hasPrivate ? "✅ موجود" : "❌ موجود نیست"}</dd>
+    <dt>کلید عمومی</dt><dd dir="ltr" style="font-family:var(--mono); font-size:12px;">${escapeHtml(s.keysDir)}/public.pem — ${s.hasPublic ? "✅ موجود" : "❌ موجود نیست"}</dd>
+    <dt>دفتر لایسنس‌ها</dt><dd dir="ltr" style="font-family:var(--mono); font-size:12px;">${escapeHtml(s.ledgerPath)} (${s.ledgerCount} لایسنس)</dd>`;
+  const st = $("embeddedStatus");
+  if (s.embeddedMatch === true) {
+    st.innerHTML = `<div class="banner warn" style="display:flex; background:var(--ok-bg); color:var(--ok); border-color:#bfe3cd;">✅ <div><b>هماهنگ است:</b> کلید عمومی این پوشه با کلید داخل برنامه یکی است — لایسنس‌های شما در برنامهٔ مشتریان فعال می‌شوند.</div></div>`;
+  } else if (s.embeddedMatch === false) {
+    st.innerHTML = `<div class="banner bad" style="display:flex;">⚠️ <div><b>ناهماهنگی:</b> کلید عمومی این پوشه با کلید داخل برنامه (<span dir="ltr">license-public-key.ts</span>) فرق دارد. لایسنس‌های صادرشده در نسخهٔ فعلی برنامه رد می‌شوند. اگر تازه keygen کرده‌اید، کلید عمومی تازه را در آن فایل جایگزین و برنامه را دوباره بسازید؛ اگر نه، یعنی private.pem اصلی را هنوز در پوشهٔ کلیدها برنگردانده‌اید.</div></div>`;
+  } else {
+    st.innerHTML = `<div class="banner warn" style="display:flex;">ℹ️ <div>نمی‌توان کلید داخل برنامه را خواند (فایل <span dir="ltr">server/src/license/license-public-key.ts</span> پیدا نشد) — بررسی هماهنگی انجام نشد.</div></div>`;
+  }
+}
+
+// ── issue form ──────────────────────────────────────────────
+const PLAN_DAYS = { MONTHLY: 30, YEARLY: 365, CUSTOM: "", LIFETIME: "" };
+$("plan").addEventListener("change", () => {
+  const plan = $("plan").value;
+  if (plan !== "LIFETIME") {
+    $("days").value = PLAN_DAYS[plan];
+    document.querySelector('input[name="validity"][value="days"]').checked = true;
+    syncValidityUI();
+  }
+  $("fValidity").style.display = plan === "LIFETIME" ? "none" : "";
+  syncValidityUI();
+});
+document.querySelectorAll('input[name="validity"]').forEach((r) => r.addEventListener("change", syncValidityUI));
+function syncValidityUI() {
+  const mode = document.querySelector('input[name="validity"]:checked').value;
+  $("fDays").style.display = mode === "days" ? "" : "none";
+  $("fDate").style.display = mode === "date" ? "" : "none";
+}
+$("machineKey").addEventListener("input", (e) => { e.target.value = e.target.value.toUpperCase(); });
+
+$("btnIssue").addEventListener("click", async () => {
+  const customer = $("customer").value.trim();
+  const machineKey = $("machineKey").value.trim();
+  const plan = $("plan").value;
+  const mode = document.querySelector('input[name="validity"]:checked').value;
+  let valid = true;
+  $("fCustomer").classList.toggle("invalid", !customer); if (!customer) valid = false;
+  const mkOk = /^MK-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$/.test(machineKey);
+  $("fMachine").classList.toggle("invalid", !mkOk); if (!mkOk) valid = false;
+  let daysOk = true;
+  if (plan !== "LIFETIME" && mode === "days") {
+    daysOk = Number.isInteger(Number($("days").value)) && Number($("days").value) >= 1 && Number($("days").value) <= 3650;
+    $("fDays").classList.toggle("invalid", !daysOk); if (!daysOk) valid = false;
+  }
+  if (!valid) { toast("لطفاً خطاهای فرم را درست کنید"); return; }
+
+  const body = { customer, machineKey, plan, note: $("note").value.trim() };
+  if (plan !== "LIFETIME") {
+    if (mode === "days") body.days = Number($("days").value);
+    else if ($("expiresAt").value) body.expiresAt = $("expiresAt").value;
+    else { toast("تاریخ انقضا را انتخاب کنید"); return; }
+  }
+  $("btnIssue").disabled = true;
+  try {
+    const r = await api("/api/issue", body);
+    $("issueLicense").value = r.license;
+    $("issueMeta").innerHTML = `
+      <span>شناسه: <b dir="ltr">${escapeHtml(r.payload.licenseId.slice(0, 8))}…</b></span>
+      <span>مشتری: <b>${escapeHtml(r.payload.customer)}</b></span>
+      <span>پلن: <b>${PLAN_LABEL[r.payload.plan]}</b></span>
+      <span>اعتبار تا: <b>${r.payload.expiresAt ? fmtDate(r.payload.expiresAt) : "ابدی"}</b></span>
+      <span>دستگاه: <b dir="ltr">${escapeHtml(r.payload.machineKey)}</b></span>`;
+    $("renewHint").style.display = r.existingActiveForMachine > 1 ? "" : "none";
+    $("renewHint").textContent = "ℹ️ این دستگاه قبلاً لایسنس فعال داشته است — این صدور به‌عنوان تمدید ثبت شد.";
+    $("issueResult").classList.add("show");
+    $("issueResult").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    loadState();
+  } catch (e) { toast(e.message); }
+  $("btnIssue").disabled = false;
+});
+$("btnCopyIssue").addEventListener("click", () => copyText($("issueLicense").value, "لایسنس کپی شد — برای مشتری بفرستید ✅"));
+$("btnSaveFile").addEventListener("click", () => {
+  const name = $("machineKey").value.replace(/[^A-Za-z0-9-]/g, "") + "-license.txt";
+  const blob = new Blob([$("issueLicense").value], { type: "text/plain;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+// ── ledger ──────────────────────────────────────────────────
+let FILTER = "ALL";
+async function loadLedger() {
+  try {
+    const r = await api("/api/ledger");
+    LEDGER = r.licenses;
+    renderLedger();
+  } catch (e) { toast(e.message); }
+}
+function renderLedger() {
+  const q = $("ledgerSearch").value.trim().toLowerCase();
+  const rows = LEDGER.filter((e) => {
+    if (FILTER === "ACTIVE" && e.status !== "ACTIVE") return false;
+    if (FILTER === "EXPIRED" && e.status !== "EXPIRED") return false;
+    if (FILTER === "REVOKED" && e.status !== "REVOKED") return false;
+    if (FILTER === "LIFETIME" && e.status !== "LIFETIME") return false;
+    if (!q) return true;
+    return [e.customer, e.machineKey, e.licenseId, e.note].join(" ").toLowerCase().includes(q);
+  });
+  const count = (s) => LEDGER.filter((e) => e.status === s).length;
+  $("ledgerStats").innerHTML = `
+    <div class="s"><b>${LEDGER.length}</b>کل لایسنس</div>
+    <div class="s"><b style="color:var(--ok)">${count("ACTIVE") + count("LIFETIME")}</b>فعال</div>
+    <div class="s"><b style="color:var(--warn)">${count("EXPIRED")}</b>منقضی</div>
+    <div class="s"><b style="color:var(--bad)">${count("REVOKED")}</b>لغوشده</div>`;
+  const body = $("ledgerBody");
+  body.innerHTML = rows.map((e) => `
+    <tr>
+      <td><div class="customer">${escapeHtml(e.customer)}</div>${e.note ? `<div class="note">${escapeHtml(e.note)}</div>` : ""}</td>
+      <td class="mono">${escapeHtml(e.machineKey)}</td>
+      <td>${PLAN_LABEL[e.plan] || escapeHtml(e.plan)}</td>
+      <td>${fmtDate(e.issuedAt)}</td>
+      <td>${e.expiresAt ? fmtDate(e.expiresAt) : "—"}</td>
+      <td>${e.daysLeft != null ? (e.daysLeft < 0 ? "۰" : e.daysLeft.toLocaleString("fa-AF")) : "∞"}</td>
+      <td><span class="badge ${e.status}">${STATUS_LABEL[e.status]}</span></td>
+      <td><div class="actions">
+        <button class="ghost" onclick="copyLicense('${escapeHtml(e.licenseId)}')">کپی لایسنس</button>
+        <button class="ghost" onclick="renew('${escapeHtml(e.licenseId)}')">تمدید</button>
+        <button class="ghost ${e.revoked ? "" : "danger"}" onclick="toggleRevoke('${escapeHtml(e.licenseId)}')">${e.revoked ? "بازگردانی" : "لغو"}</button>
+        <button class="ghost danger" onclick="delLicense('${escapeHtml(e.licenseId)}')">حذف</button>
+      </div></td>
+    </tr>`).join("");
+  $("ledgerEmpty").style.display = rows.length ? "none" : "";
+}
+window.copyLicense = (id) => {
+  const e = LEDGER.find((x) => x.licenseId === id);
+  if (e) copyText(e.licenseText, "لایسنس «" + e.customer + "» کپی شد ✅");
+};
+window.renew = (id) => {
+  const e = LEDGER.find((x) => x.licenseId === id);
+  if (!e) return;
+  $("customer").value = e.customer;
+  $("machineKey").value = e.machineKey;
+  $("note").value = e.note || "";
+  $("plan").value = e.plan === "LIFETIME" ? "LIFETIME" : "YEARLY";
+  $("plan").dispatchEvent(new Event("change"));
+  document.querySelector('nav.tabs button[data-tab="issue"]').click();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  toast("برای تمدید، فقط پلن و مدت را تعیین و صدور کنید");
+};
+window.toggleRevoke = async (id) => {
+  const e = LEDGER.find((x) => x.licenseId === id);
+  if (!e) return;
+  if (!e.revoked && !confirm(`لایسنس «${e.customer}» لغو شود؟\n(لغو فقط در دفتر شما ثبت می‌شود؛ روی دستگاه مشتری اثری ندارد.)`)) return;
+  try { await api("/api/revoke", { licenseId: id, revoked: !e.revoked }); loadLedger(); } catch (err) { toast(err.message); }
+};
+window.delLicense = async (id) => {
+  const e = LEDGER.find((x) => x.licenseId === id);
+  if (!e) return;
+  if (!confirm(`رکورد «${e.customer}» برای همیشه از دفتر حذف شود؟\n(خروجی JSON گرفته باشید!)`)) return;
+  try { await api("/api/delete", { licenseId: id }); loadLedger(); } catch (err) { toast(err.message); }
+};
+$("ledgerSearch").addEventListener("input", renderLedger);
+document.querySelectorAll(".filters button").forEach((b) => b.addEventListener("click", () => {
+  document.querySelectorAll(".filters button").forEach((x) => x.classList.remove("active"));
+  b.classList.add("active");
+  FILTER = b.dataset.filter;
+  renderLedger();
+}));
+$("btnRefresh").addEventListener("click", loadLedger);
+$("btnCsv").addEventListener("click", () => {
+  const head = ["مشتری", "کلید دستگاه", "پلن", "صدور", "انقضا", "روز مانده", "وضعیت", "لغوشده", "یادداشت", "شناسه"];
+  const rows = LEDGER.map((e) => [e.customer, e.machineKey, PLAN_LABEL[e.plan] || e.plan, e.issuedAt, e.expiresAt || "", e.daysLeft ?? "", STATUS_LABEL[e.status], e.revoked ? "بله" : "", e.note || "", e.licenseId]);
+  const csv = "\uFEFF" + [head, ...rows].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  downloadBlob(csv, "darpos-licenses.csv", "text/csv;charset=utf-8");
+});
+$("btnJson").addEventListener("click", () => {
+  downloadBlob(JSON.stringify({ version: 1, licenses: LEDGER }, null, 2), "darpos-licenses-backup.json", "application/json");
+  toast("بکاپ JSON دانلود شد — جایی امن نگه دارید");
+});
+function downloadBlob(content, name, type) {
+  const blob = new Blob([content], { type });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ── verify ──────────────────────────────────────────────────
+$("btnVerify").addEventListener("click", async () => {
+  const text = $("verifyText").value;
+  if (!text.includes("DARPOS LICENSE")) { toast("متن لایسنس را Paste کنید"); return; }
+  try {
+    const r = await api("/api/verify", { licenseText: text, machineKey: $("verifyMachine").value.trim() });
+    const box = $("verifyResult");
+    if (!r.valid) {
+      box.innerHTML = `<div class="banner bad" style="display:flex;">❌ <div><b>لایسنس معتبر نیست:</b> ${escapeHtml(r.error)}</div></div>`;
+      return;
+    }
+    const p = r.payload;
+    const row = (k, v) => `<dt>${k}</dt><dd>${v}</dd>`;
+    box.innerHTML = `
+      <div class="banner warn" style="display:flex; ${r.expired ? "" : "background:var(--ok-bg); color:var(--ok); border-color:#bfe3cd;"}">
+        ${r.expired ? "⚠️" : "✅"} <div><b>امضا معتبر است${r.expired ? " — ولی منقضی شده" : " و " + (p.expiresAt ? "فعال" : "ابدی است")}</b>
+        ${r.machineMatch === false ? "<br>❌ کلید دستگاه با مقدار واردشده نمی‌خواند — این لایسنس برای دستگاه دیگری است." : ""}
+        ${r.ledger.found && r.ledger.revoked ? "<br>⛔ این لایسنس در دفتر شما «لغوشده» ثبت شده است." : ""}
+        ${!r.ledger.found ? "<br>ℹ️ این لایسنس از این دفتر صادر نشده (شاید با ابزار قبلی CLI ساخته شده باشد)." : ""}</div>
+      </div>
+      <dl class="kv" style="margin-top:12px;">
+        ${row("مشتری", escapeHtml(p.customer))}${row("پلن", PLAN_LABEL[p.plan] || escapeHtml(p.plan))}
+        ${row("کلید دستگاه", `<span dir="ltr" style="font-family:var(--mono); font-size:12px;">${escapeHtml(p.machineKey)}</span>`)}
+        ${row("صدور", fmtDate(p.issuedAt))}${row("انقضا", p.expiresAt ? fmtDate(p.expiresAt) : "ابدی")}
+        ${row("شناسه", `<span dir="ltr" style="font-family:var(--mono); font-size:12px;">${escapeHtml(p.licenseId)}</span>`)}
+        ${p.note ? row("یادداشت", escapeHtml(p.note)) : ""}
+      </dl>`;
+  } catch (e) { toast(e.message); }
+});
+
+// ── keys ────────────────────────────────────────────────────
+$("keygenConfirm").addEventListener("change", () => { $("btnKeygen").disabled = !$("keygenConfirm").checked; });
+$("btnKeygen").disabled = true;
+$("btnKeygen").addEventListener("click", async () => {
+  if (!$("keygenConfirm").checked) return;
+  if (!confirm("مطمئنید؟ با ساخت جفت‌کلید تازه، همهٔ لایسنس‌های قبلی نامعتبر می‌شوند!")) return;
+  try {
+    await api("/api/keygen", { force: true });
+    toast("جفت‌کلید تازه ساخته شد");
+    $("keygenConfirm").checked = false; $("btnKeygen").disabled = true;
+    loadState();
+  } catch (e) { toast(e.message); }
+});
+$("btnCopyPub").addEventListener("click", () => copyText($("publicKeyBox").textContent, "کلید عمومی کپی شد"));
+
+loadState();
+</script>
+</body>
+</html>

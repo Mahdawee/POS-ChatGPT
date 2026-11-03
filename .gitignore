@@ -10,3 +10,6 @@ desktop/src-tauri/resources/
 # Vendor licensing keys — never commit the private key.
 tools/license/keys/private.pem
 tools/license/keys/*.key
+
+# License panel ledger (issued licenses stay on the vendor machine)
+tools/license/ledger.json
