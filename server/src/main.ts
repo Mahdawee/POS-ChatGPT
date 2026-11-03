@@ -7,6 +7,7 @@ import { AllExceptionsFilter } from "./all-exceptions.filter";
 import { configureLocalStorage } from "./storage";
 import { LicenseService } from "./license/license.service";
 import { resolveApiHost } from "./network";
+import { invalidateReportCache } from "./modules/reports.module";
 
 async function bootstrap() {
   const dataDir = configureLocalStorage();
@@ -21,6 +22,12 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   app.useGlobalFilters(new AllExceptionsFilter());
   app.enableShutdownHooks();
+  // Heavy reports are cached in memory; any write (sale, return, expense,
+  // purchase, settings…) must drop the cache so reports never go stale.
+  app.use((req: { method?: string }, _res: unknown, next: () => void) => {
+    if (req.method && req.method !== "GET" && req.method !== "OPTIONS" && req.method !== "HEAD") invalidateReportCache();
+    next();
+  });
   applyLicenseGate(app, app.get(LicenseService));
   const port = Number(process.env.API_PORT || 4317);
   // The desktop app pins API_HOST=127.0.0.1; a machine shared as the LAN

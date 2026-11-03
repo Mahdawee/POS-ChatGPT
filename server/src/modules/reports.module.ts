@@ -3,6 +3,38 @@ import { AdminOnly } from "../auth";
 import { customerBalances, supplierBalances } from "../balances";
 import { PrismaService } from "../prisma.service";
 
+/**
+ * ── Report cache ──────────────────────────────────────────────────────────
+ * The profit report scans every sale in the range; re-opening the same range
+ * (or switching the comparison toggle back and forth) shouldn't rescan it.
+ * Identical queries are served from memory for up to 60s, and any write
+ * request (main.ts wires a middleware) clears the cache so reports never go
+ * stale after a sale/return/expense is recorded.
+ */
+const REPORT_CACHE_TTL = 60_000;
+const REPORT_CACHE_LIMIT = 50;
+const reportCache = new Map<string, { at: number; value: unknown }>();
+
+/** Clears every cached report — called for any non-GET /api request. */
+export function invalidateReportCache(): void {
+  reportCache.clear();
+}
+
+/** Serves `key` from the cache when fresh, otherwise runs `compute` and
+ *  remembers the result (bounded LRU-ish: the oldest entry is evicted). */
+function cachedReport<T>(key: string, compute: () => Promise<T>): Promise<T> {
+  const hit = reportCache.get(key);
+  if (hit && Date.now() - hit.at < REPORT_CACHE_TTL) return Promise.resolve(hit.value as T);
+  return compute().then((value) => {
+    if (reportCache.size >= REPORT_CACHE_LIMIT) {
+      const oldest = reportCache.keys().next().value;
+      if (oldest !== undefined) reportCache.delete(oldest);
+    }
+    reportCache.set(key, { at: Date.now(), value });
+    return value;
+  });
+}
+
 const localDay = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
 /** Snapshot of the profit metrics for one date range. */
@@ -214,6 +246,7 @@ export class ReportsController {
     const start = from ? new Date(from) : new Date(end.getTime() - 29 * 86400000);
     if (!from) start.setHours(0, 0, 0, 0);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) throw new BadRequestException("بازهٔ تاریخ گزارش معتبر نیست.");
+    return cachedReport(`${from || ""}|${to || ""}|${compare || ""}`, async () => {
     const current = await this.profitFor(start, end);
     const build = (data: ProfitFor & Record<string, unknown>) => ({
       from: data.from.toISOString(),
@@ -264,6 +297,7 @@ export class ReportsController {
       };
     }
     return report;
+    });
   }
 }
 

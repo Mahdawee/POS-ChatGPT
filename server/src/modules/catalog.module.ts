@@ -43,6 +43,23 @@ export class ProductsController {
     if (search) where.OR = [{ name: { contains: search } }, { sku: { contains: search } }, { barcode: { contains: search } }];
     return this.prisma.product.findMany({ where, include: { category: true, bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true } } } }, serialUnits: { where: { status: "IN_STOCK" }, select: { id: true } } }, orderBy: { name: "asc" } });
   }
+  /** Paged variant of list() for the management table: same filters, but only
+   *  one page of rows plus the total, so a 10k-item warehouse never ships the
+   *  whole catalog (or renders it) at once. Consumers that need everything
+   *  (POS local copy, purchase pickers) keep using GET /products. */
+  @Get("page") async page(@Query("archived") archived?: string, @Query("q") q?: string, @Query("skip") skip?: string) {
+    const search = q?.trim();
+    const where: { isActive: boolean; OR?: Array<{ name: { contains: string } } | { sku: { contains: string } } | { barcode: { contains: string } }> } = { isActive: archived !== "1" };
+    if (search) where.OR = [{ name: { contains: search } }, { sku: { contains: search } }, { barcode: { contains: search } }];
+    const take = 100;
+    const offset = Math.max(0, Number(skip) || 0);
+    const include = { category: true, bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true } } } }, serialUnits: { where: { status: "IN_STOCK" }, select: { id: true } } } as const;
+    const [list, total] = await Promise.all([
+      this.prisma.product.findMany({ where, include, orderBy: { name: "asc" }, take, skip: offset }),
+      this.prisma.product.count({ where }),
+    ]);
+    return { list, total, hasMore: offset + list.length < total };
+  }
   @Post() async create(@Body() dto: ProductDto) {
     if (dto.isBundle && dto.isSerialized) throw new BadRequestException("یک کالا نمی‌تواند هم‌زمان بسته و سریال‌دار باشد؛ بسته اجزایی ساده دارد.");
     const stock = dto.stock ?? 0;

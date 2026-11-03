@@ -433,6 +433,104 @@ fn save_backup_file(filename: String, data_base64: String) -> Result<String, Str
     Ok(target.to_string_lossy().into_owned())
 }
 
+/// Where update installers are saved: the user's Downloads folder when it
+/// exists (so the setup file stays available for a re-install), otherwise the
+/// shared app-data directory.
+fn update_download_dir(app: &tauri::AppHandle) -> std::path::PathBuf {
+    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+        let downloads = std::path::PathBuf::from(home).join("Downloads");
+        if downloads.is_dir() {
+            return downloads;
+        }
+    }
+    app_data_directory(app)
+}
+
+/// Downloads the given GitHub release asset (the NSIS setup .exe) into the
+/// Downloads folder and returns the saved path. Uses PowerShell's
+/// Invoke-WebRequest (always present on Windows 10/11, follows the release
+/// redirect) so no new Rust dependency is needed; the URL and version are
+/// validated before anything runs.
+#[tauri::command]
+fn download_update(app: tauri::AppHandle, url: String, version: String) -> Result<String, String> {
+    if !url.starts_with("https://github.com/") {
+        return Err("unsupported download url".into());
+    }
+    let safe_version: String = version
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '.')
+        .collect();
+    if safe_version.is_empty() {
+        return Err("invalid version".into());
+    }
+    let dir = update_download_dir(&app);
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        return Err(error.to_string());
+    }
+    let target = dir.join(format!("DarPOS-Setup-{safe_version}.exe"));
+    // Args are passed as separate process arguments (no shell string), so the
+    // URL and path cannot inject commands.
+    let status = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Invoke-WebRequest",
+            // Windows PowerShell 5.1 parses responses with the IE engine by
+            // default, which hangs on machines without a configured IE;
+            // -UseBasicParsing avoids that (a no-op on PowerShell 7+).
+            "-UseBasicParsing",
+            "-Uri",
+            url.as_str(),
+            "-OutFile",
+        ])
+        .arg(&target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|error| error.to_string())?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&target);
+        return Err("download failed".into());
+    }
+    // A real installer is several MB; anything smaller is an error page that
+    // was saved as .exe.
+    let size = std::fs::metadata(&target).map(|meta| meta.len()).unwrap_or(0);
+    if size < 1_000_000 {
+        let _ = std::fs::remove_file(&target);
+        return Err("downloaded file is not the installer".into());
+    }
+    Ok(target.to_string_lossy().into_owned())
+}
+
+/// Launches a downloaded installer, stops the bundled API, and exits the app
+/// so setup can replace the running files. Only files inside our own update
+/// folder are accepted — the frontend can never run arbitrary paths.
+#[tauri::command]
+fn install_update(app: tauri::AppHandle, state: tauri::State<ApiProcess>, path: String) -> Result<(), String> {
+    let resolved = match std::fs::canonicalize(&path) {
+        Ok(path) => path,
+        Err(error) => return Err(error.to_string()),
+    };
+    let folder = match std::fs::canonicalize(update_download_dir(&app)) {
+        Ok(path) => path,
+        Err(error) => return Err(error.to_string()),
+    };
+    if !resolved.starts_with(&folder) || !resolved.extension().map(|ext| std::ffi::OsStr::eq_ignore_ascii_case(ext, "exe")).unwrap_or(false) {
+        return Err("installer is not in the update folder".into());
+    }
+    // Spawn first: if the installer cannot start we keep running untouched.
+    Command::new(&resolved)
+        .stdin(Stdio::null())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    // Same cleanup as closing the window, so the new version starts its own
+    // API instead of reusing this one.
+    stop_api(&state);
+    std::process::exit(0)
+}
+
 fn main() {
     let child_state = ApiProcess(Arc::new(Mutex::new(None)));
     let state_for_exit = child_state.clone();
@@ -441,7 +539,7 @@ fn main() {
     let closing_for_exit = closing.clone();
     tauri::Builder::default()
         .manage(child_state)
-        .invoke_handler(tauri::generate_handler![set_network_mode, open_url, quick_print, save_backup_file])
+        .invoke_handler(tauri::generate_handler![set_network_mode, open_url, quick_print, save_backup_file, download_update, install_update])
         .setup(move |app| {
             #[cfg(not(debug_assertions))]
             {

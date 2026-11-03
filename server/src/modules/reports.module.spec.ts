@@ -1,4 +1,4 @@
-import { ReportsController } from "./reports.module";
+import { invalidateReportCache, ReportsController } from "./reports.module";
 
 const day = (text: string) => new Date(`2026-11-${text}T10:00:00`);
 
@@ -110,5 +110,23 @@ describe("Debtors report", () => {
     expect(report.customersTotal).toBe(250);
     expect(report.suppliers).toEqual([{ id: "s1", name: "تأمین‌کننده", phone: null, balance: 150 }]);
     expect(report.suppliersTotal).toBe(150); // 800 - 500 paid - 100 payments - 50 returned goods
+  });
+});
+
+describe("Profit report cache", () => {
+  it("serves an identical range from memory and recomputes after invalidation", async () => {
+    invalidateReportCache(); // clean slate — earlier tests may have warmed the key
+    const { controller, prisma } = setup();
+    const first = await controller.profit("2026-11-01", "2026-11-30");
+    const second = await controller.profit("2026-11-01", "2026-11-30");
+    expect(second).toEqual(first);
+    expect(prisma.sale.findMany).toHaveBeenCalledTimes(1); // second call was cached
+    // A write (any non-GET request clears the cache) forces a full recompute.
+    invalidateReportCache();
+    await controller.profit("2026-11-01", "2026-11-30");
+    expect(prisma.sale.findMany).toHaveBeenCalledTimes(2);
+    // A different range never shares the cached entry.
+    await controller.profit("2026-11-02", "2026-11-30");
+    expect(prisma.sale.findMany).toHaveBeenCalledTimes(3);
   });
 });
