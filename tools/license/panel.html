@@ -489,7 +489,8 @@ async function loadState() {
   if (s.embeddedMatch === true) {
     st.innerHTML = `<div class="banner warn" style="display:flex; background:var(--ok-bg); color:var(--ok); border-color:#bfe3cd;">✅ <div><b>هماهنگ است:</b> کلید عمومی این پوشه با کلید داخل برنامه یکی است — لایسنس‌های شما در برنامهٔ مشتریان فعال می‌شوند.</div></div>`;
   } else if (s.embeddedMatch === false) {
-    st.innerHTML = `<div class="banner bad" style="display:flex;">⚠️ <div><b>ناهماهنگی:</b> کلید عمومی این پوشه با کلید داخل برنامه (<span dir="ltr">license-public-key.ts</span>) فرق دارد. لایسنس‌های صادرشده در نسخهٔ فعلی برنامه رد می‌شوند. اگر تازه keygen کرده‌اید، کلید عمومی تازه را در آن فایل جایگزین و برنامه را دوباره بسازید؛ اگر نه، یعنی private.pem اصلی را هنوز در پوشهٔ کلیدها برنگردانده‌اید.</div></div>`;
+    st.innerHTML = `<div class="banner bad" style="display:flex;">⚠️ <div><b>ناهماهنگی:</b> کلید عمومی این پوشه با کلید داخل برنامه (<span dir="ltr">license-public-key.ts</span>) فرق دارد. لایسنس‌های صادرشده در نسخهٔ فعلی برنامه رد می‌شوند. اگر تازه keygen کرده‌اید، با دکمهٔ زیر کلید تازه را در سورس برنامه جایگزین کنید و برنامه را دوباره بسازید؛ اگر نه، یعنی private.pem اصلی را هنوز در پوشهٔ کلیدها برنگردانده‌اید.
+    <div style="margin-top:10px;"><button class="primary" onclick="embedSync()">همگام‌سازی کلید عمومی با سورس برنامه</button></div></div></div>`;
   } else {
     st.innerHTML = `<div class="banner warn" style="display:flex;">ℹ️ <div>نمی‌توان کلید داخل برنامه را خواند (فایل <span dir="ltr">server/src/license/license-public-key.ts</span> پیدا نشد) — بررسی هماهنگی انجام نشد.</div></div>`;
   }
@@ -705,6 +706,14 @@ $("btnKeygen").addEventListener("click", async () => {
   } catch (e) { toast(e.message); }
 });
 $("btnCopyPub").addEventListener("click", () => copyText($("publicKeyBox").textContent, "کلید عمومی کپی شد"));
+window.embedSync = async () => {
+  if (!confirm("کلید عمومیِ همین پوشه در سورس برنامه (license-public-key.ts) جایگزین شود؟\nبعد از آن باید برنامه را دوباره بسازید و نسخهٔ تازه بین مشتریان توزیع کنید.")) return;
+  try {
+    const r = await api("/api/embed-sync", {});
+    toast(r.message || "همگام شد");
+    loadState();
+  } catch (e) { toast(e.message); }
+};
 
 loadState();
 </script>

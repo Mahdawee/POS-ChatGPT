@@ -309,6 +309,28 @@ async function handle(req, res) {
     return send(res, { ok: true });
   }
 
+  if (url.pathname === "/api/embed-sync" && req.method === "POST") {
+    // Re-write the public key embedded in the shipped app source so a fresh
+    // keypair becomes effective on the next `tauri:build`. Vendor-side
+    // convenience; the panel runs next to the repo on the vendor machine.
+    const pub = readPublicKey();
+    if (!pub) return fail(res, 409, "کلید عمومی پیدا نشد — اول جفت‌کلید بسازید.");
+    if (!existsSync(EMBEDDED_KEY_TS)) return fail(res, 404, `فایل سورس برنامه پیدا نشد: ${EMBEDDED_KEY_TS}`);
+    const src = readFileSync(EMBEDDED_KEY_TS, "utf8");
+    if (!/-----BEGIN PUBLIC KEY-----[\s\S]+?-----END PUBLIC KEY-----/.test(src)) {
+      return fail(res, 422, "ساختار فایل license-public-key.ts شناسایی نشد — دستی جایگزین کنید.");
+    }
+    const updated = src.replace(/-----BEGIN PUBLIC KEY-----[\s\S]+?-----END PUBLIC KEY-----/, pub.trim());
+    if (updated === src) return send(res, { ok: true, changed: false, message: "کلید از قبل هماهنگ است." });
+    try {
+      writeFileSync(`${EMBEDDED_KEY_TS}.bak`, src, { encoding: "utf-8" });
+    } catch {
+      // Backup is best-effort.
+    }
+    writeFileSync(EMBEDDED_KEY_TS, updated, { encoding: "utf-8" });
+    return send(res, { ok: true, changed: true, message: "کلید عمومی تازه در سورس برنامه جایگزین شد (نسخهٔ قبلی در فایل .bak). حالا برنامه را دوباره بسازید: npm run tauri:build" });
+  }
+
   if (url.pathname === "/api/verify" && req.method === "POST") {
     const body = await readBody(req);
     const publicKey = readPublicKey();
