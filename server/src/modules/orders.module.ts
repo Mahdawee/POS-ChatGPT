@@ -85,21 +85,24 @@ export class OrdersController {
       const deliverQty = requested.get(line.id) || 0;
       if (deliverQty > line.quantity - line.deliveredQty) throw new BadRequestException(`بیشتر از مقدار سفارش نمی‌توان تحویل کرد. قابل تحویل «${line.name}»: ${line.quantity - line.deliveredQty}`);
     }
-    // Release the reservation for what is being handed over, then run the
-    // ordinary checkout so pricing/serials/payment share one pipeline. If
-    // the checkout fails, the reservation is restored (compensating write).
     const releasing: Array<{ productId: string; quantity: number }> = [];
     for (const line of order.lines) {
       const deliverQty = requested.get(line.id) || 0;
       if (deliverQty > 0) releasing.push({ productId: line.productId, quantity: deliverQty });
     }
-    await this.prisma.$transaction(async (tx) => {
+    // ONE transaction: release the reservation, run the shared checkout
+    // pipeline and record the delivery together. Any failure (funds, stock,
+    // license, crash) rolls the whole delivery back — a compensating-write
+    // dance could never cover the gap between the sale and the order update,
+    // which left an order deliverable twice (double charge).
+    return this.prisma.$transaction(async (tx) => {
+      const fresh = await tx.customerOrder.findUnique({ where: { id: order.id }, select: { status: true } });
+      if (fresh?.status !== "OPEN") throw new BadRequestException("این سفارش بسته شده است.");
       for (const item of releasing) {
         await tx.product.update({ where: { id: item.productId }, data: { reserved: { decrement: item.quantity } } });
       }
-    });
-    try {
-      const sale = await this.checkout.checkout(
+      const sale = await this.checkout.checkoutInTx(
+        tx,
         {
           items: releasing.map((item) => {
             const line = order.lines.find((row) => row.productId === item.productId)!;
@@ -115,26 +118,16 @@ export class OrdersController {
         },
         user,
       );
-      await this.prisma.$transaction(async (tx) => {
-        for (const line of order.lines) {
-          const deliverQty = requested.get(line.id) || 0;
-          if (deliverQty > 0) await tx.customerOrderLine.update({ where: { id: line.id }, data: { deliveredQty: { increment: deliverQty } } });
-        }
-        const refreshed = await tx.customerOrder.findUnique({ where: { id: order.id }, include: { lines: true } });
-        const complete = refreshed?.lines.every((line) => line.deliveredQty >= line.quantity) ?? false;
-        if (complete) await tx.customerOrder.update({ where: { id: order.id }, data: { status: "FULFILLED" } });
-        await tx.auditLog.create({ data: { actor: user.username, action: "DELIVER_ORDER", entity: "CustomerOrder", entityId: order.id, detail: `${order.orderNo} / ${releasing.length} قلم` } });
-      });
+      for (const line of order.lines) {
+        const deliverQty = requested.get(line.id) || 0;
+        if (deliverQty > 0) await tx.customerOrderLine.update({ where: { id: line.id }, data: { deliveredQty: { increment: deliverQty } } });
+      }
+      const refreshed = await tx.customerOrder.findUnique({ where: { id: order.id }, include: { lines: true } });
+      const complete = refreshed?.lines.every((line) => line.deliveredQty >= line.quantity) ?? false;
+      if (complete) await tx.customerOrder.update({ where: { id: order.id }, data: { status: "FULFILLED" } });
+      await tx.auditLog.create({ data: { actor: user.username, action: "DELIVER_ORDER", entity: "CustomerOrder", entityId: order.id, detail: `${order.orderNo} / ${releasing.length} قلم` } });
       return sale;
-    } catch (error) {
-      // Checkout refused (funds, stock, license…): give the reservation back.
-      await this.prisma.$transaction(async (tx) => {
-        for (const item of releasing) {
-          await tx.product.update({ where: { id: item.productId }, data: { reserved: { increment: item.quantity } } });
-        }
-      }).catch(() => undefined);
-      throw error;
-    }
+    });
   }
 
   /** لغو سفارش: رزروِ اقلام تحویل‌نشده آزاد می‌شود. */

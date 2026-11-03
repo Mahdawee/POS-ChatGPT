@@ -1,4 +1,4 @@
-import { configureLocalStorage } from "./storage";
+import { configureLocalStorage, databaseFilePath } from "./storage";
 
 /** The SQLite busy_timeout must come from the connection URL: Prisma applies
  *  `socket_timeout` to every pooled connection, while a PRAGMA through
@@ -22,6 +22,13 @@ describe("local storage configuration", () => {
   it("builds the SQLite URL with a socket_timeout so every pooled connection waits instead of failing with SQLITE_BUSY", () => {
     configureLocalStorage();
     expect(process.env.DATABASE_URL).toMatch(/^file:\/tmp\/darpos-storage-spec\/pos\.db\?socket_timeout=\d+$/);
+  });
+
+  it("extracts the bare database file path (no file: prefix, no ?params) for backup/restore file operations", () => {
+    process.env.DATABASE_URL = "file:C:/Users/Shop/AppData/Roaming/DarPOSERP/pos.db?socket_timeout=15";
+    expect(databaseFilePath()).toBe("C:/Users/Shop/AppData/Roaming/DarPOSERP/pos.db");
+    process.env.DATABASE_URL = "file:/tmp/plain/pos.db";
+    expect(databaseFilePath()).toBe("/tmp/plain/pos.db");
   });
 
   it("never overrides an explicitly provided DATABASE_URL", () => {

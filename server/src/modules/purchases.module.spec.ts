@@ -45,6 +45,14 @@ describe("Purchases", () => {
     expect(tx.product.update).toHaveBeenCalledTimes(1);
   });
 
+  it("refuses to buy a bundle — kits are assembled from components, their own stock is never real", async () => {
+    const { controller, tx } = setup();
+    tx.product.findMany.mockResolvedValue([{ ...product, isBundle: true }]);
+    await expect(controller.create({ items: [{ productId: "product-1", quantity: 1, unitCost: 10 }] }, user)).rejects.toThrow(/بسته است و خریدنی نیست/);
+    expect(tx.purchase.create).not.toHaveBeenCalled();
+    expect(tx.product.update).not.toHaveBeenCalled();
+  });
+
   it("rejects a purchase containing an unknown or archived product", async () => {
     const { controller, tx } = setup();
     tx.product.findMany.mockResolvedValue([]);
@@ -79,6 +87,7 @@ function returnSetup() {
     purchase: { findUnique: jest.fn().mockResolvedValue({ supplierId: "supplier-1" }) },
     purchaseReturn: { create: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ id: "return-1", ...data })) },
     inventoryMovement: { create: jest.fn().mockResolvedValue({}) },
+    serialUnit: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn().mockResolvedValue({}) },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
   };
   const prisma = { $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)) };
@@ -107,5 +116,25 @@ describe("Purchase returns", () => {
     const { controller, tx } = returnSetup();
     tx.product.findMany.mockResolvedValue([]);
     await expect(controller.createReturn({ items: [{ productId: "missing", quantity: 1 }] }, user)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("requires the exact serials of serialized units going back to the supplier and marks them RETURNED", async () => {
+    const { controller, tx } = returnSetup();
+    tx.product.findMany.mockResolvedValue([{ ...product, isSerialized: true }]);
+    tx.serialUnit = { findMany: jest.fn().mockResolvedValue([{ serial: "IMEI-1", productId: "product-1", status: "IN_STOCK" }, { serial: "IMEI-2", productId: "product-1", status: "IN_STOCK" }]), update: jest.fn().mockResolvedValue({}) };
+    // Missing serials → refused before anything is written.
+    await expect(controller.createReturn({ items: [{ productId: "product-1", quantity: 2 }] }, user)).rejects.toThrow(/سریال\/IMEI هر دستگاه/);
+    expect(tx.purchaseReturn.create).not.toHaveBeenCalled();
+    // Wrong count → refused too.
+    await expect(controller.createReturn({ items: [{ productId: "product-1", quantity: 2, serials: ["IMEI-1"] }] }, user)).rejects.toThrow(/سریال\/IMEI هر دستگاه/);
+    // A unit that already left the shop cannot be returned again.
+    tx.serialUnit.findMany.mockResolvedValue([{ serial: "IMEI-1", productId: "product-1", status: "IN_STOCK" }, { serial: "IMEI-2", productId: "product-1", status: "SOLD" }]);
+    await expect(controller.createReturn({ items: [{ productId: "product-1", quantity: 2, serials: ["IMEI-1", "IMEI-2"] }] }, user)).rejects.toThrow(/IMEI-2 در انبار نیست/);
+    expect(tx.purchaseReturn.create).not.toHaveBeenCalled();
+    // The happy path: both units leave the tracked stock for good.
+    tx.serialUnit.findMany.mockResolvedValue([{ serial: "IMEI-1", productId: "product-1", status: "IN_STOCK" }, { serial: "IMEI-2", productId: "product-1", status: "IN_STOCK" }]);
+    await controller.createReturn({ items: [{ productId: "product-1", quantity: 2, serials: ["IMEI-1", "IMEI-2"] }] }, user);
+    expect(tx.serialUnit.update).toHaveBeenCalledTimes(2);
+    expect(tx.serialUnit.update).toHaveBeenCalledWith(expect.objectContaining({ where: { serial: "IMEI-1" }, data: expect.objectContaining({ status: "RETURNED" }) }));
   });
 });

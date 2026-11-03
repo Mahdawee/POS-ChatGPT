@@ -20,9 +20,11 @@ function setup(products = [
     auditLog: { create: jest.fn().mockResolvedValue({}) },
   };
   const checkout = jest.fn();
+  // The controller runs conversions inside one transaction via checkoutInTx.
+  const checkoutInTx = jest.fn();
   const prisma = { $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)), quote: tx.quote, auditLog: tx.auditLog };
-  const controller = new QuotesController(prisma as never, { checkout } as never);
-  return { controller, tx, checkout, quoteRow };
+  const controller = new QuotesController(prisma as never, { checkout, checkoutInTx } as never);
+  return { controller, tx, checkout, checkoutInTx, quoteRow };
 }
 
 describe("Quotes", () => {
@@ -44,15 +46,16 @@ describe("Quotes", () => {
   });
 
   it("converts an open quote through the shared checkout pipeline and links the sale", async () => {
-    const { controller, tx, checkout, quoteRow } = setup();
+    const { controller, tx, checkoutInTx, quoteRow } = setup();
     tx.quote.findUnique.mockResolvedValue({
       ...quoteRow,
       customerId: "customer-1",
       items: [{ productId: "product-1", quantity: 2 }],
     });
-    checkout.mockResolvedValue({ id: "sale-77", total: 20 });
+    checkoutInTx.mockResolvedValue({ id: "sale-77", total: 20 });
     const updated = (await controller.convert("quote-1", user)) as { status: string; saleId: string };
-    expect(checkout).toHaveBeenCalledWith(
+    expect(checkoutInTx).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({ items: [{ productId: "product-1", quantity: 2 }], paymentMethod: "CREDIT", customerId: "customer-1" }),
       user,
     );
@@ -61,11 +64,19 @@ describe("Quotes", () => {
   });
 
   it("converts an anonymous quote as a plain cash sale", async () => {
-    const { controller, tx, checkout, quoteRow } = setup();
+    const { controller, tx, checkoutInTx, quoteRow } = setup();
     tx.quote.findUnique.mockResolvedValue({ ...quoteRow, customerId: null, items: [{ productId: "product-1", quantity: 1 }] });
-    checkout.mockResolvedValue({ id: "sale-78" });
+    checkoutInTx.mockResolvedValue({ id: "sale-78" });
     await controller.convert("quote-1", user);
-    expect(checkout).toHaveBeenCalledWith(expect.objectContaining({ paymentMethod: "CASH" }), user);
+    expect(checkoutInTx).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ paymentMethod: "CASH" }), user);
+  });
+
+  it("converts atomically — a checkout failure leaves the quote OPEN (no double sale)", async () => {
+    const { controller, tx, checkoutInTx, quoteRow } = setup();
+    tx.quote.findUnique.mockResolvedValue({ ...quoteRow, customerId: "customer-1", items: [{ productId: "product-1", quantity: 1 }] });
+    checkoutInTx.mockRejectedValue(new Error("موجودی کافی نیست"));
+    await expect(controller.convert("quote-1", user)).rejects.toThrow(/موجودی/);
+    expect(tx.quote.update).not.toHaveBeenCalled();
   });
 
   it("refuses to convert or void a quote that is not open", async () => {

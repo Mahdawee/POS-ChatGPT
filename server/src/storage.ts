@@ -2,6 +2,14 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+/** Absolute file path of the SQLite database — the `file:` prefix and any
+ *  connection parameters (e.g. ?socket_timeout=15) stripped. File-level
+ *  operations (backup/restore) need the bare path: a Windows path carrying a
+ *  `?` is not even a legal filename and writeFileSync would fail. */
+export function databaseFilePath(): string {
+  return (process.env.DATABASE_URL || "").replace(/^file:/, "").replace(/\?.*$/, "");
+}
+
 export function configureLocalStorage(): string {
   const dataDir = resolve(process.env.POS_DATA_DIR || join(process.env.APPDATA || join(homedir(), ".local", "share"), "DarPOSERP"));
   mkdirSync(dataDir, { recursive: true });

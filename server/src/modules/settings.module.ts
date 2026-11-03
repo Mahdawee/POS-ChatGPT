@@ -6,7 +6,7 @@ import { AdminOnly, CurrentUser, SessionUser } from "../auth";
 import { createBackup } from "../backup";
 import { RestoreBackupDto, SettingDto } from "../dto";
 import { PrismaService } from "../prisma.service";
-import { configureLocalStorage } from "../storage";
+import { configureLocalStorage, databaseFilePath } from "../storage";
 import { BackupScheduler } from "./backup-scheduler";
 
 @Controller("settings")
@@ -167,10 +167,13 @@ export class SettingsController {
     if (buffer.length < 100 || buffer.subarray(0, 16).toString("latin1") !== "SQLite format 3\u0000") {
       throw new BadRequestException("فایل انتخاب‌شده یک نسخهٔ پشتیبان معتبر این برنامه نیست.");
     }
-    const dbPath = (process.env.DATABASE_URL || "").replace(/^file:/, "");
+    const dbPath = databaseFilePath();
     if (!dbPath) throw new BadRequestException("مسیر دیتابیس محلی پیدا نشد.");
     const safetyPath = await createBackup(this.prisma, "before-restore");
     await this.prisma.$disconnect();
+    // A stale -wal/-shm belonging to the REPLACED database must never be
+    // replayed over the freshly restored file.
+    for (const suffix of ["-wal", "-shm"]) { try { unlinkSync(`${dbPath}${suffix}`); } catch { /* already gone */ } }
     try {
       writeFileSync(dbPath, buffer);
       await this.prisma.$connect();

@@ -133,7 +133,8 @@ describe("POS checkout", () => {
   it("replays the original receipt when the same idempotency key arrives again", async () => {
     const { service, prisma, tx } = setup(5);
     const first = { id: "sale-9", receiptNo: "POS-9", items: [] };
-    prisma.sale.findUnique.mockResolvedValue(first);
+    // The idempotency lookup runs inside the checkout transaction now.
+    tx.sale.findUnique.mockResolvedValue(first);
     const replayed = await service.checkout({ items: [{ productId: "product-1", quantity: 1 }], paymentMethod: "CASH" }, admin, "key-1");
     expect(replayed).toBe(first);
     expect(tx.sale.create).not.toHaveBeenCalled(); // no double charge, no stock movement

@@ -64,23 +64,29 @@ export class QuotesController {
   /** تبدیل پیش‌فاکتور به فروش واقعی؛ سپس پیش‌فاکتور CONVERTED می‌شود. */
   @Post(":id/convert")
   async convert(@Param("id") id: string, @CurrentUser() user: SessionUser) {
-    const quote = await this.prisma.quote.findUnique({ where: { id }, include: { items: true, customer: true } });
-    if (!quote) throw new BadRequestException("پیش‌فاکتور پیدا نشد.");
-    if (quote.status !== "OPEN") throw new BadRequestException("این پیش‌فاکتور قبلاً تبدیل یا ابطال شده است.");
-    if (!quote.items.length) throw new BadRequestException("پیش‌فاکتور خالی است.");
-    if (quote.items.some((item) => item.quantity <= 0)) throw new BadRequestException("مقدار یکی از اقلام پیش‌فاکتور معتبر نیست.");
-    // A quote for a named customer defaults to credit (the usual "approve
-    // now, pay later" flow); anonymous quotes become plain cash sales.
-    const paymentMethod = quote.customerId ? "CREDIT" : "CASH";
-    // Same checkout pipeline as the POS: prices re-checked, stock reserved,
-    // invoice numbered, credit limit enforced.
-    const sale = (await this.checkoutService.checkout(
-      { items: quote.items.map((item) => ({ productId: item.productId, quantity: item.quantity })), paymentMethod, customerId: quote.customerId || undefined, note: `از پیش‌فاکتور ${quote.quoteNo}` },
-      user,
-    )) as { id: string };
-    const updated = await this.prisma.quote.update({ where: { id }, data: { status: "CONVERTED", saleId: sale.id, convertedAt: new Date() }, include: { items: true } });
-    await this.prisma.auditLog.create({ data: { actor: user.username, action: "QUOTE_CONVERT", entity: "Quote", entityId: id, detail: sale.id } });
-    return updated;
+    // ONE transaction: the sale and the quote's OPEN → CONVERTED transition
+    // commit together, so a failure between them can never leave an OPEN
+    // quote convertible a second time (double sale).
+    return this.prisma.$transaction(async (tx) => {
+      const quote = await tx.quote.findUnique({ where: { id }, include: { items: true, customer: true } });
+      if (!quote) throw new BadRequestException("پیش‌فاکتور پیدا نشد.");
+      if (quote.status !== "OPEN") throw new BadRequestException("این پیش‌فاکتور قبلاً تبدیل یا ابطال شده است.");
+      if (!quote.items.length) throw new BadRequestException("پیش‌فاکتور خالی است.");
+      if (quote.items.some((item) => item.quantity <= 0)) throw new BadRequestException("مقدار یکی از اقلام پیش‌فاکتور معتبر نیست.");
+      // A quote for a named customer defaults to credit (the usual "approve
+      // now, pay later" flow); anonymous quotes become plain cash sales.
+      const paymentMethod = quote.customerId ? "CREDIT" : "CASH";
+      // Same checkout pipeline as the POS: prices re-checked, stock deducted,
+      // invoice numbered, credit limit enforced.
+      const sale = (await this.checkoutService.checkoutInTx(
+        tx,
+        { items: quote.items.map((item) => ({ productId: item.productId, quantity: item.quantity })), paymentMethod, customerId: quote.customerId || undefined, note: `از پیش‌فاکتور ${quote.quoteNo}` },
+        user,
+      )) as { id: string };
+      const updated = await tx.quote.update({ where: { id }, data: { status: "CONVERTED", saleId: sale.id, convertedAt: new Date() }, include: { items: true } });
+      await tx.auditLog.create({ data: { actor: user.username, action: "QUOTE_CONVERT", entity: "Quote", entityId: id, detail: sale.id } });
+      return updated;
+    });
   }
 
   @Post(":id/void")

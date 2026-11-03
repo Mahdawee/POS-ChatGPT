@@ -98,7 +98,10 @@ class CashController {
     // must never invalidate the already-committed close, so it is best effort.
     try {
       const path = await createBackup(this.prisma, "auto");
-      pruneAutoBackups(10);
+      // Prune the folder the auto backup was actually written to (a custom
+      // backupDir from Settings would otherwise grow without bound).
+      const customDir = (await this.prisma.setting.findUnique({ where: { key: "backupDir" } }))?.value;
+      pruneAutoBackups(10, customDir);
       await this.prisma.auditLog.create({ data: { actor: user.username, action: "CREATE_BACKUP", entity: "Database", detail: path } });
     } catch (error) {
       await this.prisma.auditLog.create({ data: { actor: user.username, action: "BACKUP_FAILED", entity: "Database", detail: String(error) } }).catch(() => undefined);

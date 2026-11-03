@@ -37,6 +37,12 @@ export class PurchasesController {
     return this.prisma.$transaction(async (tx) => {
       const products = await tx.product.findMany({ where: { id: { in: lines.map(([id]) => id) }, isActive: true } });
       if (products.length !== lines.length) throw new BadRequestException("یکی از کالاهای رسید فعال نیست یا پیدا نشد.");
+      // A bundle's own stock is never touched by sales (its components are
+      // deducted instead), so "buying" a bundle would freeze that number
+      // forever and mislead the POS. Assemble kits from their components.
+      for (const product of products) {
+        if (product.isBundle) throw new BadRequestException(`«${product.name}» بسته است و خریدنی نیست؛ اجزای آن را جداگانه وارد کنید.`);
+      }
       const productMap = new Map(products.map((product) => [product.id, product]));
       let total = 0;
       for (const [, { quantity, unitCost }] of lines) {
@@ -118,10 +124,16 @@ export class PurchaseReturnsController {
 
   @Post("returns")
   async createReturn(@Body() dto: PurchaseReturnDto, @CurrentUser() user: SessionUser) {
-    // Merge duplicated product lines before touching the database.
-    const merged = new Map<string, number>();
-    for (const line of dto.items) merged.set(line.productId, (merged.get(line.productId) || 0) + line.quantity);
-    const lines = [...merged.entries()];
+    // Merge duplicated product lines before touching the database. Serials
+    // ride along per line (IMEI units going back to the supplier).
+    const merged = new Map<string, { quantity: number; serials: string[] }>();
+    for (const line of dto.items) {
+      const current = merged.get(line.productId);
+      merged.set(line.productId, { quantity: (current?.quantity || 0) + line.quantity, serials: (current?.serials || []).concat(line.serials || []) });
+    }
+    const lines = [...merged.entries()].map(([productId, { quantity }]) => [productId, quantity] as [string, number]);
+    const serialsByProduct = new Map<string, string[]>();
+    for (const [productId, { serials }] of merged) if (serials.length) serialsByProduct.set(productId, serials);
     return this.prisma.$transaction(async (tx) => {
       const products = await tx.product.findMany({ where: { id: { in: lines.map(([id]) => id) } } });
       if (products.length !== lines.length) throw new BadRequestException("کالا پیدا نشد.");
@@ -139,6 +151,21 @@ export class PurchaseReturnsController {
         const product = productMap.get(productId)!;
         // Goods must physically be in stock to go back to the supplier.
         if (quantity > product.stock) throw new BadRequestException("موجودی انبار برای برگشت این کالا کافی نیست.");
+        // Serialized goods must name the exact units leaving the shop;
+        // otherwise their IMEIs would stay "in stock" forever and could be
+        // handed to a customer that never arrived.
+        if (product.isSerialized) {
+          const serials = (serialsByProduct.get(productId) || []).map((serial) => serial.trim()).filter(Boolean);
+          if (!serials.length || serials.length !== Math.round(quantity)) throw new BadRequestException(`برای برگشت «${product.name}» شمارهٔ سریال/IMEI هر دستگاه را وارد کنید (${Math.round(quantity)} عدد).`);
+          if (new Set(serials).size !== serials.length) throw new BadRequestException(`سریال تکراری در برگشت «${product.name}» هست؛ هر دستگاه را یک بار وارد کنید.`);
+          const units = await tx.serialUnit.findMany({ where: { serial: { in: serials } } });
+          const unitMap = new Map(units.map((unit) => [unit.serial, unit]));
+          for (const serial of serials) {
+            const unit = unitMap.get(serial);
+            if (!unit || unit.productId !== productId) throw new BadRequestException(`سریال ${serial} برای این کالا ثبت نشده است.`);
+            if (unit.status !== "IN_STOCK") throw new BadRequestException(`سریال ${serial} در انبار نیست و قابل برگشت نیست.`);
+          }
+        }
         const unitCost = dto.items.find((line) => line.productId === productId)?.unitCost ?? product.cost;
         const lineTotal = Math.round(quantity * unitCost);
         if (!Number.isSafeInteger(lineTotal) || lineTotal > 2147483647) throw new BadRequestException("مبلغ یک قلم از سقف مجاز بیشتر است.");
@@ -155,6 +182,13 @@ export class PurchaseReturnsController {
         const product = productMap.get(row.productId)!;
         await tx.product.update({ where: { id: row.productId }, data: { stock: { decrement: row.quantity } } });
         await tx.inventoryMovement.create({ data: { productId: row.productId, type: "PURCHASE_RETURN", quantity: row.quantity, stockAfter: product.stock - row.quantity, reference: returnNo, note: "برگشت خرید" } });
+        // Tracked units physically leave the shop: mark them RETURNED so the
+        // serial list stays truthful and they can never be sold here again.
+        if (product.isSerialized) {
+          for (const serial of (serialsByProduct.get(row.productId) || []).map((value) => value.trim()).filter(Boolean)) {
+            await tx.serialUnit.update({ where: { serial }, data: { status: "RETURNED", note: `برگشت به تأمین‌کننده ${returnNo}`, updatedAt: new Date() } });
+          }
+        }
       }
       await tx.auditLog.create({ data: { actor: user.username, action: "PURCHASE_RETURN", entity: "PurchaseReturn", entityId: record.id, detail: `${returnNo} / ${total}` } });
       return record;

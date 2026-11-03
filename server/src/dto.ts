@@ -170,6 +170,9 @@ export class PurchaseReturnLineDto {
   @IsString() productId!: string;
   @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001) @Max(2147483647) quantity!: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) unitCost?: number;
+  /** IMEI/serials of the exact units going back to the supplier
+   *  (required for serialized products). */
+  @IsOptional() @IsArray() @ArrayMaxSize(500) @IsString({ each: true }) serials?: string[];
 }
 export class PurchaseReturnDto {
   @IsOptional() @IsString() purchaseId?: string;

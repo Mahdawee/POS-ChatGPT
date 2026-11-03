@@ -312,7 +312,8 @@ describe("Round 16 — orders reserve and release stock", () => {
       $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)),
       customerOrder: { findUnique: findOrder, findMany: jest.fn().mockResolvedValue([]) },
     };
-    const checkout = { checkout: jest.fn().mockResolvedValue({ id: "sale-1", total: 100 }) };
+    // Deliveries run inside one transaction via checkoutInTx.
+    const checkout = { checkout: jest.fn().mockResolvedValue({ id: "sale-1", total: 100 }), checkoutInTx: jest.fn().mockResolvedValue({ id: "sale-1", total: 100 }) };
     const controller = new OrdersController(prisma as never, checkout as never);
     return { controller, tx, prisma, checkout, findOrder };
   }
@@ -322,6 +323,20 @@ describe("Round 16 — orders reserve and release stock", () => {
     const order = (await controller.create({ items: [{ productId: "product-1", quantity: 4 }], customerId: "customer-1" }, admin)) as { orderNo: string };
     expect(order.orderNo).toMatch(/^ORD-/);
     expect(tx.product.update).toHaveBeenCalledWith(expect.objectContaining({ data: { reserved: { increment: 4 } } }));
+  });
+
+  it("delivering runs in ONE transaction — a checkout failure leaves the order untouched", async () => {
+    const productRow = { id: "product-1", name: "چای", sku: "T-1", price: 10, stock: 10, reserved: 4, isBundle: false, isActive: true };
+    const order = { id: "order-1", orderNo: "ORD-1", status: "OPEN", customerId: "customer-1", lines: [{ id: "line-1", productId: "product-1", quantity: 4, deliveredQty: 0 }] };
+    const { controller, tx, prisma, checkout } = ordersSetup(productRow, order);
+    // The shared checkout refuses (e.g. price/stock/license): the delivery
+    // must throw inside the same transaction — no deliveredQty bump, no
+    // separate compensating transactions to half-apply.
+    checkout.checkoutInTx.mockRejectedValue(new Error("موجودی کافی نیست"));
+    await expect(controller.deliver("order-1", { deliveries: [{ lineId: "line-1", quantity: 4 }], paymentMethod: "CASH" }, admin)).rejects.toThrow(/موجودی/);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(tx.customerOrderLine.update).not.toHaveBeenCalled();
+    expect(tx.customerOrder.update).not.toHaveBeenCalled();
   });
 
   it("refuses an order above free stock", async () => {
@@ -335,7 +350,7 @@ describe("Round 16 — orders reserve and release stock", () => {
       { id: "order-1", orderNo: "ORD-1", status: "OPEN", customerId: "customer-1", lines: [{ id: "line-1", productId: "product-1", name: "چای", sku: "T-1", quantity: 4, unitPrice: 10, deliveredQty: 0 }] },
     );
     await controller.deliver("order-1", { deliveries: [{ lineId: "line-1", quantity: 4 }], paymentMethod: "CASH" }, admin);
-    expect(checkout.checkout).toHaveBeenCalledWith(expect.objectContaining({ items: [{ productId: "product-1", quantity: 4, discount: 0, serials: undefined }], paymentMethod: "CASH" }), admin);
+    expect(checkout.checkoutInTx).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ items: [{ productId: "product-1", quantity: 4, discount: 0, serials: undefined }], paymentMethod: "CASH" }), admin);
     expect(tx.product.update).toHaveBeenCalledWith(expect.objectContaining({ data: { reserved: { decrement: 4 } } }));
     expect(tx.customerOrderLine.update).toHaveBeenCalledWith(expect.objectContaining({ data: { deliveredQty: { increment: 4 } } }));
   });

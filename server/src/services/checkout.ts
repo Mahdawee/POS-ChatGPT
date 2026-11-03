@@ -53,9 +53,18 @@ export class CheckoutService {
   }
 
   async checkout(dto: SaleDto, user: SessionUser, idempotencyKey?: string): Promise<unknown> {
+    return this.prisma.$transaction((tx) => this.checkoutInTx(tx, dto, user, idempotencyKey));
+  }
+
+  /** The whole checkout inside a CALLER-PROVIDED transaction. Order delivery
+   *  and quote conversion use this so that their reservation release, the
+   *  sale itself and their own workflow writes commit — or roll back — as
+   *  ONE unit: a crash between the steps can never leave an order
+   *  deliverable twice or an OPEN quote convertible again (double sale). */
+  async checkoutInTx(tx: Prisma.TransactionClient, dto: SaleDto, user: SessionUser, idempotencyKey?: string): Promise<unknown> {
     if (this.license) await this.license.assertLicensed();
     if (idempotencyKey) {
-      const previous = await this.prisma.sale.findUnique({ where: { idempotencyKey }, include: { items: true, customer: true } });
+      const previous = await tx.sale.findUnique({ where: { idempotencyKey }, include: { items: true, customer: true } });
       if (previous) return previous;
     }
     const quantities = new Map<string, number>();
@@ -67,7 +76,7 @@ export class CheckoutService {
       if (line.serials?.length) serialsByProduct.set(line.productId, (serialsByProduct.get(line.productId) || []).concat(line.serials));
     }
     const lines = [...quantities.entries()];
-    return this.prisma.$transaction(async (tx) => {
+    {
       const products = await tx.product.findMany({ where: { id: { in: lines.map(([id]) => id) }, isActive: true } });
       if (products.length !== lines.length) throw new BadRequestException("یکی از کالاها غیرفعال است یا پیدا نشد.");
       const productMap = new Map(products.map((product) => [product.id, product as StockishProduct]));
@@ -277,6 +286,6 @@ export class CheckoutService {
       }
       await tx.auditLog.create({ data: { actor: user.username, action: "CHECKOUT", entity: "Sale", entityId: sale.id, detail: `${receiptNo} / ${total}` } });
       return sale;
-    });
+    }
   }
 }
