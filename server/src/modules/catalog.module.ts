@@ -60,9 +60,9 @@ export class ProductsController {
     if (categoryId) where.categoryId = categoryId;
     // Sortable columns are whitelisted — the value also reaches raw SQL below,
     // so an unknown name must never pass through.
-    const column = (["name", "sku", "price", "stock", "cost"] as const).includes(sort as "name" | "sku" | "price" | "stock" | "cost") ? sort : "name";
+    const column = (["name", "sku", "price", "stock", "cost", "expiry"] as const).includes(sort as "name" | "sku" | "price" | "stock" | "cost" | "expiry") ? sort : "name";
     const direction: "asc" | "desc" = dir === "desc" ? "desc" : "asc";
-    const orderBy = column === "stock" ? { stock: direction } : column === "price" ? { price: direction } : column === "cost" ? { cost: direction } : column === "sku" ? { sku: direction } : { name: direction };
+    const orderBy = column === "stock" ? { stock: direction } : column === "price" ? { price: direction } : column === "cost" ? { cost: direction } : column === "sku" ? { sku: direction } : column === "expiry" ? { expiryDate: { sort: direction, nulls: "last" as const } } : { name: direction };
     const take = 100;
     const offset = Math.max(0, Number(skip) || 0);
     const include = { category: true, bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true, stock: true, reserved: true, isSerialized: true } } } }, serialUnits: { where: { status: "IN_STOCK" }, select: { id: true } } } as const;

@@ -1,29 +1,43 @@
 import { BadRequestException, Body, Controller, Get, Headers, Module, NotFoundException, Param, Post, Query } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
-import { CurrentUser, SessionUser } from "../auth";
-import { SaleDto, SaleReturnDto } from "../dto";
+import { AdminOnly, CurrentUser, SessionUser } from "../auth";
+import { SaleDto, SaleReturnDto, VoidDto } from "../dto";
 import { PrismaService } from "../prisma.service";
 import { CheckoutService } from "../services/checkout";
+import type { Prisma } from "@prisma/client";
 
 @Controller("sales")
 export class SalesController {
   constructor(private readonly prisma: PrismaService, private readonly checkoutService: CheckoutService) {}
-  @Get() list(@Query("from") from?: string, @Query("to") to?: string, @Query("skip") skip?: string, @Query("take") take?: string, @Query("method") method?: string, @Query("sort") sort?: string, @Query("dir") dir?: string) {
-    const where: { createdAt?: { gte?: Date; lte?: Date }; paymentMethod?: "CASH" | "MOBILE" | "CREDIT" | "WALLET" } = {};
+  @Get() async list(@Query("from") from?: string, @Query("to") to?: string, @Query("skip") skip?: string, @Query("take") take?: string, @Query("method") method?: string, @Query("sort") sort?: string, @Query("dir") dir?: string, @Query("q") q?: string) {
+    const where: Prisma.SaleWhereInput = {};
     // Unparsable date strings are ignored rather than crashing the query.
-    if (from && Number.isFinite(Date.parse(from))) where.createdAt = { ...where.createdAt, gte: new Date(from) };
-    if (to && Number.isFinite(Date.parse(to.length === 10 ? `${to}T23:59:59.999` : to))) where.createdAt = { ...where.createdAt, lte: new Date(to.length === 10 ? `${to}T23:59:59.999` : to) };
+    const createdAt: Prisma.DateTimeFilter = {};
+    if (from && Number.isFinite(Date.parse(from))) createdAt.gte = new Date(from);
+    const toDay = to ? (to.length === 10 ? `${to}T23:59:59.999` : to) : "";
+    if (toDay && Number.isFinite(Date.parse(toDay))) createdAt.lte = new Date(toDay);
+    if (createdAt.gte || createdAt.lte) where.createdAt = createdAt;
     // Payment-method filter for the register's history table.
     if (method === "CASH" || method === "MOBILE" || method === "CREDIT" || method === "WALLET") where.paymentMethod = method;
-    // Windowed listing ("load more"): each request is capped so a busy
-    // register never pulls its whole history at once.
+    // Server-side search (receipt/invoice number, customer or cashier name)
+    // so it composes with pagination instead of only searching one page.
+    const search = q?.trim();
+    if (search) where.OR = [
+      { receiptNo: { contains: search } }, { invoiceNo: { contains: search } },
+      { customer: { name: { contains: search } } }, { user: { displayName: { contains: search } } },
+    ];
     const limit = Math.min(300, Math.max(1, Number(take) || 100));
     const offset = Math.max(0, Number(skip) || 0);
-    // Column sorting for the history table (invoice time or total). Unknown
-    // values fall back to the default newest-first window.
+    // Column sorting for the history table; unknown values fall back to the
+    // default newest-first window.
     const direction = dir === "asc" ? "asc" as const : "desc" as const;
-    const orderBy = sort === "total" ? { total: direction } : { createdAt: direction };
-    return this.prisma.sale.findMany({ where, skip: offset, take: limit, include: { customer: true, user: { select: { displayName: true } }, items: true, returns: { select: { id: true, total: true } } }, orderBy });
+    const orderBy = sort === "total" ? { total: direction } : sort === "receiptNo" ? { receiptNo: direction } : sort === "customer" ? { customer: { name: direction } } : { createdAt: direction };
+    // { list, total } so the client can render real page numbers.
+    const [list, total] = await Promise.all([
+      this.prisma.sale.findMany({ where, skip: offset, take: limit, include: { customer: true, user: { select: { displayName: true } }, items: true, returns: { select: { id: true, total: true } } }, orderBy }),
+      this.prisma.sale.count({ where }),
+    ]);
+    return { list, total };
   }
 
   /** آخرین فاکتور یک مشتری با اقلامش — برای «تکرار آخرین خرید» در صندوق. */
@@ -233,6 +247,71 @@ export class SalesController {
   checkout(@Body() dto: SaleDto, @CurrentUser() user: SessionUser, @Headers("idempotency-key") requestKey?: string) {
     // Keyed sales (offline queue retries) return the original receipt.
     return this.checkoutService.checkout(dto, user, requestKey?.slice(0, 100));
+  }
+
+  /**
+   * ابطال فاکتور (void) — nothing is deleted: the sale row, its items and
+   * every effect stay in the database; the void columns record when, why and
+   * by whom. At void time the physical effects are reversed in ONE
+   * transaction: shelf stock comes back (bundles restock their components),
+   * handed-over serials return to sellable, wallet spending is refunded, and
+   * the cash part is taken back out of the drawer IF that drawer is still
+   * open (closed sessions are history and stay untouched). Reports, debt and
+   * the dashboard exclude voided rows from then on.
+   */
+  @AdminOnly()
+  @Post(":id/void")
+  async voidSale(@Param("id") id: string, @Body() dto: VoidDto, @CurrentUser() user: SessionUser) {
+    return this.prisma.$transaction(async (tx) => {
+      const sale = await tx.sale.findUnique({ where: { id }, include: { items: true, returns: { select: { id: true } } } });
+      if (!sale) throw new NotFoundException("فروش پیدا نشد.");
+      if (sale.voidedAt) throw new BadRequestException("این فاکتور قبلاً ابطال شده است.");
+      if (sale.returns.length) throw new BadRequestException("فاکتوری که برگشت کالا دارد قابل ابطال نیست؛ نخست وضعیت برگشتی آن را بررسی کنید.");
+      // An installment plan that already collected money must be settled by
+      // hand first — reversing collected installments automatically would
+      // rewrite payment history.
+      const plans = await tx.installmentPlan.findMany({ where: { saleId: id } });
+      if (plans.some((plan) => plan.paidAmount > 0)) throw new BadRequestException("برای این فاکتور قسط پرداخت‌شده وجود دارد؛ نخست اقساط را تسویه کنید.");
+
+      // Shelf stock comes back — bundles expand into their components.
+      const products = await tx.product.findMany({ where: { id: { in: [...new Set(sale.items.map((item) => item.productId))] } }, include: { bundleComponents: true } });
+      const byId = new Map(products.map((product) => [product.id, product]));
+      const restock = new Map<string, number>();
+      for (const item of sale.items) {
+        const product = byId.get(item.productId);
+        if (!product) continue;
+        if (product.isBundle) {
+          for (const part of product.bundleComponents) restock.set(part.componentId, (restock.get(part.componentId) || 0) + part.quantity * item.quantity);
+        } else restock.set(product.id, (restock.get(product.id) || 0) + item.quantity);
+      }
+      for (const [productId, quantity] of restock) {
+        const product = await tx.product.update({ where: { id: productId }, data: { stock: { increment: quantity } }, select: { stock: true } });
+        await tx.inventoryMovement.create({ data: { productId, type: "ADJUSTMENT_IN", quantity, stockAfter: product.stock, note: `ابطال فاکتور ${sale.receiptNo} — ${dto.reason}` } });
+      }
+      // Serial units handed over with this invoice become sellable again
+      // (the row keeps its links — the trail is the audit).
+      await tx.serialUnit.updateMany({ where: { saleItemId: { in: sale.items.map((item) => item.id) }, status: "SOLD" }, data: { status: "IN_STOCK" } });
+      // Wallet spending is refunded to the customer's prepaid balance.
+      if (sale.walletPart > 0 && sale.customerId) {
+        await tx.customer.update({ where: { id: sale.customerId }, data: { walletBalance: { increment: sale.walletPart } } });
+        await tx.customerWalletTxn.create({ data: { customerId: sale.customerId, type: "REFUND", amount: sale.walletPart, note: `ابطال فاکتور ${sale.receiptNo} — ${dto.reason}`, saleId: sale.id, userId: user.id } });
+      }
+      // Cash part: only the STILL-OPEN drawer gives the money back (as a
+      // normal OUT movement, so the close math stays honest). Closed drawers
+      // are history — the void itself is the correction.
+      if (sale.cashPart > 0 && sale.cashSessionId) {
+        const session = await tx.cashSession.findUnique({ where: { id: sale.cashSessionId }, select: { id: true, closedAt: true } });
+        if (session && !session.closedAt) {
+          await tx.cashMovement.create({ data: { type: "OUT", amount: sale.cashPart, description: `ابطال فاکتور ${sale.receiptNo} — ${dto.reason}`, cashSessionId: session.id } });
+        }
+      }
+      // Unpaid installment plans on this invoice are voided with it.
+      for (const plan of plans) await tx.installmentPlan.update({ where: { id: plan.id }, data: { status: "VOID" } });
+
+      await tx.sale.update({ where: { id }, data: { voidedAt: new Date(), voidReason: dto.reason, voidedBy: user.username } });
+      await tx.auditLog.create({ data: { actor: user.username, action: "VOID_SALE", entity: "Sale", entityId: id, detail: `${sale.receiptNo} — ${dto.reason}` } });
+      return { id: sale.id, receiptNo: sale.receiptNo, voidedAt: new Date() };
+    });
   }
 }
 

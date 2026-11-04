@@ -361,7 +361,7 @@ export function InstallmentsPanel({ customerId, notify }: { customerId: string; 
       <tbody>{plans.map((plan) => <tr key={plan.id}>
         <td><b>{money(plan.total)}</b>{plan.note && <small className="block muted">{plan.note}</small>}</td>
         <td>{money(plan.paidAmount)}</td>
-        <td>{plan.status === "SETTLED" ? <b className="green-text">{t("تسویه")}</b> : <b className="amber-text">{t("باز")}</b>}</td>
+        <td>{plan.status === "SETTLED" ? <b className="green-text">{t("تسویه")}</b> : plan.status === "VOID" ? <b className="muted" style={{ textDecoration: "line-through" }}>{t("ابطال‌شده")}</b> : <b className="amber-text">{t("باز")}</b>}</td>
         <td><div className="installment-chips">{plan.installments.map((inst) => {
           const overdue = !inst.paidAt && new Date(inst.dueDate) < new Date();
           return <button key={inst.id} className={`chip ${inst.paidAt ? "done" : overdue ? "overdue" : ""}`} title={`${t("سررسید")}: ${dateOnly(inst.dueDate)}`} onClick={() => !inst.paidAt && plan.status === "OPEN" && void pay(plan, inst.id)}>

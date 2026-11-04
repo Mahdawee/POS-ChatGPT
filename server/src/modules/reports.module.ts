@@ -66,7 +66,7 @@ export class ReportsController {
       this.prisma.supplier.findMany({ select: { id: true, name: true, phone: true }, orderBy: { name: "asc" } }),
       customerBalances(this.prisma),
       supplierBalances(this.prisma),
-      this.prisma.sale.findMany({ where: { creditPart: { gt: 0 } }, select: { customerId: true, createdAt: true, creditPart: true }, orderBy: { createdAt: "asc" } }),
+      this.prisma.sale.findMany({ where: { creditPart: { gt: 0 }, voidedAt: null }, select: { customerId: true, createdAt: true, creditPart: true }, orderBy: { createdAt: "asc" } }),
       this.prisma.saleReturn.findMany({ where: { sale: { creditPart: { gt: 0 } } }, select: { creditRelief: true, createdAt: true, sale: { select: { customerId: true } } }, orderBy: { createdAt: "asc" } }),
       this.prisma.customerPayment.findMany({ select: { customerId: true, amount: true, createdAt: true }, orderBy: { createdAt: "asc" } }),
     ]);
@@ -133,11 +133,11 @@ export class ReportsController {
     const [sales, returns, purchasesAgg, expensesAgg, mix, users, sessions] = await Promise.all([
       // Hard cap protects memory on very long ranges; a small shop cannot
       // realistically reach 50k sales inside one report window.
-      this.prisma.sale.findMany({ where: { createdAt: range }, take: 50000, include: { items: { include: { product: { select: { categoryId: true, category: { select: { name: true } } } } } } } }),
+      this.prisma.sale.findMany({ where: { createdAt: range, voidedAt: null }, take: 50000, include: { items: { include: { product: { select: { categoryId: true, category: { select: { name: true } } } } } } } }),
       this.prisma.saleReturn.findMany({ where: { createdAt: range }, include: { items: { include: { product: { select: { category: { select: { name: true } } } } } }, sale: { select: { cashSessionId: true } } } }),
-      this.prisma.purchase.aggregate({ _sum: { total: true }, where: { createdAt: range } }),
+      this.prisma.purchase.aggregate({ _sum: { total: true }, where: { createdAt: range, voidedAt: null } }),
       this.prisma.expense.aggregate({ _sum: { amount: true }, where: { createdAt: range } }),
-      this.prisma.sale.aggregate({ _sum: { cashPart: true, mobilePart: true, creditPart: true, walletPart: true }, where: { createdAt: range } }),
+      this.prisma.sale.aggregate({ _sum: { cashPart: true, mobilePart: true, creditPart: true, walletPart: true }, where: { createdAt: range, voidedAt: null } }),
       this.prisma.user.findMany({ select: { id: true, displayName: true } }),
       this.prisma.cashSession.findMany({ where: { openedAt: { lte: end } }, select: { id: true, userId: true, openedAt: true, closedAt: true }, orderBy: { openedAt: "desc" }, take: 200 }),
     ]);
@@ -331,6 +331,171 @@ export class ReportsController {
       };
     }
     return report;
+    });
+  }
+
+  /** Shared [start, end] window for the per-topic reports below. */
+  private reportRange(from?: string, to?: string): { start: Date; end: Date } {
+    const end = to ? new Date(to.length === 10 ? `${to}T23:59:59.999` : to) : new Date();
+    if (!to) end.setHours(23, 59, 59, 999);
+    const start = from ? new Date(from) : new Date(end.getTime() - 29 * 86400000);
+    if (!from) start.setHours(0, 0, 0, 0);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) throw new BadRequestException("بازهٔ تاریخ گزارش معتبر نیست.");
+    return { start, end };
+  }
+
+  /** گزارش خریدها: جمع، پرداخت‌شده، مانده و تفکیک تأمین‌کننده/روز. */
+  @Get("purchases")
+  async purchases(@Query("from") from?: string, @Query("to") to?: string) {
+    const { start, end } = this.reportRange(from, to);
+    return cachedReport(`purchases|${from || ""}|${to || ""}`, async () => {
+      const rows = await this.prisma.purchase.findMany({
+        where: { createdAt: { gte: start, lte: end }, voidedAt: null },
+        select: { total: true, paidAmount: true, createdAt: true, supplier: { select: { name: true } } },
+      });
+      const bySupplier = new Map<string, { name: string; total: number; count: number }>();
+      const byDay = new Map<string, { day: string; total: number }>();
+      let total = 0, paid = 0;
+      for (const row of rows) {
+        total += row.total; paid += row.paidAmount;
+        const key = row.supplier?.name || "—";
+        const bucket = bySupplier.get(key) || { name: key, total: 0, count: 0 };
+        bucket.total += row.total; bucket.count += 1; bySupplier.set(key, bucket);
+        const day = localDay(row.createdAt);
+        const dayBucket = byDay.get(day) || { day, total: 0 };
+        dayBucket.total += row.total; byDay.set(day, dayBucket);
+      }
+      return {
+        from: start.toISOString(), to: end.toISOString(), invoiceCount: rows.length,
+        total, paid, outstanding: Math.max(0, total - paid),
+        bySupplier: [...bySupplier.values()].sort((a, b) => b.total - a.total),
+        byDay: [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day)),
+      };
+    });
+  }
+
+  /** گزارش تخفیف‌ها: تخفیف فاکتور و تخفیف قلم، به تفکیک روز و کالا. */
+  @Get("discounts")
+  async discounts(@Query("from") from?: string, @Query("to") to?: string) {
+    const { start, end } = this.reportRange(from, to);
+    return cachedReport(`discounts|${from || ""}|${to || ""}`, async () => {
+      const rows = await this.prisma.sale.findMany({
+        where: { createdAt: { gte: start, lte: end }, voidedAt: null },
+        select: { discount: true, createdAt: true, items: { select: { name: true, quantity: true, discount: true } } },
+      });
+      const byDay = new Map<string, { day: string; total: number }>();
+      const perProduct = new Map<string, { name: string; quantity: number; discount: number }>();
+      let invoiceDiscount = 0, lineDiscount = 0, invoiceCount = 0;
+      for (const row of rows) {
+        const lineSum = row.items.reduce((sum, item) => sum + item.discount, 0);
+        if (row.discount > 0 || lineSum > 0) {
+          invoiceCount += 1;
+          const day = localDay(row.createdAt);
+          const bucket = byDay.get(day) || { day, total: 0 };
+          bucket.total += row.discount + lineSum; byDay.set(day, bucket);
+        }
+        invoiceDiscount += row.discount; lineDiscount += lineSum;
+        for (const item of row.items) if (item.discount > 0) {
+          const bucket = perProduct.get(item.name) || { name: item.name, quantity: 0, discount: 0 };
+          bucket.quantity += item.quantity; bucket.discount += item.discount; perProduct.set(item.name, bucket);
+        }
+      }
+      return {
+        from: start.toISOString(), to: end.toISOString(),
+        invoiceDiscount, lineDiscount, total: invoiceDiscount + lineDiscount, invoiceCount,
+        byDay: [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day)),
+        topProducts: [...perProduct.values()].sort((a, b) => b.discount - a.discount).slice(0, 12),
+      };
+    });
+  }
+
+  /** گزارش مشتریان: خرید، نسیه و کیف پول به تفکیک مشتری در بازه. */
+  @Get("customers")
+  async customers(@Query("from") from?: string, @Query("to") to?: string) {
+    const { start, end } = this.reportRange(from, to);
+    return cachedReport(`customers|${from || ""}|${to || ""}`, async () => {
+      const rows = await this.prisma.sale.findMany({
+        where: { createdAt: { gte: start, lte: end }, voidedAt: null, customerId: { not: null } },
+        select: { total: true, creditPart: true, walletPart: true, customerId: true, customer: { select: { name: true, phone: true } } },
+      });
+      const perCustomer = new Map<string, { name: string; phone: string | null; invoices: number; total: number; credit: number; wallet: number }>();
+      for (const row of rows) {
+        if (!row.customerId) continue;
+        const bucket = perCustomer.get(row.customerId) || { name: row.customer?.name || "—", phone: row.customer?.phone || null, invoices: 0, total: 0, credit: 0, wallet: 0 };
+        bucket.invoices += 1; bucket.total += row.total; bucket.credit += row.creditPart; bucket.wallet += row.walletPart;
+        perCustomer.set(row.customerId, bucket);
+      }
+      const byCustomer = [...perCustomer.values()].sort((a, b) => b.total - a.total);
+      return {
+        from: start.toISOString(), to: end.toISOString(),
+        customerCount: byCustomer.length,
+        total: byCustomer.reduce((sum, row) => sum + row.total, 0),
+        credit: byCustomer.reduce((sum, row) => sum + row.credit, 0),
+        byCustomer: byCustomer.slice(0, 50),
+      };
+    });
+  }
+
+  /** گزارش تأمین‌کنندگان: خرید و پرداخت به تفکیک تأمین‌کننده در بازه. */
+  @Get("suppliers")
+  async suppliers(@Query("from") from?: string, @Query("to") to?: string) {
+    const { start, end } = this.reportRange(from, to);
+    return cachedReport(`suppliers|${from || ""}|${to || ""}`, async () => {
+      const rows = await this.prisma.purchase.findMany({
+        where: { createdAt: { gte: start, lte: end }, voidedAt: null, supplierId: { not: null } },
+        select: { total: true, paidAmount: true, supplierId: true, supplier: { select: { name: true, phone: true } } },
+      });
+      const perSupplier = new Map<string, { name: string; phone: string | null; invoices: number; total: number; paid: number }>();
+      for (const row of rows) {
+        if (!row.supplierId) continue;
+        const bucket = perSupplier.get(row.supplierId) || { name: row.supplier?.name || "—", phone: row.supplier?.phone || null, invoices: 0, total: 0, paid: 0 };
+        bucket.invoices += 1; bucket.total += row.total; bucket.paid += row.paidAmount;
+        perSupplier.set(row.supplierId, bucket);
+      }
+      const bySupplier = [...perSupplier.values()].sort((a, b) => b.total - a.total);
+      return {
+        from: start.toISOString(), to: end.toISOString(),
+        supplierCount: bySupplier.length,
+        total: bySupplier.reduce((sum, row) => sum + row.total, 0),
+        paid: bySupplier.reduce((sum, row) => sum + row.paid, 0),
+        bySupplier: bySupplier.slice(0, 50),
+      };
+    });
+  }
+
+  /** گزارش موجودی انبار: ارزش خرید و فروش، کم‌موجود، ناموجود و انقضا. */
+  @Get("inventory")
+  async inventory() {
+    return cachedReport("inventory", async () => {
+      const products = await this.prisma.product.findMany({
+        where: { isActive: true },
+        select: { name: true, sku: true, unit: true, stock: true, backstock: true, minStock: true, cost: true, price: true, isBundle: true, expiryDate: true, category: { select: { name: true } } },
+      });
+      const goods = products.filter((product) => !product.isBundle);
+      const expiringCutoff = Date.now() + 14 * 86400000;
+      let stockValue = 0, backstockValue = 0, lowStockCount = 0, outOfStockCount = 0, expiringCount = 0, expiringValue = 0;
+      const byCategory = new Map<string, { name: string; count: number; value: number }>();
+      for (const product of goods) {
+        const value = product.stock * product.cost;
+        stockValue += value;
+        backstockValue += product.backstock * product.cost;
+        if (product.stock <= product.minStock) lowStockCount += 1;
+        if (product.stock <= 0) outOfStockCount += 1;
+        if (product.expiryDate && product.expiryDate.getTime() <= expiringCutoff && product.stock > 0) {
+          expiringCount += 1;
+          expiringValue += product.stock * product.cost;
+        }
+        const key = product.category?.name || "—";
+        const bucket = byCategory.get(key) || { name: key, count: 0, value: 0 };
+        bucket.count += 1; bucket.value += (product.stock + product.backstock) * product.cost;
+        byCategory.set(key, bucket);
+      }
+      return {
+        productCount: goods.length,
+        stockValue, backstockValue, totalValue: stockValue + backstockValue,
+        lowStockCount, outOfStockCount, expiringCount, expiringValue,
+        byCategory: [...byCategory.values()].sort((a, b) => b.value - a.value),
+      };
     });
   }
 }

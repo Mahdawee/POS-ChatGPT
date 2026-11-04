@@ -52,6 +52,12 @@ describe("Column migrations for installed databases", () => {
       `ALTER TABLE "Customer" ADD COLUMN "tier" TEXT NOT NULL DEFAULT 'RETAIL'`,
       `ALTER TABLE "Sale" ADD COLUMN "walletPart" INTEGER NOT NULL DEFAULT 0`,
       `ALTER TABLE "SaleReturn" ADD COLUMN "walletRefund" INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE "Sale" ADD COLUMN "voidedAt" DATETIME`,
+      `ALTER TABLE "Sale" ADD COLUMN "voidReason" TEXT`,
+      `ALTER TABLE "Sale" ADD COLUMN "voidedBy" TEXT`,
+      `ALTER TABLE "Purchase" ADD COLUMN "voidedAt" DATETIME`,
+      `ALTER TABLE "Purchase" ADD COLUMN "voidReason" TEXT`,
+      `ALTER TABLE "Purchase" ADD COLUMN "voidedBy" TEXT`,
     ]);
   });
 
@@ -59,11 +65,11 @@ describe("Column migrations for installed databases", () => {
     const { client, statements } = db({
       SaleItem: ["unitCost", "discount"],
       SaleReturnItem: ["unitCost"],
-      Purchase: ["paidAmount"],
+      Purchase: ["paidAmount", "voidedAt", "voidReason", "voidedBy"],
       PurchaseItem: ["expiryDate"],
       Product: ["isWeighted", "expiryDate", "wholesalePrice", "wholesaleMinQty", "backstock", "isBundle", "isSerialized", "reserved"],
       Customer: ["creditLimit", "walletBalance", "tier"],
-      Sale: ["cashPart", "mobilePart", "creditPart", "invoiceNo", "walletPart"],
+      Sale: ["cashPart", "mobilePart", "creditPart", "invoiceNo", "walletPart", "voidedAt", "voidReason", "voidedBy"],
       SaleReturn: ["creditRelief", "cashAmount", "walletRefund"],
     });
     await ensureColumnMigrations(client);

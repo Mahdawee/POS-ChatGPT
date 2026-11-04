@@ -1,4 +1,4 @@
-:root{font-family:Vazirmatn,"Segoe UI",Tahoma,sans-serif;color:#1e2937;background:#f4f6f8;font-synthesis:none;text-rendering:optimizeLegibility;font-smooth:always;font-optical-sizing:auto;font-weight:400;
+:root{--mono:ui-monospace,"Cascadia Code","JetBrains Mono",Consolas,monospace;font-family:Vazirmatn,"Segoe UI",Tahoma,sans-serif;color:#1e2937;background:#f4f6f8;font-synthesis:none;text-rendering:optimizeLegibility;font-smooth:always;font-optical-sizing:auto;font-weight:400;
 /* ── Round 23 palette (light) — one token per role; dark theme only swaps these ── */
 --ink:#1f2937;--ink-2:#46525e;--ink-3:#5d6b76;--muted:#8b98a4;--faint:#9aa4ad;
 --canvas:#f4f6f8;--surface:#ffffff;--surface-2:#f8faf9;--surface-3:#f2f5f3;
@@ -345,3 +345,32 @@ html.dark .metric-icon.amber{background:#372b16;color:#dcae5e}
 .import-drop.drag,.import-drop:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink)}
 .import-paste{display:flex;flex-direction:column;gap:8px}
 .import-paste textarea{border:1px solid var(--field-line);border-radius:8px;background:var(--surface);padding:9px 11px;font-size:11px;font-family:ui-monospace,"Cascadia Code",monospace;resize:vertical;outline:0;color:inherit}
+
+/* ── Round 34: void trail, pagination, stepper facelift ───────────── */
+
+/* Rows of voided invoices stay visible (history is never deleted) but read
+ * as crossed-out bookkeeping entries. */
+tr.voided-row td { color: var(--muted); }
+tr.voided-row td.strong, tr.voided-row td b { text-decoration: line-through; text-decoration-thickness: 1px; }
+.void-banner { border-color: var(--danger-border); background: var(--danger-soft); }
+.void-banner svg { color: var(--danger-ink); flex: 0 0 auto; }
+
+/* Numbered pagination (server-paged sales/purchases ledgers). */
+.pagination-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 2px 2px; flex-wrap: wrap; }
+.pagination-pages { display: flex; align-items: center; gap: 5px; }
+.page-number, .page-arrow { min-width: 31px; height: 31px; padding: 0 8px; border: 1px solid var(--field-line); border-radius: 8px; background: var(--surface); color: var(--ink-3); font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; transition: .15s; }
+.page-number:hover:not(:disabled):not(.active), .page-arrow:hover:not(:disabled) { border-color: var(--accent-border); color: var(--accent-ink); background: var(--surface-3); }
+.page-number.active { background: var(--green); border-color: var(--green); color: #fff; cursor: default; }
+.page-gap { color: var(--faint); padding: 0 2px; font-size: 11px; }
+
+/* Classic→modern qty stepper: tighter, rounder, hover feedback, focus ring. */
+.qty-stepper { display: inline-flex; align-items: center; gap: 4px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
+.qty-stepper button { width: 27px; height: 27px; border: 0; border-radius: 7px; background: var(--surface); box-shadow: 0 1px 2px #203c4c14; font-size: 15px; line-height: 1; color: var(--ink-2); display: grid; place-items: center; transition: .12s; }
+.qty-stepper button:hover:not(:disabled) { background: var(--green); color: #fff; transform: translateY(-1px); }
+.qty-stepper button:active:not(:disabled) { transform: translateY(0); }
+.qty-stepper button:disabled { box-shadow: none; opacity: .45; }
+.qty-stepper .chip { width: auto; padding: 4px 10px; font-size: 10px; height: 27px; border-radius: 7px; }
+.qty-stepper input { width: 58px; height: 27px; text-align: center; border: 1px solid transparent; border-radius: 7px; font-size: 12px; font-weight: 600; background: var(--surface); color: var(--ink-2); }
+.qty-stepper input:focus { border-color: var(--accent-border); background: var(--surface); }
+.qty-stepper input::-webkit-outer-spin-button, .qty-stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.qty-stepper input[type=number] { -moz-appearance: textfield; appearance: textfield; }

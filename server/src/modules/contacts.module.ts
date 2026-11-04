@@ -23,7 +23,7 @@ export class CustomersController {
     const customer = await this.prisma.customer.findUnique({ where: { id } });
     if (!customer) throw new NotFoundException("مشتری پیدا نشد.");
     const [creditSales, creditReturns, paymentsTotal, payments, recentSales, walletTxns] = await Promise.all([
-      this.prisma.sale.aggregate({ _sum: { creditPart: true }, where: { customerId: id, creditPart: { gt: 0 } } }),
+      this.prisma.sale.aggregate({ _sum: { creditPart: true }, where: { customerId: id, creditPart: { gt: 0 }, voidedAt: null } }),
       this.prisma.saleReturn.aggregate({ _sum: { creditRelief: true }, where: { sale: { customerId: id, creditPart: { gt: 0 } } } }),
       this.prisma.customerPayment.aggregate({ _sum: { amount: true }, where: { customerId: id } }),
       this.prisma.customerPayment.findMany({ where: { customerId: id }, orderBy: { createdAt: "desc" }, take: 20, include: { user: { select: { displayName: true } } } }),
@@ -97,7 +97,7 @@ export class SuppliersController {
     const supplier = await this.prisma.supplier.findUnique({ where: { id } });
     if (!supplier) throw new NotFoundException("تأمین‌کننده پیدا نشد.");
     const [purchasesAgg, paymentsTotal, payments, recentPurchases] = await Promise.all([
-      this.prisma.purchase.aggregate({ _sum: { total: true, paidAmount: true }, where: { supplierId: id } }),
+      this.prisma.purchase.aggregate({ _sum: { total: true, paidAmount: true }, where: { supplierId: id, voidedAt: null } }),
       this.prisma.supplierPayment.aggregate({ _sum: { amount: true }, where: { supplierId: id } }),
       this.prisma.supplierPayment.findMany({ where: { supplierId: id }, orderBy: { createdAt: "desc" }, take: 20, include: { user: { select: { displayName: true } } } }),
       this.prisma.purchase.findMany({ where: { supplierId: id }, orderBy: { createdAt: "desc" }, take: 10, include: { items: true, user: { select: { displayName: true } } } }),

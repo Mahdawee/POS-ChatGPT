@@ -51,7 +51,7 @@ export class DashboardController {
     // months of data the card counted every dated item, not the near-expiry ones.
     const expiryCutoff = Date.now() + 14 * 24 * 60 * 60 * 1000;
     const [sales, productCount, lowStock, lowStockCountRows, expiring, recentSales, purchasesToday, returnsToday, creditSalesTotal, creditReturnsTotal, paymentsTotal, stockValue, chartSales, backroom, overdueInstallments, openOrders] = await Promise.all([
-      this.prisma.sale.findMany({ where: { createdAt: { gte: start } }, select: { total: true } }),
+      this.prisma.sale.findMany({ where: { createdAt: { gte: start }, voidedAt: null }, select: { total: true } }),
       this.prisma.product.count({ where: { isActive: true } }),
       // Bundles never carry their own stock (availability is built from their
       // components), so a kit's permanent stock=0 must not light up the
@@ -62,14 +62,14 @@ export class DashboardController {
       // "۱۲ کالا کم‌موجود" must not silently read as ۸.
       this.prisma.$queryRaw<Array<{ count: number | bigint }>>`SELECT COUNT(*) AS count FROM Product WHERE isActive = 1 AND isBundle = 0 AND stock <= minStock`,
       this.prisma.$queryRaw<Array<{ id: string; name: string; sku: string; expiryDate: string }>>`SELECT id, name, sku, expiryDate FROM Product WHERE isActive = 1 AND expiryDate IS NOT NULL AND expiryDate <= ${expiryCutoff} ORDER BY expiryDate ASC LIMIT 8`,
-      this.prisma.sale.findMany({ take: 6, include: { customer: { select: { name: true } }, user: { select: { displayName: true } }, items: true }, orderBy: { createdAt: "desc" } }),
-      this.prisma.purchase.aggregate({ _sum: { total: true }, where: { createdAt: { gte: start } } }),
+      this.prisma.sale.findMany({ take: 6, where: { voidedAt: null }, include: { customer: { select: { name: true } }, user: { select: { displayName: true } }, items: true }, orderBy: { createdAt: "desc" } }),
+      this.prisma.purchase.aggregate({ _sum: { total: true }, where: { createdAt: { gte: start }, voidedAt: null } }),
       this.prisma.saleReturn.aggregate({ _sum: { total: true, creditRelief: true }, where: { createdAt: { gte: start } } }),
-      this.prisma.sale.aggregate({ _sum: { creditPart: true }, where: { creditPart: { gt: 0 } } }),
+      this.prisma.sale.aggregate({ _sum: { creditPart: true }, where: { creditPart: { gt: 0 }, voidedAt: null } }),
       this.prisma.saleReturn.aggregate({ _sum: { creditRelief: true }, where: { sale: { creditPart: { gt: 0 } } } }),
       this.prisma.customerPayment.aggregate({ _sum: { amount: true } }),
       this.prisma.$queryRaw<Array<{ value: number | bigint }>>`SELECT COALESCE(SUM(stock * cost), 0) AS value FROM Product WHERE isActive = 1`,
-      this.prisma.sale.findMany({ where: { createdAt: { gte: chartStart } }, select: { createdAt: true, total: true } }),
+      this.prisma.sale.findMany({ where: { createdAt: { gte: chartStart }, voidedAt: null }, select: { createdAt: true, total: true } }),
       this.prisma.$queryRaw<Array<{ value: number | bigint }>>`SELECT COALESCE(SUM(backstock * cost), 0) AS value FROM Product WHERE isActive = 1`,
       // Round 16 cards: overdue installments and open pre-orders.
       this.prisma.installment.findMany({ where: { paidAt: null, dueDate: { lt: new Date() }, plan: { status: "OPEN" } }, include: { plan: { include: { customer: { select: { id: true, name: true, phone: true } } } } }, orderBy: { dueDate: "asc" }, take: 50 }),

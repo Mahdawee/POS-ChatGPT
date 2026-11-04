@@ -1,8 +1,9 @@
-import { BadRequestException, Body, Controller, Get, Module, Post, Query } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Module, NotFoundException, Param, Post, Query } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
-import { CurrentUser, SessionUser } from "../auth";
-import { PurchaseDto, PurchaseReturnDto } from "../dto";
+import { AdminOnly, CurrentUser, SessionUser } from "../auth";
+import { PurchaseDto, PurchaseReturnDto, VoidDto } from "../dto";
 import { PrismaService } from "../prisma.service";
+import type { Prisma } from "@prisma/client";
 
 /** ثبت خرید و ورود کالا به انبار */
 @Controller("purchases")
@@ -10,25 +11,39 @@ export class PurchasesController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get()
-  list(@Query("skip") skip?: string, @Query("take") take?: string, @Query("from") from?: string, @Query("to") to?: string, @Query("sort") sort?: string, @Query("dir") dir?: string) {
+  async list(@Query("skip") skip?: string, @Query("take") take?: string, @Query("from") from?: string, @Query("to") to?: string, @Query("sort") sort?: string, @Query("dir") dir?: string, @Query("q") q?: string) {
     // Windowed listing like /sales: a shop that has been buying for years
     // must still be able to page back to its oldest receipts.
     const limit = Math.min(300, Math.max(1, Number(take) || 50));
     const offset = Math.max(0, Number(skip) || 0);
-    // Date window and column sorting, mirroring the register's history table.
-    const where: { createdAt?: { gte?: Date; lte?: Date } } = {};
+    // Date window, server-side search and column sorting, mirroring the
+    // register's history table.
+    const where: Prisma.PurchaseWhereInput = {};
     // Unparsable date strings are ignored rather than crashing the query.
-    if (from && Number.isFinite(Date.parse(from))) where.createdAt = { ...where.createdAt, gte: new Date(from) };
-    if (to && Number.isFinite(Date.parse(to.length === 10 ? `${to}T23:59:59.999` : to))) where.createdAt = { ...where.createdAt, lte: new Date(to.length === 10 ? `${to}T23:59:59.999` : to) };
+    const createdAt: Prisma.DateTimeFilter = {};
+    if (from && Number.isFinite(Date.parse(from))) createdAt.gte = new Date(from);
+    const toDay = to ? (to.length === 10 ? `${to}T23:59:59.999` : to) : "";
+    if (toDay && Number.isFinite(Date.parse(toDay))) createdAt.lte = new Date(toDay);
+    if (createdAt.gte || createdAt.lte) where.createdAt = createdAt;
+    const search = q?.trim();
+    if (search) where.OR = [
+      { invoiceNo: { contains: search } },
+      { supplier: { name: { contains: search } } }, { user: { displayName: { contains: search } } },
+    ];
     const direction = dir === "asc" ? "asc" as const : "desc" as const;
-    const orderBy = sort === "total" ? { total: direction } : { createdAt: direction };
-    return this.prisma.purchase.findMany({
-      where,
-      skip: offset,
-      take: limit,
-      include: { supplier: true, user: { select: { displayName: true } }, items: true },
-      orderBy,
-    });
+    const orderBy = sort === "total" ? { total: direction } : sort === "invoiceNo" ? { invoiceNo: direction } : sort === "supplier" ? { supplier: { name: direction } } : { createdAt: direction };
+    // { list, total } so the client can render real page numbers.
+    const [list, total] = await Promise.all([
+      this.prisma.purchase.findMany({
+        where,
+        skip: offset,
+        take: limit,
+        include: { supplier: true, user: { select: { displayName: true } }, items: true },
+        orderBy,
+      }),
+      this.prisma.purchase.count({ where }),
+    ]);
+    return { list, total };
   }
 
   @Post()
@@ -118,6 +133,59 @@ export class PurchasesController {
       }
       await tx.auditLog.create({ data: { actor: user.username, action: "CREATE_PURCHASE", entity: "Purchase", entityId: purchase.id, detail: String(total) } });
       return purchase;
+    });
+  }
+
+  /**
+   * ابطال رسید خرید (void) — the receipt row and its items are never
+   * deleted; the void columns record when, why and by whom. The reversal
+   * (one transaction) takes the goods back out of the shelf and refuses to
+   * run when that is impossible: anything already sold, a consumed expiry
+   * lot or a serialized unit that left the shelf blocks the void with a
+   * clear message instead of silently corrupting stock. Payments already
+   * made to the supplier stay recorded — excluding the voided receipt from
+   * the supplier's balance turns them into a plain advance/credit.
+   */
+  @AdminOnly()
+  @Post(":id/void")
+  async voidPurchase(@Param("id") id: string, @Body() dto: VoidDto, @CurrentUser() user: SessionUser) {
+    return this.prisma.$transaction(async (tx) => {
+      const purchase = await tx.purchase.findUnique({ where: { id }, include: { items: true } });
+      if (!purchase) throw new NotFoundException("رسید خرید پیدا نشد.");
+      if (purchase.voidedAt) throw new BadRequestException("این رسید قبلاً ابطال شده است.");
+      const returns = await tx.purchaseReturn.findMany({ where: { purchaseId: id }, select: { id: true } });
+      if (returns.length) throw new BadRequestException("رسیدی که برگشت کالا دارد قابل ابطال نیست.");
+
+      // The goods must still be on the shelf, whole.
+      const products = await tx.product.findMany({ where: { id: { in: [...new Set(purchase.items.map((item) => item.productId))] } } });
+      const byId = new Map(products.map((product) => [product.id, product]));
+      const need = new Map<string, number>();
+      for (const item of purchase.items) need.set(item.productId, (need.get(item.productId) || 0) + item.quantity);
+      for (const [productId, quantity] of need) {
+        const product = byId.get(productId);
+        if (!product) continue;
+        if (product.stock < quantity) throw new BadRequestException(`«${product.name}» از این خرید قبلاً فروش/مصرف شده و موجودی برای ابطال کافی نیست.`);
+      }
+      // Serialized units that came in with this receipt must still be here.
+      const serials = await tx.serialUnit.findMany({ where: { purchaseItemId: { in: purchase.items.map((item) => item.id) } }, select: { serial: true, status: true } });
+      if (serials.some((unit) => unit.status !== "IN_STOCK")) throw new BadRequestException("دستگاه‌های سریال‌دار این خرید هنوز در انبار نیستند؛ ابطال ممکن نیست.");
+      // Expiry lots of this receipt must be untouched (fully remaining).
+      const batches = await tx.productBatch.findMany({ where: { purchaseId: id } });
+      if (batches.some((batch) => batch.remainingQty < batch.initialQty)) throw new BadRequestException("محصولات تاریخ‌دار این رسید تا حدی فروش/مصرف شده‌اند؛ ابطال ممکن نیست.");
+
+      for (const [productId, quantity] of need) {
+        const product = byId.get(productId)!;
+        const updated = await tx.product.update({ where: { id: productId }, data: { stock: { decrement: quantity } }, select: { stock: true } });
+        await tx.inventoryMovement.create({ data: { productId, type: "ADJUSTMENT_OUT", quantity: -quantity, stockAfter: updated.stock, note: `ابطال رسید خرید${purchase.invoiceNo ? ` ${purchase.invoiceNo}` : ""} — ${dto.reason}` } });
+      }
+      // The expiry lots of this receipt are exhausted (rows stay as trail).
+      for (const batch of batches) await tx.productBatch.update({ where: { id: batch.id }, data: { remainingQty: 0 } });
+      // Serial units that never really entered the shelf leave it.
+      if (serials.length) await tx.serialUnit.updateMany({ where: { purchaseItemId: { in: purchase.items.map((item) => item.id) } }, data: { status: "VOID" } });
+
+      await tx.purchase.update({ where: { id }, data: { voidedAt: new Date(), voidReason: dto.reason, voidedBy: user.username } });
+      await tx.auditLog.create({ data: { actor: user.username, action: "VOID_PURCHASE", entity: "Purchase", entityId: id, detail: `${purchase.invoiceNo || id} — ${dto.reason}` } });
+      return { id: purchase.id, invoiceNo: purchase.invoiceNo, voidedAt: new Date() };
     });
   }
 }

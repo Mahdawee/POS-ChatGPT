@@ -207,9 +207,9 @@ export default function App() {
           case "customers": return <ContactsPage kind="customers" notify={notify}/>;
           case "suppliers": return <ContactsPage kind="suppliers" notify={notify}/>;
           case "inventory": return <InventoryPage notify={notify}/>;
-          case "purchases": return <PurchasesPage notify={notify}/>;
+          case "purchases": return <PurchasesPage notify={notify} user={user}/>;
           case "orders": return <OrdersPage notify={notify}/>;
-          case "sales": return <SalesPage notify={notify}/>;
+          case "sales": return <SalesPage notify={notify} user={user}/>;
           case "reports": return <ReportsPage notify={notify}/>;
           case "expenses": return <ExpensesPage notify={notify} user={user}/>;
           case "cash": return <CashPage notify={notify}/>;

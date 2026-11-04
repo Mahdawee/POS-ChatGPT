@@ -26,7 +26,7 @@ function setup(stock = 2) {
   };
   const prisma = {
     $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)),
-    sale: { findUnique: jest.fn().mockResolvedValue(null), findFirst: jest.fn(), findMany: jest.fn() },
+    sale: { findUnique: jest.fn().mockResolvedValue(null), findFirst: jest.fn(), findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
   };
   const service = new CheckoutService(prisma as never);
   return { controller: new SalesController(prisma as never, service), service, tx, prisma };
@@ -35,8 +35,17 @@ function setup(stock = 2) {
 describe("POS checkout", () => {
   it("filters the register history by payment method (months of use: reconcile نسیه)", async () => {
     const { controller, prisma } = setup();
-    await controller.list(undefined, undefined, undefined, undefined, "CREDIT");
+    const result = await controller.list(undefined, undefined, undefined, undefined, "CREDIT");
     expect(prisma.sale.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ paymentMethod: "CREDIT" }) }));
+    // { list, total } shape so the client can render real page numbers.
+    expect(result).toEqual({ list: [], total: 0 });
+    expect(prisma.sale.count).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ paymentMethod: "CREDIT" }) }));
+  });
+
+  it("searches the history server-side so search composes with pagination", async () => {
+    const { controller, prisma } = setup();
+    await controller.list(undefined, undefined, undefined, undefined, undefined, undefined, undefined, "جمیل");
+    expect(prisma.sale.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ OR: expect.arrayContaining([expect.objectContaining({ customer: { name: { contains: "جمیل" } } })]) }) }));
   });
 
   it("sorts the register history by the requested column and direction", async () => {
@@ -380,5 +389,76 @@ describe("Sale returns", () => {
   it("rejects a product that was not on the original invoice", async () => {
     const { controller } = returnSetup();
     await expect(controller.returnSale("sale-1", { items: [{ productId: "other", quantity: 1 }] }, admin)).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe("voiding a sale (ابطال فاکتور)", () => {
+  const voidUser = { id: "user-9", username: "auditor", displayName: "Auditor", role: "ADMIN" as const };
+  function voidSetup(saleOverrides: Record<string, unknown> = {}) {
+    const sale = {
+      id: "sale-1", receiptNo: "POS-100", total: 500, cashPart: 300, mobilePart: 0, creditPart: 150, walletPart: 50,
+      customerId: "customer-1", cashSessionId: "cash-1", voidedAt: null, returns: [],
+      items: [{ id: "item-1", productId: "product-1", quantity: 2 }, { id: "item-2", productId: "product-2", quantity: 1 }],
+      ...saleOverrides,
+    };
+    const tx = {
+      sale: { findUnique: jest.fn().mockResolvedValue(sale), update: jest.fn().mockResolvedValue({}) },
+      product: { findMany: jest.fn().mockResolvedValue([
+        { id: "product-1", isBundle: false, bundleComponents: [] },
+        { id: "product-2", isBundle: true, bundleComponents: [{ componentId: "component-1", quantity: 3 }] },
+      ]), update: jest.fn().mockImplementation(({ data }: { data: { stock: { increment?: number; decrement?: number } } }) => Promise.resolve({ stock: (data.stock.increment ?? 10) })) },
+      inventoryMovement: { create: jest.fn().mockResolvedValue({}) },
+      serialUnit: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      customer: { update: jest.fn().mockResolvedValue({}) },
+      customerWalletTxn: { create: jest.fn().mockResolvedValue({}) },
+      cashSession: { findUnique: jest.fn().mockResolvedValue({ id: "cash-1", closedAt: null }) },
+      cashMovement: { create: jest.fn().mockResolvedValue({}) },
+      installmentPlan: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn().mockResolvedValue({}) },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = { $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)) };
+    return { controller: new SalesController(prisma as never, {} as never), tx, sale };
+  }
+
+  it("reverses stock (bundles restock components), wallet, drawer and marks the trail — in ONE transaction", async () => {
+    const { controller, tx } = voidSetup();
+    const result = await controller.voidSale("sale-1", { reason: "فاکتور اشتباه صادر شد" }, voidUser);
+    expect(result.receiptNo).toBe("POS-100");
+    // plain product restocked, bundle expanded into its component (3 × 1)
+    const updates = tx.product.update.mock.calls.map((call) => [call[0].where.id, call[0].data.stock.increment]);
+    expect(updates).toEqual(expect.arrayContaining([["product-1", 2], ["component-1", 3]]));
+    // cardex rows for every restock, referencing the receipt and the reason
+    for (const call of tx.inventoryMovement.create.mock.calls) expect(call[0].data.note).toContain("POS-100");
+    expect(tx.inventoryMovement.create).toHaveBeenCalledTimes(2);
+    // serials back on the shelf
+    expect(tx.serialUnit.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { saleItemId: { in: ["item-1", "item-2"] }, status: "SOLD" }, data: { status: "IN_STOCK" } }));
+    // wallet spend refunded with a ledger row
+    expect(tx.customer.update).toHaveBeenCalledWith({ where: { id: "customer-1" }, data: { walletBalance: { increment: 50 } } });
+    expect(tx.customerWalletTxn.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "REFUND", amount: 50, customerId: "customer-1" }) }));
+    // cash part taken back out of the STILL-OPEN drawer
+    expect(tx.cashMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "OUT", amount: 300, cashSessionId: "cash-1" }) }));
+    // the row is flagged, never deleted, with reason and actor
+    expect(tx.sale.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ voidReason: "فاکتور اشتباه صادر شد", voidedBy: "auditor" }) }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: "VOID_SALE" }) }));
+  });
+
+  it("does not touch a CLOSED drawer — history stays as it was", async () => {
+    const { controller, tx } = voidSetup();
+    tx.cashSession.findUnique.mockResolvedValue({ id: "cash-1", closedAt: new Date("2026-01-01") });
+    await controller.voidSale("sale-1", { reason: "اصلاح سابقه" }, voidUser);
+    expect(tx.cashMovement.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses to void an invoice that already has a return or a collected installment", async () => {
+    const withReturn = voidSetup({ returns: [{ id: "r1" }] });
+    await expect(withReturn.controller.voidSale("sale-1", { reason: "دلیل تست" }, voidUser)).rejects.toThrow(/برگشت کالا/);
+    const withPlan = voidSetup();
+    withPlan.tx.installmentPlan.findMany.mockResolvedValue([{ id: "plan-1", paidAmount: 100 }]);
+    await expect(withPlan.controller.voidSale("sale-1", { reason: "دلیل تست" }, voidUser)).rejects.toThrow(/قسط/);
+  });
+
+  it("refuses to void twice", async () => {
+    const twice = voidSetup({ voidedAt: new Date("2026-01-01") });
+    await expect(twice.controller.voidSale("sale-1", { reason: "دوباره" }, voidUser)).rejects.toThrow(/قبلاً ابطال/);
   });
 });

@@ -120,6 +120,12 @@ export class ReturnLineDto {
   /** Serialized products: which exact units are coming back. */
   @IsOptional() @IsArray() @ArrayMaxSize(100) @IsString({ each: true }) serials?: string[];
 }
+/** Reason payload for voiding (ابطال) a sale or a purchase — history is
+ *  always kept, the reason documents why the document was cancelled. */
+export class VoidDto {
+  @IsString() @MinLength(3) @MaxLength(300) reason!: string;
+}
+
 export class SaleReturnDto {
   @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => ReturnLineDto) items!: ReturnLineDto[];
   @IsOptional() @IsString() @MaxLength(300) note?: string;

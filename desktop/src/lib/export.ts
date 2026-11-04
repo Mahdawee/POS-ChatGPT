@@ -26,24 +26,47 @@ function toBase64(text: string): string {
   return btoa(binary);
 }
 
-/**
- * Saves text under the given file name. Returns the full path when the file
- * was written by the desktop shell, or "" when the browser handled the
- * download itself.
- */
-export async function saveTextFile(filename: string, text: string, mime: string): Promise<string> {
-  if (runningInTauri()) {
-    try {
-      return await invoke<string>("save_export_file", { filename, dataBase64: toBase64(text) });
-    } catch (error) {
-      throw new Error(t("ذخیرهٔ فایل ممکن نشد:") + " " + (error instanceof Error ? error.message : String(error)));
-    }
-  }
+/** Sentinel returned when the bytes had to land on the clipboard instead of
+ *  a file — callers surface a "copied" notice so nothing fails silently. */
+export const CLIPBOARD_SAVED = "__clipboard__";
+
+/** Browser-style blob download; a no-op inside desktop webviews. */
+function downloadAsBlob(filename: string, text: string, mime: string): void {
   const link = document.createElement("a");
   link.href = URL.createObjectURL(new Blob([text], { type: mime }));
   link.download = filename;
   link.click();
   URL.revokeObjectURL(link.href);
+}
+
+/**
+ * Saves text under the given file name. Returns the full path when the file
+ * was written by the desktop shell, "" when the browser handled the download
+ * itself, or CLIPBOARD_SAVED when neither worked and the bytes were copied
+ * to the clipboard instead (older binaries without `save_export_file`, or a
+ * webview that swallows blob downloads — never a silent failure again).
+ */
+export async function saveTextFile(filename: string, text: string, mime: string): Promise<string> {
+  if (runningInTauri()) {
+    try {
+      return await invoke<string>("save_export_file", { filename, dataBase64: toBase64(text) });
+    } catch {
+      // Older desktop builds don't ship the Rust command — fall through.
+    }
+    try {
+      downloadAsBlob(filename, text, mime);
+      return "";
+    } catch {
+      // fall through to the clipboard
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      return CLIPBOARD_SAVED;
+    } catch (error) {
+      throw new Error(t("ذخیرهٔ فایل ممکن نشد:") + " " + (error instanceof Error ? error.message : String(error)));
+    }
+  }
+  downloadAsBlob(filename, text, mime);
   return "";
 }
 
@@ -54,6 +77,7 @@ export async function saveTextFile(filename: string, text: string, mime: string)
  */
 export async function exportCsv(filename: string, rows: string[][], notify?: (message: string) => void): Promise<void> {
   const where = await saveTextFile(filename, toCsv(rows), "text/csv;charset=utf-8");
+  if (where === CLIPBOARD_SAVED) { if (notify) notify(t("ذخیرهٔ فایل ممکن نشد؛ محتوای فایل در حافظه کپی شد — آن را در یک فایل متنی Paste کنید.")); return; }
   if (where && notify) notify(t("فایل ذخیره شد:") + " " + where);
 }
 
