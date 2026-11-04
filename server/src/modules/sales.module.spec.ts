@@ -39,6 +39,17 @@ describe("POS checkout", () => {
     expect(prisma.sale.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ paymentMethod: "CREDIT" }) }));
   });
 
+  it("sorts the register history by the requested column and direction", async () => {
+    const { controller, prisma } = setup();
+    await controller.list(undefined, undefined, undefined, undefined, undefined, "total", "asc");
+    expect(prisma.sale.findMany).toHaveBeenCalledWith(expect.objectContaining({ orderBy: { total: "asc" } }));
+    await controller.list(undefined, undefined, undefined, undefined, undefined, "total");
+    expect(prisma.sale.findMany).toHaveBeenLastCalledWith(expect.objectContaining({ orderBy: { total: "desc" } }));
+    // An unknown column falls back to the invoice-time ordering.
+    await controller.list(undefined, undefined, undefined, undefined, undefined, "nope", "asc");
+    expect(prisma.sale.findMany).toHaveBeenLastCalledWith(expect.objectContaining({ orderBy: { createdAt: "asc" } }));
+  });
+
   it("rejects a sale that would take stock below zero before writing anything", async () => {
     const { service, tx } = setup(2);
     await expect(service.checkout({ items: [{ productId: "product-1", quantity: 3 }], paymentMethod: "CASH", amountPaid: 30 }, admin)).rejects.toBeInstanceOf(BadRequestException);

@@ -8,17 +8,22 @@ import { CheckoutService } from "../services/checkout";
 @Controller("sales")
 export class SalesController {
   constructor(private readonly prisma: PrismaService, private readonly checkoutService: CheckoutService) {}
-  @Get() list(@Query("from") from?: string, @Query("to") to?: string, @Query("skip") skip?: string, @Query("take") take?: string, @Query("method") method?: string) {
+  @Get() list(@Query("from") from?: string, @Query("to") to?: string, @Query("skip") skip?: string, @Query("take") take?: string, @Query("method") method?: string, @Query("sort") sort?: string, @Query("dir") dir?: string) {
     const where: { createdAt?: { gte?: Date; lte?: Date }; paymentMethod?: "CASH" | "MOBILE" | "CREDIT" | "WALLET" } = {};
-    if (from) where.createdAt = { ...where.createdAt, gte: new Date(from) };
-    if (to) where.createdAt = { ...where.createdAt, lte: new Date(to.length === 10 ? `${to}T23:59:59.999` : to) };
+    // Unparsable date strings are ignored rather than crashing the query.
+    if (from && Number.isFinite(Date.parse(from))) where.createdAt = { ...where.createdAt, gte: new Date(from) };
+    if (to && Number.isFinite(Date.parse(to.length === 10 ? `${to}T23:59:59.999` : to))) where.createdAt = { ...where.createdAt, lte: new Date(to.length === 10 ? `${to}T23:59:59.999` : to) };
     // Payment-method filter for the register's history table.
     if (method === "CASH" || method === "MOBILE" || method === "CREDIT" || method === "WALLET") where.paymentMethod = method;
     // Windowed listing ("load more"): each request is capped so a busy
     // register never pulls its whole history at once.
     const limit = Math.min(300, Math.max(1, Number(take) || 100));
     const offset = Math.max(0, Number(skip) || 0);
-    return this.prisma.sale.findMany({ where, skip: offset, take: limit, include: { customer: true, user: { select: { displayName: true } }, items: true, returns: { select: { id: true, total: true } } }, orderBy: { createdAt: "desc" } });
+    // Column sorting for the history table (invoice time or total). Unknown
+    // values fall back to the default newest-first window.
+    const direction = dir === "asc" ? "asc" as const : "desc" as const;
+    const orderBy = sort === "total" ? { total: direction } : { createdAt: direction };
+    return this.prisma.sale.findMany({ where, skip: offset, take: limit, include: { customer: true, user: { select: { displayName: true } }, items: true, returns: { select: { id: true, total: true } } }, orderBy });
   }
 
   /** آخرین فاکتور یک مشتری با اقلامش — برای «تکرار آخرین خرید» در صندوق. */

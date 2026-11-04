@@ -305,3 +305,43 @@ html.dark .metric-icon.amber{background:#372b16;color:#dcae5e}
 .trial-banner.expiry{background:var(--blue-soft);border-color:var(--accent-border)}
 .trial-banner.expiry .trial-banner-text b{color:var(--blue-ink)}
 .trial-banner.expiry .trial-banner-text span{color:var(--ink-3)}
+
+/* ═══ Round 33 — tidy toolbars, breathing-room modals, reliable exports ═══ */
+
+/* Toolbars: one left-aligned, wrapping row — search, then filters, then
+   quick ranges; the counter always docks to the far end. No more items
+   scattered across the full width by justify-content:space-between. */
+.toolbar{display:flex;align-items:center;justify-content:flex-start;gap:7px 9px;flex-wrap:wrap;margin-bottom:14px}
+.toolbar .search-box{min-width:200px;flex:0 1 280px;height:33px;padding:0 10px}
+.toolbar .segmented button{padding:6px 12px}
+.toolbar .chip{height:29px}
+.toolbar-count{margin-inline-start:auto;white-space:nowrap}
+.toolbar .text-button{white-space:nowrap}
+
+/* Export menu (the single "خروجی" button per toolbar). */
+.export-menu{position:relative;display:inline-flex}
+.export-button{gap:6px}
+.export-button .flip{transform:rotate(180deg)}
+.export-backdrop{position:fixed;inset:0;z-index:39}
+.export-popover{position:absolute;top:calc(100% + 6px);inset-inline-end:0;z-index:40;background:var(--surface);border:1px solid var(--line-2);border-radius:10px;box-shadow:0 14px 38px rgba(16,32,22,.18);padding:5px;display:flex;flex-direction:column;min-width:196px}
+.export-popover button{display:flex;align-items:center;gap:9px;border:0;background:transparent;padding:9px 11px;border-radius:7px;font-size:11px;font-weight:600;color:var(--ink-2);text-align:start}
+.export-popover button:hover{background:var(--surface-3);color:var(--accent-ink)}
+
+/* Modals: every body block gets side margins — nothing glued to the rounded
+   corners anymore. .form-grid keeps its own side padding, so it switches to
+   margin-only to stay aligned with its siblings. */
+.modal>*:not(.modal-head){margin-inline:21px;margin-block-end:15px;min-width:0}
+.modal>.form-grid{margin-block-end:0;padding-inline:0}
+.modal>.modal-head{margin-inline:0;margin-block-end:15px}
+
+/* Tables inside modals may wrap (receipt numbers, long names) instead of
+   sticking out past the dialog edge; the mono cells break anywhere. */
+.modal td{white-space:normal}
+.modal td.mono{overflow-wrap:anywhere}
+
+/* CSV import modal: drop zone + paste-from-Excel fallback (the OS picker is
+   unreliable inside the desktop webview). */
+.import-drop{display:flex;align-items:center;gap:12px;border:1.5px dashed var(--line-2);border-radius:10px;padding:13px 16px;color:var(--ink-3);background:var(--surface-2);transition:.15s}
+.import-drop.drag,.import-drop:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink)}
+.import-paste{display:flex;flex-direction:column;gap:8px}
+.import-paste textarea{border:1px solid var(--field-line);border-radius:8px;background:var(--surface);padding:9px 11px;font-size:11px;font-family:ui-monospace,"Cascadia Code",monospace;resize:vertical;outline:0;color:inherit}

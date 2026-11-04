@@ -10,16 +10,24 @@ export class PurchasesController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get()
-  list(@Query("skip") skip?: string, @Query("take") take?: string) {
+  list(@Query("skip") skip?: string, @Query("take") take?: string, @Query("from") from?: string, @Query("to") to?: string, @Query("sort") sort?: string, @Query("dir") dir?: string) {
     // Windowed listing like /sales: a shop that has been buying for years
     // must still be able to page back to its oldest receipts.
     const limit = Math.min(300, Math.max(1, Number(take) || 50));
     const offset = Math.max(0, Number(skip) || 0);
+    // Date window and column sorting, mirroring the register's history table.
+    const where: { createdAt?: { gte?: Date; lte?: Date } } = {};
+    // Unparsable date strings are ignored rather than crashing the query.
+    if (from && Number.isFinite(Date.parse(from))) where.createdAt = { ...where.createdAt, gte: new Date(from) };
+    if (to && Number.isFinite(Date.parse(to.length === 10 ? `${to}T23:59:59.999` : to))) where.createdAt = { ...where.createdAt, lte: new Date(to.length === 10 ? `${to}T23:59:59.999` : to) };
+    const direction = dir === "asc" ? "asc" as const : "desc" as const;
+    const orderBy = sort === "total" ? { total: direction } : { createdAt: direction };
     return this.prisma.purchase.findMany({
+      where,
       skip: offset,
       take: limit,
       include: { supplier: true, user: { select: { displayName: true } }, items: true },
-      orderBy: { createdAt: "desc" },
+      orderBy,
     });
   }
 

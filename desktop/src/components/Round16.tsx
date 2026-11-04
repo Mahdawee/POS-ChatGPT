@@ -4,6 +4,8 @@ import { get, post, type Contact, type CustomerOrder, type InstallmentPlan, type
 import { dateOnly, dateTime, licensePlanLabel, money, t } from "../i18n";
 import { DateField } from "./DatePicker";
 import { Modal } from "./Pages";
+import { ExportMenu } from "./ExportMenu";
+import { exportCsv as exportCsvFile, exportTablePdf } from "../lib/export";
 import { SectionHead } from "./SectionHead";
 
 export type Notify = (text: string, kind?: "success" | "error") => void;
@@ -222,12 +224,27 @@ export function OrdersPage({ notify }: { notify: Notify }) {
     try { await post(`/orders/${order.id}/cancel`, {}); notify(t("سفارش لغو شد.")); void load(); } catch (e) { notify((e as Error).message, "error"); }
   };
   const remaining = (order: CustomerOrder) => order.lines.reduce((sum, line) => sum + (line.quantity - line.deliveredQty), 0);
+  // Exports the orders currently listed for the picked status.
+  const exportOrders = (kindOfExport: "csv" | "pdf") => {
+    const header = [t("شماره سفارش"), t("مشتری"), t("تعداد اقلام"), t("مانده تحویل"), t("یادداشت"), t("زمان ثبت")];
+    const rows: Array<Array<string | number>> = orders.map((order) => [
+      order.orderNo,
+      order.customer?.name || t("بدون مشتری"),
+      order.lines.reduce((count, line) => count + line.quantity, 0),
+      Math.max(0, order.lines.reduce((remaining, line) => remaining + Math.max(0, line.quantity - line.deliveredQty), 0)),
+      order.note || "",
+      dateTime(order.createdAt),
+    ]);
+    if (kindOfExport === "csv") { void exportCsvFile("customer-orders.csv", [header, ...rows.map((row) => row.map((cell) => String(cell)))], notify).catch((e) => notify((e as Error).message, "error")); return; }
+    exportTablePdf({ title: t("سفارش‌های مشتری"), subtitle: `${status === "OPEN" ? t("باز") : status === "FULFILLED" ? t("تحویل‌شده") : t("لغو‌شده")} · ${orders.length} ${t("سفارش")}`, columns: [{ label: t("شماره سفارش"), numeric: true }, { label: t("مشتری") }, { label: t("تعداد اقلام"), numeric: true }, { label: t("مانده تحویل"), numeric: true }, { label: t("یادداشت") }, { label: t("زمان ثبت") }], rows });
+  };
   return <div className="page-stack">
     <section className="surface">
       <div className="toolbar">
         <div className="search-box"><ClipboardList size={17}/><span>{t("سفارش‌های مشتری (رزرو موجودی)")}</span></div>
-        <div className="grow"/>
         {(["OPEN", "FULFILLED", "CANCELLED"] as const).map((value) => <button key={value} className={`chip ${status === value ? "active" : ""}`} onClick={() => setStatus(value)}>{value === "OPEN" ? t("باز") : value === "FULFILLED" ? t("تحویل‌شده") : t("لغو‌شده")}</button>)}
+        <ExportMenu onExport={exportOrders} disabled={!orders.length}/>
+        <span className="toolbar-count">{orders.length} {t("سفارش")}</span>
         <button className="primary-button" onClick={() => setShow(true)}><ClipboardList size={17}/>{t("سفارش جدید")}</button>
       </div>
       {error && <div className="error-box">{error}</div>}

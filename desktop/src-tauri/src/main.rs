@@ -430,13 +430,7 @@ fn quick_print(printer: String, text: String) -> Result<(), String> {
 /// can be copied to a USB stick or another machine.
 #[tauri::command]
 fn save_backup_file(filename: String, data_base64: String) -> Result<String, String> {
-    let safe: String = filename
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-' || *c == '_')
-        .collect();
-    if safe.is_empty() {
-        return Err("invalid backup file name".into());
-    }
+    let safe = sanitize_file_name(&filename)?;
     let documents = std::env::var_os("USERPROFILE")
         .map(|home| std::path::PathBuf::from(home).join("Documents"))
         .or_else(|| std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join("Documents")))
@@ -447,6 +441,38 @@ fn save_backup_file(filename: String, data_base64: String) -> Result<String, Str
     if bytes.len() < 100 {
         return Err("backup payload looks empty".into());
     }
+    let target = dir.join(safe);
+    std::fs::write(&target, bytes).map_err(|error| error.to_string())?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
+/// Keeps a caller-supplied file name safe for the file system: ASCII letters,
+/// digits and the separators we generate ourselves; anything else is dropped.
+fn sanitize_file_name(filename: &str) -> Result<String, String> {
+    let safe: String = filename
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-' || *c == '_')
+        .collect();
+    if safe.is_empty() {
+        return Err("invalid file name".into());
+    }
+    Ok(safe)
+}
+
+/// Saves an exported report (CSV text or the product-import template) into the
+/// user's Downloads folder and returns the full path. The webview cannot run
+/// browser-style downloads (the `download` attribute on a blob link is a
+/// no-op in WebView2/wry), so file exports the user asks for go through this
+/// command instead; a same-named file from an earlier export is overwritten.
+#[tauri::command]
+fn save_export_file(app: tauri::AppHandle, filename: String, data_base64: String) -> Result<String, String> {
+    let safe = sanitize_file_name(&filename)?;
+    let bytes = base64_decode(&data_base64)?;
+    if bytes.is_empty() {
+        return Err("nothing to save".into());
+    }
+    let dir = update_download_dir(&app);
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     let target = dir.join(safe);
     std::fs::write(&target, bytes).map_err(|error| error.to_string())?;
     Ok(target.to_string_lossy().into_owned())
@@ -558,7 +584,7 @@ fn main() {
     let closing_for_exit = closing.clone();
     tauri::Builder::default()
         .manage(child_state)
-        .invoke_handler(tauri::generate_handler![set_network_mode, get_network_mode, open_url, quick_print, save_backup_file, download_update, install_update])
+        .invoke_handler(tauri::generate_handler![set_network_mode, get_network_mode, open_url, quick_print, save_backup_file, save_export_file, download_update, install_update])
         .setup(move |app| {
             #[cfg(not(debug_assertions))]
             {

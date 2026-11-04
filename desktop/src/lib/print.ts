@@ -8,8 +8,8 @@ const esc = (value: unknown): string => String(value ?? "").replace(/[&<>"']/g, 
 
 const payLabel = (method: string) => ({ CASH: t("نقدی"), MOBILE: t("موبایلی"), CREDIT: t("نسیه"), WALLET: t("کیف پول") } as Record<string, string>)[method] || method;
 
-const baseStyles = (width: string) => `
-  @page { margin: ${width === "auto" ? "12mm" : "2mm"}; ${width === "auto" ? "size: A4;" : ""} }
+const baseStyles = (width: string, landscape = false) => `
+  @page { margin: ${width === "auto" ? "12mm" : "2mm"}; ${width === "auto" ? `size: ${landscape ? "A4 landscape" : "A4"};` : ""} }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: #fff; color: #000; }
   body { ${width === "auto" ? "" : `width: ${width};`} font-family: "Segoe UI", Tahoma, Arial, sans-serif; font-size: 12px; line-height: 1.6; }
@@ -48,7 +48,7 @@ const baseStyles = (width: string) => `
  * width is fixed to thermal-receipt paper (works on normal printers too —
  * choose "Microsoft Print to PDF" in the dialog to save a PDF).
  */
-export function printHtml(inner: string, options: { width?: string; title?: string; copies?: number } = {}): void {
+export function printHtml(inner: string, options: { width?: string; title?: string; copies?: number; landscape?: boolean } = {}): void {
   const width = options.width || "72mm";
   const title = options.title || t("رسید فروش");
   const copies = Math.min(3, Math.max(1, Math.round(options.copies || 1)));
@@ -57,7 +57,7 @@ export function printHtml(inner: string, options: { width?: string; title?: stri
   // (thermal printers cannot duplicate a job themselves, and consecutive
   // dialogs are unreliable in WebView2).
   const body = Array.from({ length: copies }, () => inner).join('<div style="break-after:page;page-break-after:always;height:0"></div>');
-  const html = `<!doctype html><html dir="${dir()}" lang="${lang()}"><head><meta charset="utf-8"><title>${esc(title)}</title><style>${baseStyles(width)}</style></head><body>${body}</body></html>`;
+  const html = `<!doctype html><html dir="${dir()}" lang="${lang()}"><head><meta charset="utf-8"><title>${esc(title)}</title><style>${baseStyles(width, options.landscape)}</style></head><body>${body}</body></html>`;
   const frame = document.createElement("iframe");
   frame.setAttribute("aria-hidden", "true");
   frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";

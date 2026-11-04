@@ -19,6 +19,24 @@ function setup() {
 }
 
 describe("Purchases", () => {
+  it("windows, date-filters and sorts the receipt history", async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const controller = new PurchasesController({ purchase: { findMany } } as never);
+    await controller.list("20", "10", "2026-01-01", "2026-01-31", "total", "asc");
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      skip: 20,
+      take: 10,
+      where: { createdAt: { gte: new Date("2026-01-01"), lte: new Date("2026-01-31T23:59:59.999") } },
+      orderBy: { total: "asc" },
+    }));
+    // No filters → the default newest-first window with an empty where.
+    await controller.list(undefined, undefined, undefined, undefined, "bogus", "asc");
+    expect(findMany).toHaveBeenLastCalledWith(expect.objectContaining({ where: {}, orderBy: { createdAt: "asc" } }));
+    // Unparsable dates are ignored instead of poisoning the query.
+    await controller.list(undefined, undefined, "not-a-date", "garbage", undefined, undefined);
+    expect(findMany).toHaveBeenLastCalledWith(expect.objectContaining({ where: {} }));
+  });
+
   it("increments stock, refreshes cost and records a PURCHASE movement in one transaction", async () => {
     const { controller, tx } = setup();
     await controller.create({ items: [{ productId: "product-1", quantity: 5, unitCost: 12 }], supplierId: "supplier-1" }, user);
