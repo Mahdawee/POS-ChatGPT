@@ -43,6 +43,9 @@ export default function App() {
   const [shopName, setShopName] = useState("");
   const [locked, setLocked] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  // صندوق فروش بعد از اولین بازدید نصب می‌ماند تا سبدِ باز (اقلام، مشتری،
+  // تخفیف‌ها، سریال‌ها) با رفت‌وآمد بین بخش‌ها از حافظه نیفتد.
+  const [posMounted, setPosMounted] = useState(false);
   // Licensing: the gate re-checks on every 402 reply and after activation.
   const [licenseOk, setLicenseOk] = useState<boolean | null>(null);
   // Full license state drives the in-app trial banner (and stays null for a
@@ -51,6 +54,11 @@ export default function App() {
   const [showActivation, setShowActivation] = useState(false);
   const [dark, setDark] = useState(() => { try { return localStorage.getItem("darpos-theme") === "dark"; } catch { return false; } });
   const noticeTimer = useRef<number | undefined>(undefined);
+  // هنگام قفل (Ctrl+L) برنامه زیر پردهٔ قفل «inert» می‌شود: نه دیده می‌شود،
+  // نه با Tab به آن رسیدنی است — ولی unmount هم نمی‌شود تا وضعیت همهٔ صفحه‌ها
+  // (از جمله سبد باز صندوق) دست‌نخورده بماند.
+  const appRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { appRef.current?.toggleAttribute("inert", locked); }, [locked]);
   // Clearing the previous timer keeps the newest toast on screen for its
   // full four seconds instead of being cut short by an older one.
   const notify = (text: string, kind: "success" | "error" = "success") => { setNotice({ text, kind }); window.clearTimeout(noticeTimer.current); noticeTimer.current = window.setTimeout(() => setNotice(null), 4000); };
@@ -97,6 +105,8 @@ export default function App() {
     window.addEventListener("darpos:session-expired", expired);
     return () => window.removeEventListener("darpos:session-expired", expired);
   }, []);
+
+  useEffect(() => { if (page === "pos") setPosMounted(true); }, [page]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -201,7 +211,9 @@ export default function App() {
   const content = <Suspense fallback={<Loading/>}>{(() => {
         switch (page) {
           case "dashboard": return <DashboardPage onNavigate={setPage}/>;
-          case "pos": return <PosPage notify={notify} user={user}/>;
+          // «صندوق فروش» پایین‌تر (خارج از switch) رندر می‌شود تا با
+          // عوض‌شدن صفحه unmount نشود و سبد فروش در حافظه بماند.
+          case "pos": return null;
           case "products": return <ProductsPage notify={notify} user={user}/>;
           case "categories": return <CategoriesPage notify={notify}/>;
           case "customers": return <ContactsPage kind="customers" notify={notify}/>;
@@ -218,9 +230,13 @@ export default function App() {
           case "settings": return <SettingsPage notify={notify}/>;
           default: return null;
         }
-      })()}</Suspense>;
-  if (locked) return <LockScreen username={user.username} onUnlock={() => setLocked(false)}/>;
-  return <><Shell page={page} onNavigate={setPage} user={user} onLogout={logout} shopName={shopName} onLock={() => setLocked(true)} onHelp={() => setShowHelp(true)} dark={dark} onToggleDark={() => setDark((value) => !value)} banner={banner}>{content}</Shell>{showActivation && <Suspense fallback={<Loading/>}><ActivationModal onClose={() => setShowActivation(false)} onActivated={() => { setShowActivation(false); refreshLicense(); }} notify={notify}/></Suspense>}{notice && <div className={`toast ${notice.kind}`}>{notice.kind === "success" ? <CircleCheck size={18}/> : <CircleAlert size={18}/>}<span>{t(notice.text)}</span></div>}{showHelp && <ShortcutsHelp onClose={() => setShowHelp(false)}/>}<div className="page-reader" aria-live="polite" lang={lang}>{labels[page]}</div></>;
+      })()}
+      {/* سبدِ بازِ صندوق با رفتن به بخش‌های دیگر پاک نمی‌شود؛ فقط با ثبت
+          فروش، دکمهٔ پاک‌کردن یا خروج از حساب. برچسب hidden (نه unmount)
+          صفحه را از دید خارج می‌کند. */}
+      {posMounted && <div className="pos-keepalive" hidden={page !== "pos"}><PosPage notify={notify} user={user} active={page === "pos" && !locked}/></div>}
+    </Suspense>;
+  return <><div ref={appRef}><Shell page={page} onNavigate={setPage} user={user} onLogout={logout} shopName={shopName} onLock={() => setLocked(true)} onHelp={() => setShowHelp(true)} dark={dark} onToggleDark={() => setDark((value) => !value)} banner={banner}>{content}</Shell></div>{locked && <LockScreen username={user.username} onUnlock={() => setLocked(false)}/>}{showActivation && <Suspense fallback={<Loading/>}><ActivationModal onClose={() => setShowActivation(false)} onActivated={() => { setShowActivation(false); refreshLicense(); }} notify={notify}/></Suspense>}{notice && <div className={`toast ${notice.kind}`}>{notice.kind === "success" ? <CircleCheck size={18}/> : <CircleAlert size={18}/>}<span>{t(notice.text)}</span></div>}{showHelp && <ShortcutsHelp onClose={() => setShowHelp(false)}/>}<div className="page-reader" aria-live="polite" lang={lang}>{labels[page]}</div></>;
 }
 
 /** True when running inside the Tauri desktop shell (not a plain browser). */
