@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useRef, useState, type FormEvent } from "rea
 import { invoke } from "@tauri-apps/api/core";
 import { CircleAlert, CircleCheck, Globe, LoaderCircle, LockKeyhole, RefreshCw, ShoppingBasket, Undo2 } from "lucide-react";
 import { get, post, serverOrigin, setServerOrigin, type LicenseStatus, type ShopSettings, type User } from "./lib/api";
+import { applyBrandWindowTitle, loadBrand, useBrand } from "./lib/brand";
 import { applyCurrencyList, applyLocaleSettings, LANGS, licensePlanLabel, t, useLanguage } from "./i18n";
 import { LicenseExpiryBanner, type PageId, Shell, TrialBanner } from "./components/Shell";
 import { CustomerDisplay } from "./components/CustomerDisplay";
@@ -58,6 +59,9 @@ export default function App() {
   // نه با Tab به آن رسیدنی است — ولی unmount هم نمی‌شود تا وضعیت همهٔ صفحه‌ها
   // (از جمله سبد باز صندوق) دست‌نخورده بماند.
   const appRef = useRef<HTMLDivElement>(null);
+  // نام برنامه از فایل مالک می‌آید (پیش‌فرض «روشن») و با مصرف این هوک،
+  // کل درخت برنامه با هر تغییرش دوباره رندر می‌شود.
+  const brand = useBrand();
   useEffect(() => { appRef.current?.toggleAttribute("inert", locked); }, [locked]);
   // Clearing the previous timer keeps the newest toast on screen for its
   // full four seconds instead of being cut short by an older one.
@@ -85,6 +89,16 @@ export default function App() {
     void poll();
     return () => { cancelled = true; };
   }, []);
+
+  // برند (نام برنامه) از فایل مالک خوانده می‌شود و دوره‌ای تازه می‌شود تا
+  // تغییرش بدون بستن و باز کردن برنامه ظرف حدود یک دقیقه همه‌جا دیده شود.
+  useEffect(() => {
+    void loadBrand();
+    const timer = window.setInterval(() => { void loadBrand(); }, 60000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => { void applyBrandWindowTitle(brand.appName); }, [brand.appName]);
 
   useEffect(() => {
     const checkLicense = () => { get<LicenseStatus>("/license/status").then((state) => { setLicenseOk(state.ok); setLicense(state); }).catch(() => setLicenseOk(true)); };
@@ -244,16 +258,17 @@ const inTauri = (): boolean => typeof window !== "undefined" && Boolean((window 
 
 function LoginScreen({ apiReady, apiSlow, onLogin, notify, onExitClientMode }: { apiReady: boolean | null; apiSlow: boolean; onLogin: (session: Session) => void; notify: (text: string, kind?: "success" | "error") => void; onExitClientMode: () => void }) {
   const { lang, setLang } = useLanguage();
+  const brand = useBrand();
   const remote = serverOrigin(); // نشانی سرور وقتی این دستگاه مشتری شبکه است
   const [username, setUsername] = useState("admin"); const [password, setPassword] = useState(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
   const submit = async (event: FormEvent) => { event.preventDefault(); setBusy(true); setError(""); try { const session = await post<Session>("/auth/login", { username, password }); onLogin(session); notify(t("خوش آمدید، {name}", { name: session.user.displayName })); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } };
-  return <div className="login-screen"><div className="login-decor decor-one"/><div className="login-decor decor-two"/><section className="login-card"><div className="login-logo"><div className="brand-mark">{t("رو")}</div><div><strong>{t("روشن")}</strong><span>{t("فروش و مدیریت فروشگاه")}</span></div></div><div className="lang-switch" role="group" aria-label={t("زبان برنامه")}>{LANGS.map((item) => <button key={item.id} type="button" className={`lang-option ${lang === item.id ? "active" : ""}`} onClick={() => setLang(item.id)}><Globe size={13}/>{item.label}</button>)}</div><div className="login-welcome"><div className="login-icon"><ShoppingBasket size={23}/></div><span className="eyebrow">{t("سامانه فروشگاهی محلی")}</span><h1>{t("به فروشگاه خوش آمدید")}</h1><p>{t("برای آغاز کار، وارد حساب کاربری خود شوید.")}</p></div>{apiReady === false && !remote && <div className="api-offline"><CircleAlert size={17}/><div><b>{apiSlow ? t("برنامه محلی اجرا نشد") : t("برنامه محلی در حال آماده‌سازی است")}</b><small>{apiSlow ? t("برنامه را ببندید و دوباره باز کنید. اگر مشکل ادامه یافت، فایل api.log در مسیر %APPDATA%\\DarPOSERP را بررسی کنید.") : t("چند لحظه صبر کنید…")}</small></div></div>}
+  return <div className="login-screen"><div className="login-decor decor-one"/><div className="login-decor decor-two"/><section className="login-card"><div className="login-logo"><div className="brand-mark">{brand.appName.trim().slice(0, 2)}</div><div><strong>{brand.appName}</strong><span>{t("فروش و مدیریت فروشگاه")}</span></div></div><div className="lang-switch" role="group" aria-label={t("زبان برنامه")}>{LANGS.map((item) => <button key={item.id} type="button" className={`lang-option ${lang === item.id ? "active" : ""}`} onClick={() => setLang(item.id)}><Globe size={13}/>{item.label}</button>)}</div><div className="login-welcome"><div className="login-icon"><ShoppingBasket size={23}/></div><span className="eyebrow">{t("سامانه فروشگاهی محلی")}</span><h1>{t("به فروشگاه خوش آمدید")}</h1><p>{t("برای آغاز کار، وارد حساب کاربری خود شوید.")}</p></div>{apiReady === false && !remote && <div className="api-offline"><CircleAlert size={17}/><div><b>{apiSlow ? t("برنامه محلی اجرا نشد") : t("برنامه محلی در حال آماده‌سازی است")}</b><small>{apiSlow ? t("برنامه را ببندید و دوباره باز کنید. اگر مشکل ادامه یافت، فایل api.log در مسیر %APPDATA%\\DarPOSERP را بررسی کنید.") : t("چند لحظه صبر کنید…")}</small></div></div>}
           {apiReady === false && remote && <div className="api-offline"><CircleAlert size={17}/><div><b>{apiSlow ? t("اتصال به سرور فروشگاه ممکن نشد") : t("در حال اتصال به سرور فروشگاه…")}</b><small dir="ltr">{remote}</small>{apiSlow && <small>{t("برنامهٔ دستگاه سرور روشن و در شبکهٔ فروشگاه باشد. اگر می‌خواهید این دستگاه مستقل کار کند، به حالت تک‌کامپیوتر برگردید.")}</small>}</div>
             <div className="api-offline-actions">
               <button type="button" className="secondary-button" onClick={() => window.location.reload()}><RefreshCw size={15}/>{t("تلاش دوباره")}</button>
               <button type="button" className="secondary-button" onClick={onExitClientMode}><Undo2 size={15}/>{t("بازگشت به حالت تک‌کامپیوتر")}</button>
             </div>
-          </div>}<form onSubmit={submit} className="login-form"><label className="field"><span>{t("نام کاربری")}</span><div className="login-input"><CircleAlert size={16}/><input required autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder={t("نام کاربری")} dir="ltr"/></div></label><label className="field"><span>{t("گذرواژه")}</span><div className="login-input"><LockKeyhole size={16}/><input required type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={t("گذرواژه خود را وارد کنید")} dir="ltr"/></div></label>{error && <div className="form-error">{t(error)}</div>}<button className="primary-button login-submit" disabled={busy || apiReady === false}>{busy ? <><LoaderCircle className="spin" size={17}/> {t("در حال ورود…")}</> : t("ورود به فروشگاه")}</button></form><div className="login-foot"><span className="lock-dot"/> {t("داده‌های شما روی همین دستگاه نگهداری می‌شود")}</div></section><div className="login-version">{t("روشن")} · {t("نسخه ۰.۸")}</div></div>;
+          </div>}<form onSubmit={submit} className="login-form"><label className="field"><span>{t("نام کاربری")}</span><div className="login-input"><CircleAlert size={16}/><input required autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder={t("نام کاربری")} dir="ltr"/></div></label><label className="field"><span>{t("گذرواژه")}</span><div className="login-input"><LockKeyhole size={16}/><input required type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={t("گذرواژه خود را وارد کنید")} dir="ltr"/></div></label>{error && <div className="form-error">{t(error)}</div>}<button className="primary-button login-submit" disabled={busy || apiReady === false}>{busy ? <><LoaderCircle className="spin" size={17}/> {t("در حال ورود…")}</> : t("ورود به فروشگاه")}</button></form><div className="login-foot"><span className="lock-dot"/> {t("داده‌های شما روی همین دستگاه نگهداری می‌شود")}</div></section><div className="login-version">{brand.appName} · {t("نسخه ۰.۸")}</div></div>;
 }
 
 function Loading() {
@@ -262,6 +277,7 @@ function Loading() {
 
 /** Screen veil shown after Ctrl+L: password re-entry, session kept alive. */
 function LockScreen({ username, onUnlock }: { username: string; onUnlock: () => void }) {
+  const brand = useBrand();
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -276,7 +292,7 @@ function LockScreen({ username, onUnlock }: { username: string; onUnlock: () => 
   };
   return <div className="lock-screen"><div className="login-decor decor-one"/><div className="login-decor decor-two"/>
     <section className="login-card lock-card">
-      <div className="login-logo"><div className="brand-mark">{t("رو")}</div><div><strong>{t("روشن")}</strong><span>{t("صفحه قفل است")}</span></div></div>
+      <div className="login-logo"><div className="brand-mark">{brand.appName.trim().slice(0, 2)}</div><div><strong>{brand.appName}</strong><span>{t("صفحه قفل است")}</span></div></div>
       <div className="login-welcome"><div className="login-icon"><LockKeyhole size={23}/></div><h1>{username}</h1><p>{t("برای ادامه، گذرواژهٔ خود را وارد کنید.")}</p></div>
       <form onSubmit={submit} className="login-form">
         <label className="field"><span>{t("گذرواژه")}</span><div className="login-input"><LockKeyhole size={16}/><input autoFocus required type="password" value={password} onChange={(e) => setPassword(e.target.value)} dir="ltr"/></div></label>

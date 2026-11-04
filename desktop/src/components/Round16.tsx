@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { AlertTriangle, CalendarClock, ClipboardList, Copy, Check, Mail, MessageCircle, PackageCheck, RefreshCw, Send, Smartphone, Trash2, X } from "lucide-react";
 import { get, post, type Contact, type CustomerOrder, type InstallmentPlan, type LicenseStatus, type Product, type ReceiptText, type ReorderRow, type Sale, type SerialUnit } from "../lib/api";
 import { dateOnly, dateTime, licensePlanLabel, money, t } from "../i18n";
+import { useBrand } from "../lib/brand";
 import { DateField } from "./DatePicker";
 import { Modal } from "./Pages";
 import { ExportMenu } from "./ExportMenu";
@@ -44,6 +45,7 @@ export function LicenseCard({ onActivated }: { onActivated: () => void }) {
   const [startingTrial, setStartingTrial] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const brand = useBrand();
   useEffect(() => { get<LicenseStatus>("/license/status").then(setStatus).catch((e) => setError(e.message)); }, []);
   const activate = async (event: FormEvent) => {
     event.preventDefault();
@@ -65,8 +67,8 @@ export function LicenseCard({ onActivated }: { onActivated: () => void }) {
   };
   const trialNotStarted = status != null && !status.ok && status.reason === "TRIAL_NOT_STARTED";
   return <form className="license-card" onSubmit={activate}>
-      <div className="license-logo">{t("رو")}</div>
-      <h1>{t("روشن")} <small>{t("فروش و مدیریت فروشگاه")}</small></h1>
+      <div className="license-logo">{brand.appName.trim().slice(0, 2)}</div>
+      <h1>{brand.appName} <small>{t("فروش و مدیریت فروشگاه")}</small></h1>
       {status?.ok && status.mode === "TRIAL" && <div className="hint-box">{t("شما در دورهٔ آزمایشی هستید — {days} روز باقی مانده.", { days: String(status.trialDaysLeft ?? 0) })}</div>}
       {status && !status.ok && <div className="error-box"><AlertTriangle size={16}/>{licenseReasonText(status)}</div>}
       {status?.mode === "LICENSED" && status.ok && <div className="hint-box green">{t("لایسنس فعال است — {plan} · {days} روز باقی مانده", { plan: String(status.plan), days: status.daysLeft == null ? t("ابدی") : String(status.daysLeft) })}</div>}
@@ -249,8 +251,8 @@ export function OrdersPage({ notify }: { notify: Notify }) {
       </div>
       {error && <div className="error-box">{error}</div>}
       <div className="table-wrap"><table>
-        <thead><tr><th>{t("شماره سفارش")}</th><th>{t("مشتری")}</th><th>{t("اقلام")}</th><th>{t("مانده تحویل")}</th><th>{t("یادداشت")}</th><th>{t("زمان ثبت")}</th><th></th></tr></thead>
-        <tbody>{orders.map((order) => <tr key={order.id}>
+        <thead><tr><th>{t("شماره")}</th><th>{t("شماره سفارش")}</th><th>{t("مشتری")}</th><th>{t("اقلام")}</th><th>{t("مانده تحویل")}</th><th>{t("یادداشت")}</th><th>{t("زمان ثبت")}</th><th></th></tr></thead>
+        <tbody>{orders.map((order, idx) => <tr key={order.id}><td className="muted mono">{idx + 1}</td>
           <td><b>{order.orderNo}</b></td>
           <td>{order.customer?.name || t("مشتری گذری")}</td>
           <td className="muted">{order.lines.map((line) => `${line.name} × ${line.quantity}`).join("، ")}</td>
@@ -357,8 +359,8 @@ export function InstallmentsPanel({ customerId, notify }: { customerId: string; 
   return <section className="surface" style={{ marginTop: "0.75rem" }}>
     <div className="toolbar"><CalendarClock size={17}/><b>{t("اقساط")}</b><div className="grow"/><button className="primary-button" onClick={() => setShow(true)}>{t("پلن قسط جدید")}</button></div>
     {plans.length ? <div className="table-wrap"><table>
-      <thead><tr><th>{t("مبلغ پلن")}</th><th>{t("پرداخت‌شده")}</th><th>{t("وضعیت")}</th><th>{t("اقساط")}</th></tr></thead>
-      <tbody>{plans.map((plan) => <tr key={plan.id}>
+      <thead><tr><th>{t("شماره")}</th><th>{t("مبلغ پلن")}</th><th>{t("پرداخت‌شده")}</th><th>{t("وضعیت")}</th><th>{t("اقساط")}</th></tr></thead>
+      <tbody>{plans.map((plan, idx) => <tr key={plan.id}><td className="muted mono">{idx + 1}</td>
         <td><b>{money(plan.total)}</b>{plan.note && <small className="block muted">{plan.note}</small>}</td>
         <td>{money(plan.paidAmount)}</td>
         <td>{plan.status === "SETTLED" ? <b className="green-text">{t("تسویه")}</b> : plan.status === "VOID" ? <b className="muted" style={{ textDecoration: "line-through" }}>{t("ابطال‌شده")}</b> : <b className="amber-text">{t("باز")}</b>}</td>
@@ -392,8 +394,8 @@ export function ReorderPanel() {
   return <section className="surface" style={{ marginTop: "0.75rem" }}>
     <div className="toolbar"><PackageCheck size={17}/><b>{t("پیشنهاد سفارش خرید")}</b><small className="muted">{t("بر پایهٔ فروش ۳۰ روز اخیر و ۱۴ روز پوشش آینده")}</small></div>
     {rows.length ? <div className="table-wrap"><table>
-      <thead><tr><th>{t("کالا")}</th><th>{t("موجودی آزاد")}</th><th>{t("فروش ۳۰ روز")}</th><th>{t("روزهای باقی‌مانده")}</th><th>{t("پیشنهاد خرید")}</th><th>{t("آخرین تأمین‌کننده")}</th></tr></thead>
-      <tbody>{rows.map((row) => <tr key={row.productId}>
+      <thead><tr><th>{t("شماره")}</th><th>{t("کالا")}</th><th>{t("موجودی آزاد")}</th><th>{t("فروش ۳۰ روز")}</th><th>{t("روزهای باقی‌مانده")}</th><th>{t("پیشنهاد خرید")}</th><th>{t("آخرین تأمین‌کننده")}</th></tr></thead>
+      <tbody>{rows.map((row, idx) => <tr key={row.productId}><td className="muted mono">{idx + 1}</td>
         <td><b>{row.name}</b>{row.belowMin && <small className="block danger-text">{t("زیر نقطهٔ سفارش")}</small>}</td>
         <td>{row.onHand} {row.unit}{row.reserved > 0 && <small className="block muted">({row.reserved} {t("رزرو")})</small>}</td>
         <td>{row.soldLast30}</td>
@@ -425,8 +427,8 @@ export function SerialsPanel({ products }: { products: Product[] }) {
       {(["IN_STOCK", "SOLD", "RETURNED"] as const).map((value) => <button key={value} className={`chip ${statusFilter === value ? "active" : ""}`} onClick={() => setStatusFilter(value)}>{statusLabel(value)}</button>)}
     </div>
     {productId && rows && (rows.length ? <div className="table-wrap"><table>
-      <thead><tr><th>{t("سریال")}</th><th>{t("وضعیت")}</th><th>{t("یادداشت")}</th><th>{t("زمان ثبت")}</th></tr></thead>
-      <tbody>{rows.map((unit) => <tr key={unit.id}><td dir="ltr" className="text-right"><b>{unit.serial}</b></td><td>{statusLabel(unit.status)}</td><td className="muted">{unit.note || "—"}</td><td className="muted">{dateTime(unit.createdAt)}</td></tr>)}</tbody>
+      <thead><tr><th>{t("شماره")}</th><th>{t("سریال")}</th><th>{t("وضعیت")}</th><th>{t("یادداشت")}</th><th>{t("زمان ثبت")}</th></tr></thead>
+      <tbody>{rows.map((unit, idx) => <tr key={unit.id}><td dir="ltr" className="text-right"><b>{unit.serial}</b></td><td className="muted mono">{idx + 1}</td><td>{statusLabel(unit.status)}</td><td className="muted">{unit.note || "—"}</td><td className="muted">{dateTime(unit.createdAt)}</td></tr>)}</tbody>
     </table></div> : <div className="empty"><b>{t("سریالی نیست")}</b><span>{t("سریال‌ها هنگام ثبت خرید وارد می‌شوند.")}</span></div>)}
     {!serialized.length && <div className="empty"><b>{t("کالای سریال‌دار ندارید")}</b><span>{t("در صفحهٔ کالاها، گزینهٔ «سریال‌دار» را فعال کنید.")}</span></div>}
   </section>;

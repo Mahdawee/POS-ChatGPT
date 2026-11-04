@@ -128,7 +128,7 @@ export type DebtorsReport = {
   suppliers: { id: string; name: string; phone: string | null; balance: number }[];
   suppliersTotal: number;
 };
-export type ShopSettings = { shopName?: string; receiptFooter?: string; logo?: string; [key: string]: string | undefined };
+export type ShopSettings = { shopName?: string; receiptFooter?: string; logo?: string; address?: string; phone?: string; [key: string]: string | undefined };
 export type CashSession = { id: string; status: "OPEN" | "CLOSED"; openingCash: number; expectedCash: number; cashSalesAmount?: number; countedCash: number | null; difference?: number; openedAt: string; closedAt: string | null; user?: { displayName: string }; movements?: { id: string; type: "IN" | "OUT"; amount: number; description: string }[] };
 /** End-of-shift (Z) report returned when a cash session is closed. */
 export type ZReport = {

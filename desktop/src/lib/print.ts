@@ -99,6 +99,9 @@ export function textReceipt(sale: Sale, shop: ShopSettings): string {
   const line = (left: string, right: string) => `${left}${" ".repeat(Math.max(1, 40 - left.length - right.length))}${right}`;
   const rows: string[] = [];
   rows.push(shop.shopName?.trim() || t("فروشگاه"));
+  // نشانی و تلفن فروشگاه اگر مالک/تنظیمات تعیین کرده باشد، زیر نام می‌آیند.
+  const contact = [shop.address?.trim(), shop.phone?.trim()].filter(Boolean).join(" · ");
+  if (contact) rows.push(contact);
   rows.push("=".repeat(40));
   rows.push(line(t("رسید فروش"), sale.receiptNo));
   rows.push(line(t("زمان"), new Date(sale.createdAt).toLocaleString("en-GB")));
@@ -120,7 +123,7 @@ export function invoiceHtml(sale: Sale, shop: ShopSettings): string {
   const rows = sale.items.map((item, index) => `<tr><td class="num">${index + 1}</td><td>${esc(item.name)}</td><td class="num">${item.quantity}</td><td class="num">${money(item.unitPrice)}</td><td class="num">${money(item.lineTotal)}</td></tr>`).join("");
   return `
     <div class="invoice-head">
-      <div>${shop.printLogo === "0" ? "" : shop.logo?.trim() ? `<img class="shop-logo" style="margin:0" src="${esc(shop.logo)}" alt=""/>` : ""}<div class="receipt-brand">${esc(shop.shopName?.trim() || t("فروشگاه من"))}</div></div>
+      <div>${shop.printLogo === "0" ? "" : shop.logo?.trim() ? `<img class="shop-logo" style="margin:0" src="${esc(shop.logo)}" alt=""/>` : ""}<div class="receipt-brand">${esc(shop.shopName?.trim() || t("فروشگاه من"))}</div>${[shop.address?.trim(), shop.phone?.trim()].filter(Boolean).join(" · ") ? `<div style="font-size:11px;color:#444;">${esc([shop.address?.trim(), shop.phone?.trim()].filter(Boolean).join(" · "))}</div>` : ""}</div>
       <div class="invoice-party">
         <div><b>${esc(t("فاکتور فروش"))}</b></div>
         <div>${esc(t("شماره فاکتور"))}: <span class="num">${esc(sale.receiptNo)}</span></div>
@@ -176,7 +179,10 @@ function shopHeader(shop: ShopSettings): string {
   // receipts even when one is configured for the screen.
   const logo = shop.printLogo === "0" ? undefined : shop.logo?.trim();
   // The brand line is the shop's own configured name — no hardcoded brand.
-  return `${logo ? `<img class="shop-logo" src="${esc(logo)}" alt=""/>` : ""}<div class="receipt-brand">${esc(shop.shopName?.trim() || t("فروشگاه من"))}</div>`;
+  // Address/phone (when the owner file or in-app settings provide them) ride
+  // along on every printed document, right under the name.
+  const contact = [shop.address?.trim(), shop.phone?.trim()].filter(Boolean).join(" · ");
+  return `${logo ? `<img class="shop-logo" src="${esc(logo)}" alt=""/>` : ""}<div class="receipt-brand">${esc(shop.shopName?.trim() || t("فروشگاه من"))}</div>${contact ? `<div style="font-size:10px;color:#444;">${esc(contact)}</div>` : ""}`;
 }
 
 /** receipt body shared by sale receipts and return slips */

@@ -217,7 +217,7 @@ describe("Round 16 — settings validation", () => {
       },
       auditLog: { create: jest.fn().mockResolvedValue({}) },
     };
-    return { controller: new SettingsController(prisma as never, { reset: jest.fn(), seed: jest.fn() } as never), prisma };
+    return { controller: new SettingsController(prisma as never, { reset: jest.fn(), seed: jest.fn() } as never, { readOwnerConfig: () => ({}) } as never), prisma };
   }
   it("accepts valid calendar/timezone/currency values", async () => {
     const { controller, prisma } = settingsSetup();

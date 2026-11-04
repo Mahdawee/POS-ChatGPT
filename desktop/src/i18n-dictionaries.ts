@@ -6,6 +6,9 @@
  * when new strings are added.
  */
 export const pashto: Record<string, string> = {
+  "تلفن": "تلیفون",
+  "برخی تنظیمات فروشگاه توسط فایل مالک قفل شده‌اند": "د دوکان ځینې امستنې د مالک فایل له‌خوا تړل شوې دي",
+  "این تنظیمات ({items}) مالک برنامه در فایل owner.json تعیین کرده و بر این صفحه مقدم است؛ برای تغییرشان ابزار مالک را به‌روز کنید.": "دا امستنې ({items}) د برنامه مالک په owner.json فایل کې ټاکلې دي او پر دې پاڼه مقدمې دي؛ د بدلولو لپاره د مالک وسیله تازه کړئ.",
   "فایل CSV (اکسل)": "CSV فایل (اکسل)",
   "PDF / چاپ": "PDF / چاپ",
   "فایل ذخیره شد:": "فایل خوندي شو:",
@@ -1296,6 +1299,9 @@ export const pashto: Record<string, string> = {
 };
 
 export const english: Record<string, string> = {
+  "تلفن": "Phone",
+  "برخی تنظیمات فروشگاه توسط فایل مالک قفل شده‌اند": "Some shop settings are locked by the owner file",
+  "این تنظیمات ({items}) مالک برنامه در فایل owner.json تعیین کرده و بر این صفحه مقدم است؛ برای تغییرشان ابزار مالک را به‌روز کنید.": "The owner set these settings ({items}) in the owner.json file and they override this page; use the owner tool to change them.",
   "فایل CSV (اکسل)": "CSV file (Excel)",
   "PDF / چاپ": "PDF / Print",
   "فایل ذخیره شد:": "File saved:",

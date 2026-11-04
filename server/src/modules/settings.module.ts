@@ -9,6 +9,7 @@ import { PrismaService } from "../prisma.service";
 import { configureLocalStorage, databaseFilePath } from "../storage";
 import { BackupScheduler } from "./backup-scheduler";
 import { SampleDataService } from "../services/sample-data";
+import { OwnerConfigModule, OwnerConfigService } from "../owner-config";
 import { SalesController } from "./sales.module";
 import { PurchasesController, PurchaseReturnsController } from "./purchases.module";
 import { QuotesController } from "./quotes.module";
@@ -20,12 +21,27 @@ import { CheckoutService } from "../services/checkout";
 
 @Controller("settings")
 export class SettingsController {
-  constructor(private readonly prisma: PrismaService, private readonly sampleData: SampleDataService) {}
+  constructor(private readonly prisma: PrismaService, private readonly sampleData: SampleDataService, private readonly ownerConfig: OwnerConfigService) {}
   // Reading settings (shop name, receipt footer, …) is allowed for every
   // signed-in user so receipts and the header show the configured name.
   @Get() async get() {
     const entries = await this.prisma.setting.findMany({ orderBy: { key: "asc" } });
-    return Object.fromEntries(entries.map(({ key, value }) => [key, value]));
+    const settings: Record<string, string | string[]> = Object.fromEntries(entries.map(({ key, value }) => [key, value]));
+    // تنظیمات فروشگاه (نام، پانوشت رسید، لوگو، نشانی، تلفن) که فایل مالک
+    // (owner.json) مقدار داده باشد بر مقدار داخل دیتابیس مقدم است — مالک
+    // برنامه از ابزار بیرونی خودش آن‌ها را تعیین کرده. کلیدهای قفل‌شده
+    // به کلاینت اعلام می‌شوند تا صفحهٔ تنظیمات به‌جای «ذخیره نشدن»، علت
+    // واقعی را نشان دهد.
+    const owner = this.ownerConfig.readOwnerConfig();
+    const ownerLocked: string[] = [];
+    for (const key of ["shopName", "receiptFooter", "logo", "address", "phone"] as const) {
+      if (owner[key]) {
+        settings[key] = owner[key];
+        ownerLocked.push(key);
+      }
+    }
+    if (ownerLocked.length) settings.ownerLocked = ownerLocked;
+    return settings;
   }
   /** تقویم نمایش تاریخ‌ها: شمسی (پیش‌فرض)، قمری یا میلادی. */
   static readonly CALENDARS = ["persian", "islamic-umalqura", "gregorian"];
@@ -222,6 +238,7 @@ export class SettingsController {
 }
 
 @Module({
+  imports: [OwnerConfigModule],
   controllers: [SettingsController],
   // The sample-data service drives the REAL controllers (sales, purchases,
   // quotes, orders, installments, expenses, cash) so every seeded document
