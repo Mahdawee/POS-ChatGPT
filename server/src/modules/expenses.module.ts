@@ -17,7 +17,7 @@ export class ExpensesController {
   async list(@Query("from") from?: string, @Query("to") to?: string) {
     const end = to ? new Date(to.length === 10 ? `${to}T23:59:59.999` : to) : new Date();
     if (!to) end.setHours(23, 59, 59, 999);
-    const start = from ? new Date(from) : new Date(end.getTime() - 29 * 86400000);
+    const start = from ? new Date(from.length === 10 ? `${from}T00:00:00` : from) : new Date(end.getTime() - 29 * 86400000);
     if (!from) start.setHours(0, 0, 0, 0);
     const where = { createdAt: { gte: start, lte: end } };
     const [list, agg] = await Promise.all([

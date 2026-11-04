@@ -27,7 +27,7 @@ describe("Purchases", () => {
     expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
       skip: 20,
       take: 10,
-      where: { createdAt: { gte: new Date("2026-01-01"), lte: new Date("2026-01-31T23:59:59.999") } },
+      where: { createdAt: { gte: new Date("2026-01-01T00:00:00"), lte: new Date("2026-01-31T23:59:59.999") } },
       orderBy: { total: "asc" },
     }));
     // No filters → the default newest-first window with an empty where.

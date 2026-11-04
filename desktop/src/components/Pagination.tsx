@@ -16,11 +16,21 @@ export function Pagination({ page, pageCount, shown, total, busy, onChange }: { 
   }
   const numbers: Array<number | "…"> = [];
   const push = (value: number | "…") => { if (numbers[numbers.length - 1] !== value) numbers.push(value); };
-  const start = Math.max(1, Math.min(page - 1, pageCount - 3));
-  const end = Math.min(pageCount, Math.max(page + 1, 4));
-  for (let index = 1; index <= end; index++) push(index);
-  if (pageCount > end) { push("…"); push(pageCount); }
-  if (start > 1) { numbers.unshift("…"); numbers.unshift(1); }
+  // Windowing: never more than «1 … x-1 x x+1 … last» buttons, however many
+  // hundreds of pages the ledger has. (The old formula always drew every
+  // number from 1 up to `end` and could show 50+ buttons — plus a duplicated
+  // leading 1 — on long ledgers.) Each ellipsis must actually hide ≥2 pages.
+  if (pageCount <= 7) {
+    for (let index = 1; index <= pageCount; index += 1) push(index);
+  } else {
+    const start = Math.max(2, page - 1);
+    const end = Math.min(pageCount - 1, page + 1);
+    push(1);
+    if (start > 3) push("…");
+    for (let index = start; index <= end; index += 1) push(index);
+    if (end < pageCount - 2) push("…");
+    push(pageCount);
+  }
   return <div className="pagination-bar">
     <span className="toolbar-count">{t("{shown} از {count} مورد", { shown: String(shown), count: String(total) })}</span>
     <div className="pagination-pages">

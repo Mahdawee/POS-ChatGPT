@@ -21,7 +21,9 @@ export class PurchasesController {
     const where: Prisma.PurchaseWhereInput = {};
     // Unparsable date strings are ignored rather than crashing the query.
     const createdAt: Prisma.DateTimeFilter = {};
-    if (from && Number.isFinite(Date.parse(from))) createdAt.gte = new Date(from);
+    // A date-only «from» means local midnight — same clock as «to» below. Parsing
+    // it bare would jump to UTC and drop the 00:00–04:30 sales of that day.
+    if (from && Number.isFinite(Date.parse(from))) createdAt.gte = new Date(from.length === 10 ? `${from}T00:00:00` : from);
     const toDay = to ? (to.length === 10 ? `${to}T23:59:59.999` : to) : "";
     if (toDay && Number.isFinite(Date.parse(toDay))) createdAt.lte = new Date(toDay);
     if (createdAt.gte || createdAt.lte) where.createdAt = createdAt;

@@ -276,7 +276,7 @@ export class ReportsController {
   async profit(@Query("from") from?: string, @Query("to") to?: string, @Query("compare") compare?: string) {
     const end = to ? new Date(to.length === 10 ? `${to}T23:59:59.999` : to) : new Date();
     if (!to) end.setHours(23, 59, 59, 999);
-    const start = from ? new Date(from) : new Date(end.getTime() - 29 * 86400000);
+    const start = from ? new Date(from.length === 10 ? `${from}T00:00:00` : from) : new Date(end.getTime() - 29 * 86400000);
     if (!from) start.setHours(0, 0, 0, 0);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) throw new BadRequestException("بازهٔ تاریخ گزارش معتبر نیست.");
     return cachedReport(`${from || ""}|${to || ""}|${compare || ""}`, async () => {
@@ -338,7 +338,7 @@ export class ReportsController {
   private reportRange(from?: string, to?: string): { start: Date; end: Date } {
     const end = to ? new Date(to.length === 10 ? `${to}T23:59:59.999` : to) : new Date();
     if (!to) end.setHours(23, 59, 59, 999);
-    const start = from ? new Date(from) : new Date(end.getTime() - 29 * 86400000);
+    const start = from ? new Date(from.length === 10 ? `${from}T00:00:00` : from) : new Date(end.getTime() - 29 * 86400000);
     if (!from) start.setHours(0, 0, 0, 0);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) throw new BadRequestException("بازهٔ تاریخ گزارش معتبر نیست.");
     return { start, end };
