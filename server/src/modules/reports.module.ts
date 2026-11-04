@@ -469,10 +469,21 @@ export class ReportsController {
     return cachedReport("inventory", async () => {
       const products = await this.prisma.product.findMany({
         where: { isActive: true },
-        select: { name: true, sku: true, unit: true, stock: true, backstock: true, minStock: true, cost: true, price: true, isBundle: true, expiryDate: true, category: { select: { name: true } } },
+        select: { id: true, name: true, sku: true, unit: true, stock: true, backstock: true, minStock: true, cost: true, price: true, isBundle: true, expiryDate: true, category: { select: { name: true } } },
       });
       const goods = products.filter((product) => !product.isBundle);
       const expiringCutoff = Date.now() + 14 * 86400000;
+      // Batch-tracked goods carry their expiry on live ProductBatch rows, not
+      // on the product — the dashboard card already counts both. This report
+      // used to read only product.expiryDate, so a batch-tracked item near its
+      // date showed on the dashboard (۱) but never in the inventory report (۰).
+      // Same suppression rule as the dashboard: live batches count on their
+      // own; products WITH live batches skip their product-level date.
+      const [liveBatchProducts, expiringBatches] = await Promise.all([
+        this.prisma.productBatch.findMany({ where: { remainingQty: { gt: 0 } }, select: { productId: true } }),
+        this.prisma.productBatch.findMany({ where: { remainingQty: { gt: 0 }, expiryDate: { lte: new Date(expiringCutoff) } }, select: { remainingQty: true, product: { select: { cost: true } } } }),
+      ]);
+      const batchProductIds = new Set(liveBatchProducts.map((batch) => batch.productId));
       let stockValue = 0, backstockValue = 0, lowStockCount = 0, outOfStockCount = 0, expiringCount = 0, expiringValue = 0;
       const byCategory = new Map<string, { name: string; count: number; value: number }>();
       for (const product of goods) {
@@ -481,7 +492,7 @@ export class ReportsController {
         backstockValue += product.backstock * product.cost;
         if (product.stock <= product.minStock) lowStockCount += 1;
         if (product.stock <= 0) outOfStockCount += 1;
-        if (product.expiryDate && product.expiryDate.getTime() <= expiringCutoff && product.stock > 0) {
+        if (product.expiryDate && product.expiryDate.getTime() <= expiringCutoff && !batchProductIds.has(product.id)) {
           expiringCount += 1;
           expiringValue += product.stock * product.cost;
         }
@@ -490,6 +501,8 @@ export class ReportsController {
         bucket.count += 1; bucket.value += (product.stock + product.backstock) * product.cost;
         byCategory.set(key, bucket);
       }
+      expiringCount += expiringBatches.length;
+      expiringValue += expiringBatches.reduce((sum, batch) => sum + batch.remainingQty * (batch.product?.cost || 0), 0);
       return {
         productCount: goods.length,
         stockValue, backstockValue, totalValue: stockValue + backstockValue,

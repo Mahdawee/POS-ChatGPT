@@ -66,20 +66,31 @@ export class ProductsController {
     const take = 100;
     const offset = Math.max(0, Number(skip) || 0);
     const include = { category: true, bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true, stock: true, reserved: true, isSerialized: true } } } }, serialUnits: { where: { status: "IN_STOCK" }, select: { id: true } } } as const;
+    // Effective on-hand stock as a SQL expression: plain products are their
+    // own stock, bundles are how many kits their components can build —
+    // floor(min(component.free / qty)) — matching the client's buildableKits.
+    // Sorting or filtering by stock must use this value, otherwise every
+    // bundle (own stock 0 by design) would sort as empty and never light up
+    // the low/out filters even when its parts run dry.
+    const effectiveStock = `(CASE WHEN Product.isBundle = 1 THEN COALESCE((
+      SELECT MIN(CASE WHEN bc.quantity > 0 THEN CAST((c.stock - c.reserved) / bc.quantity AS INTEGER) ELSE 0 END)
+      FROM BundleComponent bc JOIN Product c ON c.id = bc.componentId
+      WHERE bc.bundleId = Product.id
+    ), 0) ELSE Product.stock END)`;
     // "کم‌موجود / ناموجود" compare two COLUMNS (stock vs minStock), which
-    // Prisma's where cannot express — those filters resolve the id window in
-    // raw SQL first, then hydrate it through the same include as everyone
-    // else. Bundles are excluded: their own stock is always 0 by design, so
-    // they would light up every low-stock filter forever.
-    if (stock === "low" || stock === "out") {
-      // The Prisma branch above reads isActive: archived !== "1" — active rows
+    // Prisma's where cannot express — and stock sorting needs the bundle-aware
+    // expression above — so those requests resolve the id window in raw SQL
+    // first, then hydrate it through the same include as everyone else.
+    if (stock === "low" || stock === "out" || column === "stock") {
+      // The Prisma branch below reads isActive: archived !== "1" — active rows
       // by default. The raw id-window must agree: 1 (active) unless archived=1.
       const params: unknown[] = [archived === "1" ? 0 : 1];
-      const conditions = ["isActive = ?", "isBundle = 0", stock === "low" ? "stock <= minStock" : "stock <= 0"];
+      const conditions = ["isActive = ?"];
+      if (stock === "low" || stock === "out") conditions.push(`(${effectiveStock}) ${stock === "low" ? "<= minStock" : "<= 0"}`);
       if (search) { conditions.push("(name LIKE ? OR sku LIKE ? OR barcode LIKE ?)"); params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
       if (categoryId) { conditions.push("categoryId = ?"); params.push(categoryId); }
       const base = `SELECT id FROM Product WHERE ${conditions.join(" AND ")}`;
-      const order = ` ORDER BY ${column} ${direction === "desc" ? "DESC" : "ASC"}, name ASC`;
+      const order = column === "stock" ? ` ORDER BY (${effectiveStock}) ${direction === "desc" ? "DESC" : "ASC"}, name ASC` : ` ORDER BY ${column} ${direction === "desc" ? "DESC" : "ASC"}, name ASC`;
       const [idRows, countRows] = await Promise.all([
         this.prisma.$queryRawUnsafe<Array<{ id: string }>>(`${base}${order} LIMIT ${take} OFFSET ${offset}`, ...params),
         this.prisma.$queryRawUnsafe<Array<{ count: number | bigint }>>(`SELECT COUNT(*) AS count FROM (${base})`, ...params),

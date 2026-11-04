@@ -4,14 +4,23 @@ import { closeSync, openSync, readFileSync, readSync, statSync, unlinkSync, writ
 import { join } from "node:path";
 import { AdminOnly, CurrentUser, SessionUser } from "../auth";
 import { createBackup } from "../backup";
-import { RestoreBackupDto, SettingDto } from "../dto";
+import { ResetDataDto, RestoreBackupDto, SettingDto } from "../dto";
 import { PrismaService } from "../prisma.service";
 import { configureLocalStorage, databaseFilePath } from "../storage";
 import { BackupScheduler } from "./backup-scheduler";
+import { SampleDataService } from "../services/sample-data";
+import { SalesController } from "./sales.module";
+import { PurchasesController, PurchaseReturnsController } from "./purchases.module";
+import { QuotesController } from "./quotes.module";
+import { OrdersController } from "./orders.module";
+import { InstallmentsController } from "./installments.module";
+import { ExpensesController } from "./expenses.module";
+import { CashController } from "./cash.module";
+import { CheckoutService } from "../services/checkout";
 
 @Controller("settings")
 export class SettingsController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly sampleData: SampleDataService) {}
   // Reading settings (shop name, receipt footer, …) is allowed for every
   // signed-in user so receipts and the header show the configured name.
   @Get() async get() {
@@ -190,7 +199,40 @@ export class SettingsController {
     await this.prisma.auditLog.create({ data: { actor: user.username, action: "RESTORE_BACKUP", entity: "Database", detail: `from safety ${safetyPath}` } });
     return { ok: true };
   }
+
+  /** بازنشانی کامل داده‌های فروشگاه (Settings → سیستم): همهٔ داده‌های تجاری
+   *  پاک می‌شود؛ کاربرها، تنظیمات و لایسنس می‌مانند و خودِ عملیات لاگ
+   *  می‌شود. نیاز به تأیید صریح «RESET» دارد تا کلیک اشتباهی چیزی پاک نکند. */
+  @AdminOnly() @Post("data/reset")
+  async resetData(@Body() dto: ResetDataDto, @CurrentUser() user: SessionUser) {
+    if (dto?.confirm !== "RESET") throw new BadRequestException("برای بازنشانی، تأیید «RESET» لازم است.");
+    const counts = await this.sampleData.reset(user);
+    return { ok: true, removed: counts };
+  }
+
+  /** ساخت دیتای نمونهٔ همه‌جانبه — فقط روی فروشگاه خالی؛ هر قابلیت برنامه
+   *  (پرداخت‌ها، وزنی، سریالی، بسته، سفارش، اقساط، برگشتی، ابطال…) را پوشش
+   *  می‌دهد تا همهٔ صفحه‌ها قابل تست باشند. اسناد از همان منطق واقعی
+   *  ثبت می‌شوند تا موجودی و حساب‌ها سازگار بمانند. */
+  @AdminOnly() @Post("data/sample")
+  async seedSampleData(@CurrentUser() user: SessionUser) {
+    const result = await this.sampleData.seed(user);
+    return { ok: true, created: result };
+  }
 }
 
-@Module({ controllers: [SettingsController], providers: [BackupScheduler] })
+@Module({
+  controllers: [SettingsController],
+  // The sample-data service drives the REAL controllers (sales, purchases,
+  // quotes, orders, installments, expenses, cash) so every seeded document
+  // follows production logic. Nest does not allow exporting controllers from
+  // their own modules, so they are registered here as plain providers —
+  // stateless, and their dependencies (Prisma, license) are @Global.
+  providers: [
+    BackupScheduler, SampleDataService, CheckoutService,
+    SalesController, PurchasesController, PurchaseReturnsController,
+    QuotesController, OrdersController, InstallmentsController,
+    ExpensesController, CashController,
+  ],
+})
 export class SettingsModule {}

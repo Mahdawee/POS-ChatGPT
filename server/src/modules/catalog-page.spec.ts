@@ -32,10 +32,28 @@ describe("Products page endpoint", () => {
     expect(page.hasMore).toBe(false);
   });
 
-  it("sorts by the whitelisted column and direction (months of use: sort by stock/price)", async () => {
+  it("sorts by the whitelisted column and direction through Prisma (price)", async () => {
     const { controller, prisma } = setup(rows);
+    await controller.page(undefined, undefined, undefined, "price", "desc");
+    expect(prisma.product.findMany).toHaveBeenCalledWith(expect.objectContaining({ orderBy: { price: "desc" } }));
+  });
+
+  it("sorts by stock through the bundle-aware raw expression (kits are not always 0)", async () => {
+    // Bundles keep their own stock at 0 by design; sorting them by the raw
+    // column pinned every kit to the bottom/top of the "موجودی" column no
+    // matter how many kits their components could build.
+    const prisma = {
+      product: { findMany: jest.fn().mockResolvedValue([{ id: "p1" }]) },
+      $queryRawUnsafe: jest.fn().mockImplementation((sql: string) =>
+        sql.startsWith("SELECT COUNT(*)") ? Promise.resolve([{ count: 1 }]) : Promise.resolve([{ id: "p1" }])),
+    };
+    const controller = new ProductsController(prisma as never);
     await controller.page(undefined, undefined, undefined, "stock", "desc");
-    expect(prisma.product.findMany).toHaveBeenCalledWith(expect.objectContaining({ orderBy: { stock: "desc" } }));
+    const sql = (prisma.$queryRawUnsafe as jest.Mock).mock.calls[0][0];
+    expect(sql).toContain("ORDER BY ((CASE WHEN Product.isBundle = 1");
+    expect(sql).toContain("BundleComponent");
+    expect(sql).toContain("DESC");
+    expect(sql).not.toContain("stock <= minStock"); // no stock filter, just sorting
   });
 
   it("falls back to name-asc for an unknown sort column (never reaches raw SQL)", async () => {
@@ -64,8 +82,11 @@ describe("Products page endpoint", () => {
     const controller = new ProductsController(prisma as never);
     const page = await controller.page(undefined, "چای", "100", "stock", "asc", "low");
     const calls = (prisma.$queryRawUnsafe as jest.Mock).mock.calls.map((call) => call[0]);
-    expect(calls[0]).toContain("stock <= minStock");
-    expect(calls[0]).toContain("isBundle = 0");
+    // The comparison runs on the EFFECTIVE stock: bundles count how many kits
+    // their components can build, so a drying-up kit lights the filter too.
+    expect(calls[0]).toContain("<= minStock");
+    expect(calls[0]).toContain("CASE WHEN Product.isBundle = 1");
+    expect(calls[0]).toContain("BundleComponent");
     expect(calls[0]).toContain("LIKE ?");
     expect(calls[0]).toContain("LIMIT 100 OFFSET 100");
     expect(page.total).toBe(12);
@@ -100,7 +121,7 @@ describe("Products page endpoint", () => {
     };
     const controller = new ProductsController(prisma as never);
     const page = await controller.page(undefined, undefined, "0", "stock", "asc", "out");
-    expect((prisma.$queryRawUnsafe as jest.Mock).mock.calls[0][0]).toContain("stock <= 0");
+    expect((prisma.$queryRawUnsafe as jest.Mock).mock.calls[0][0]).toContain("<= 0");
     // Raw id order wins: pagination stays contiguous regardless of findMany order.
     expect(page.list.map((row: { id: string }) => row.id)).toEqual(["a", "b"]);
   });

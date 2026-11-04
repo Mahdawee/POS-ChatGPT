@@ -5,7 +5,7 @@ import { createBackup, pruneAutoBackups } from "../backup";
 import { PrismaService } from "../prisma.service";
 
 @Controller("cash")
-class CashController {
+export class CashController {
   constructor(private readonly prisma: PrismaService) {}
 
   private async snapshot(sessionId: string) {

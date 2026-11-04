@@ -187,6 +187,11 @@ export class PurchaseReturnDto {
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(200) @ValidateNested({ each: true }) @Type(() => PurchaseReturnLineDto) items!: PurchaseReturnLineDto[];
 }
 
+/** تأیید صریح بازنشانی داده‌ها — رشتهٔ ثابت تا کلیک اشتباه پاک‌سازی نکند. */
+export class ResetDataDto {
+  @IsIn(["RESET"]) confirm!: string;
+}
+
 /** Base64 payload of a portable .db backup (Settings → restore). */
 export class RestoreBackupDto {
   @IsString() @MinLength(16) data!: string;

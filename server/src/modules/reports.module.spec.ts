@@ -137,6 +137,63 @@ describe("Debtors report", () => {
   });
 });
 
+describe("Inventory report", () => {
+  // cachedReport("inventory") is module-level state — each case must recompute.
+  beforeEach(() => invalidateReportCache());
+
+
+  function inventorySetup(liveBatchProducts: Array<{ productId: string }>, expiringBatches: Array<{ remainingQty: number; product: { cost: number } }>) {
+    const products = [
+      { id: "p1", name: "شیر تازه", sku: "M-1", unit: "بوتل", stock: 10, backstock: 0, minStock: 2, cost: 40, price: 55, isBundle: false, expiryDate: null, category: { name: "لبنیات" } },
+      { id: "p2", name: "روغن", sku: "O-1", unit: "عدد", stock: 5, backstock: 0, minStock: 1, cost: 100, price: 130, isBundle: false, expiryDate: new Date(Date.now() + 5 * 86400000), category: null },
+      { id: "p3", name: "بستهٔ کیت", sku: "K-1", unit: "بسته", stock: 0, backstock: 0, minStock: 0, cost: 0, price: 195, isBundle: true, expiryDate: null, category: null },
+    ];
+    const prisma = {
+      product: { findMany: jest.fn().mockResolvedValue(products) },
+      productBatch: {
+        findMany: jest.fn().mockImplementation(({ where }: { where?: { expiryDate?: { lte?: Date } } }) =>
+          Promise.resolve(where?.expiryDate?.lte ? expiringBatches : liveBatchProducts)),
+      },
+    };
+    return { controller: new ReportsController(prisma as never), prisma };
+  }
+
+  it("counts expiring live batches (dashboard parity), not just product-level dates", async () => {
+    // Milk carries its expiry on a live batch (product-level date NULL) — the
+    // old report missed it while the dashboard card counted it. Oil carries a
+    // product-level date inside the 14-day window.
+    const { controller } = inventorySetup([{ productId: "p1" }], [{ remainingQty: 6, product: { cost: 40 } }]);
+    const report = (await controller.inventory()) as { expiringCount: number; expiringValue: number; productCount: number };
+    expect(report.expiringCount).toBe(2); // 1 live batch + 1 product-level date
+    expect(report.expiringValue).toBe(6 * 40 + 5 * 100);
+    expect(report.productCount).toBe(2); // bundles are excluded from the goods count
+  });
+
+  it("suppresses the product-level date when the product has live batches (no double count)", async () => {
+    // Both products have live batches now → only the batches count, even
+    // though oil still has a product-level expiryDate in the window.
+    const { controller } = inventorySetup([{ productId: "p1" }, { productId: "p2" }], [
+      { remainingQty: 6, product: { cost: 40 } },
+      { remainingQty: 2, product: { cost: 100 } },
+    ]);
+    const report = (await controller.inventory()) as { expiringCount: number; expiringValue: number };
+    expect(report.expiringCount).toBe(2);
+    expect(report.expiringValue).toBe(6 * 40 + 2 * 100);
+  });
+
+  it("ignores batches and dates outside the 14-day window", async () => {
+    // No expiring batches, and oil's product-level date is two months out.
+    const { controller, prisma } = inventorySetup([{ productId: "p1" }], []);
+    (prisma.product.findMany as jest.Mock).mockResolvedValue([
+      { id: "p1", name: "شیر تازه", sku: "M-1", unit: "بوتل", stock: 10, backstock: 0, minStock: 2, cost: 40, price: 55, isBundle: false, expiryDate: null, category: { name: "لبنیات" } },
+      { id: "p2", name: "روغن", sku: "O-1", unit: "عدد", stock: 5, backstock: 0, minStock: 1, cost: 100, price: 130, isBundle: false, expiryDate: new Date(Date.now() + 60 * 86400000), category: null },
+    ]);
+    const report = (await controller.inventory()) as { expiringCount: number; expiringValue: number };
+    expect(report.expiringCount).toBe(0);
+    expect(report.expiringValue).toBe(0);
+  });
+});
+
 describe("Profit report cache", () => {
   it("serves an identical range from memory and recomputes after invalidation", async () => {
     invalidateReportCache(); // clean slate — earlier tests may have warmed the key
