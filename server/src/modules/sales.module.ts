@@ -35,8 +35,13 @@ export class SalesController {
     const direction = dir === "asc" ? "asc" as const : "desc" as const;
     const orderBy = sort === "total" ? { total: direction } : sort === "receiptNo" ? { receiptNo: direction } : sort === "customer" ? { customer: { name: direction } } : { createdAt: direction };
     // { list, total } so the client can render real page numbers.
+    // History rows ship only what the table, exports and dialogs read from
+    // the LIST row: the customer's name/phone, and per line just the
+    // quantity (the «اقلام» column and exports count lines; full item rows
+    // come from /sales/:id when a detail, return or share dialog opens).
+    // On a ledger of thousands this roughly halves the page payload.
     const [list, total] = await Promise.all([
-      this.prisma.sale.findMany({ where, skip: offset, take: limit, include: { customer: true, user: { select: { displayName: true } }, items: true, returns: { select: { id: true, total: true } } }, orderBy }),
+      this.prisma.sale.findMany({ where, skip: offset, take: limit, include: { customer: { select: { id: true, name: true, phone: true } }, user: { select: { displayName: true } }, items: { select: { quantity: true } }, returns: { select: { id: true, total: true } } }, orderBy }),
       this.prisma.sale.count({ where }),
     ]);
     return { list, total };

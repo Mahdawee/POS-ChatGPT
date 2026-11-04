@@ -973,7 +973,7 @@ export function SalesPage({ notify, user }: { notify: Notify; user: User }) {
     } catch (e) { notify((e as Error).message, "error"); } finally { setVoidBusy(false); }
   };
   const returnedQty = (sale: Sale | null, productId: string) => (sale?.returns || []).flatMap((record) => record.items || []).filter((item) => item.productId === productId).reduce((count, item) => count + item.quantity, 0);
-  const openDetail = (sale: Sale) => { setSelected(sale); get<Sale>(`/sales/${sale.id}`).then(setSelected).catch(() => undefined); };
+  const openDetail = (sale: Sale) => { get<Sale>(`/sales/${sale.id}`).then(setSelected).catch(() => undefined); };
   const openReturn = (sale: Sale) => { setReturning(sale); setReturnDetail(null); setReturnLines({}); setReturnSerials({}); setReturnSerialUnits([]); setReturnNote(""); get<Sale>(`/sales/${sale.id}`).then(setReturnDetail).catch((e) => notify(e.message, "error")); get<Product[]>("/products").then(setReturnProducts).catch(() => undefined); get<Array<{ serial: string; productId: string; saleItemId: string | null }>>(`/inventory/serials?saleId=${sale.id}&status=SOLD`).then(setReturnSerialUnits).catch(() => setReturnSerialUnits([])); };
   const refundEstimate = returnDetail
     // Same rule as the server: undiscounted line prices, but never more than
@@ -1021,12 +1021,22 @@ export function SalesPage({ notify, user }: { notify: Notify; user: User }) {
     if (method) params.set("method", method);
     if (query.trim()) params.set("q", query.trim());
     params.set("sort", sort.key); params.set("dir", sort.dir);
-    const all: Sale[] = [];
-    for (let skip = 0; ; skip += 300) {
-      params.set("skip", String(skip)); params.set("take", "300");
-      const page = await get<SaleList>(`/sales?${params.toString()}`);
-      all.push(...page.list);
-      if (!page.list.length || all.length >= page.total) break;
+    params.set("take", "300");
+    const pageUrl = (skip: number) => { const p = new URLSearchParams(params); p.set("skip", String(skip)); return `/sales?${p.toString()}`; };
+    // Page 1 tells us the total; the rest load in small parallel waves
+    // instead of one-by-one — a 25k-invoice ledger used to crawl through
+    // 80+ sequential round trips before the file dialog appeared.
+    const first = await get<SaleList>(pageUrl(0));
+    const all: Sale[] = [...first.list];
+    const pageCount = Math.ceil(first.total / 300);
+    const WAVE = 4;
+    for (let startPage = 1; startPage < pageCount; startPage += WAVE) {
+      const pages: number[] = [];
+      for (let p2 = startPage; p2 < Math.min(startPage + WAVE, pageCount); p2++) pages.push(p2);
+      // A failed page must fail the whole export loudly (same as before) —
+      // a silently partial accounting file is worse than an error toast.
+      const chunks = await Promise.all(pages.map((p2) => get<SaleList>(pageUrl(p2 * 300)).then((page) => page.list)));
+      for (const chunk of chunks) all.push(...chunk);
     }
     return all;
   };

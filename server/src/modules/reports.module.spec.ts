@@ -16,6 +16,15 @@ function setup() {
         Promise.resolve(allSales.filter((sale) => (!where?.createdAt?.gte || sale.createdAt >= where.createdAt.gte) && (!where?.createdAt?.lte || sale.createdAt <= where.createdAt.lte)))),
       aggregate: jest.fn().mockResolvedValue({ _sum: { cashPart: 40, mobilePart: 0, creditPart: 15, walletPart: 0 } }),
     },
+    // Round 40: profitFor reads invoice lines as ONE FLAT raw join (bound
+    // with epoch-ms integers) instead of nested includes — mirror that here
+    // by flattening the same fixtures and honouring the bound date window.
+    $queryRawUnsafe: jest.fn().mockImplementation((_sql: string, ...params: unknown[]) => {
+      const from = Number(params[0]); const to = Number(params[1]);
+      return Promise.resolve(allSales
+        .filter((sale) => sale.createdAt.getTime() >= from && sale.createdAt.getTime() <= to)
+        .flatMap((sale) => sale.items.map((item) => ({ saleId: sale.id, productId: item.productId, name: item.name, quantity: item.quantity, unitCost: item.unitCost, lineTotal: item.lineTotal, categoryName: item.product?.category?.name || null }))));
+    }),
     saleReturn: {
       findMany: jest.fn().mockResolvedValue([
         { id: "return-1", total: 10, creditRelief: 0, cashAmount: 10, walletRefund: 0, userId: "user-2", createdAt: day("02"), sale: { cashSessionId: "session-2" }, items: [{ productId: "p1", name: "چای", quantity: 1, unitPrice: 10, unitCost: 6, lineTotal: 10, product: { category: { name: "نوشیدنی" } } }] },
@@ -110,6 +119,26 @@ function debtorsSetup() {
 }
 
 describe("Debtors report", () => {
+  // The report is cached for 60s like its siblings — each case must recompute
+  // over its own freshly-mocked prisma, not replay the previous case's rows.
+  beforeEach(() => invalidateReportCache());
+
+  it("serves the aging from the memory cache and recomputes after a write", async () => {
+    const { controller, prisma } = debtorsSetup();
+    const first = await controller.debtors();
+    // Same report again without any write in between: served from memory,
+    // the database is not re-read at all.
+    prisma.sale.groupBy.mockClear();
+    const second = await controller.debtors();
+    expect(second).toEqual(first);
+    expect(prisma.sale.groupBy).not.toHaveBeenCalled();
+    // A write request clears the cache (main.ts wires this for every
+    // non-GET), so the next read recomputes from the database.
+    invalidateReportCache();
+    await controller.debtors();
+    expect(prisma.sale.groupBy).toHaveBeenCalled();
+  });
+
   it("does not let an advance payment eat a LATER invoice in the aging buckets", async () => {
     const { controller, prisma } = debtorsSetup();
     // 200 paid on 01-Nov (an advance), the 500 credit sale happens on 05-Nov.
@@ -134,6 +163,32 @@ describe("Debtors report", () => {
     expect(report.customersTotal).toBe(250);
     expect(report.suppliers).toEqual([{ id: "s1", name: "تأمین‌کننده", phone: null, balance: 150 }]);
     expect(report.suppliersTotal).toBe(150); // 800 - 500 paid - 100 payments - 50 returned goods
+  });
+});
+
+describe("Discounts report", () => {
+  beforeEach(() => invalidateReportCache());
+
+  it("splits invoice-level and line-level discounts by day and product (flat line rows)", async () => {
+    // Round 40: lines arrive from one raw join instead of a nested include.
+    const prisma = {
+      sale: { findMany: jest.fn().mockResolvedValue([
+        { id: "s1", discount: 50, createdAt: day("01") },
+        { id: "s2", discount: 0, createdAt: day("02") },
+      ]) },
+      $queryRawUnsafe: jest.fn().mockResolvedValue([
+        { saleId: "s1", name: "چای", quantity: 2, discount: 20 },
+        { saleId: "s2", name: "شکر", quantity: 1, discount: 10 },
+      ]),
+    };
+    const controller = new ReportsController(prisma as never);
+    const report = (await controller.discounts("2026-11-01", "2026-11-30")) as { invoiceDiscount: number; lineDiscount: number; total: number; invoiceCount: number; byDay: Array<{ day: string; total: number }>; topProducts: Array<{ name: string; quantity: number; discount: number }> };
+    expect(report.invoiceDiscount).toBe(50);
+    expect(report.lineDiscount).toBe(30);
+    expect(report.total).toBe(80);
+    expect(report.invoiceCount).toBe(2); // s1 via invoice discount, s2 via its line discount
+    expect(report.byDay).toEqual([{ day: "2026-11-01", total: 70 }, { day: "2026-11-02", total: 10 }]);
+    expect(report.topProducts).toEqual([{ name: "چای", quantity: 2, discount: 20 }, { name: "شکر", quantity: 1, discount: 10 }]);
   });
 });
 

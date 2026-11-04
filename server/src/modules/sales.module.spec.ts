@@ -33,6 +33,22 @@ function setup(stock = 2) {
 }
 
 describe("POS checkout", () => {
+  it("ships list rows slim: per line only the quantity, customer only name/phone", async () => {
+    // The history table, exports and list-row dialogs never read a line's
+    // name/price from the LIST — full rows come from /sales/:id. Keeping the
+    // window slim roughly halves the payload on ledgers of thousands.
+    const { controller, prisma } = setup();
+    await controller.list();
+    expect(prisma.sale.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      include: {
+        customer: { select: { id: true, name: true, phone: true } },
+        user: { select: { displayName: true } },
+        items: { select: { quantity: true } },
+        returns: { select: { id: true, total: true } },
+      },
+    }));
+  });
+
   it("filters the register history by payment method (months of use: reconcile نسیه)", async () => {
     const { controller, prisma } = setup();
     const result = await controller.list(undefined, undefined, undefined, undefined, "CREDIT");
