@@ -191,10 +191,12 @@
         <h2>📌 فایل کجاست؟</h2>
         <p class="sub">در پوشهٔ داده‌های برنامه، کنار <span dir="ltr">pos.db</span>:</p>
         <div class="path-box"><code id="defaultPath">%APPDATA%\DarPOSERP\owner.json</code><button id="copyPath" class="ghost" style="padding:4px 10px;font-size:12px">کپی</button></div>
+        <div class="note warn"><b>خطای «can't open files in this folder because it contains system files»؟</b> یعنی خودِ این صفحه را از داخل پوشهٔ سیستمی (%APPDATA% و مانند آن) باز کرده‌اید؛ مرورگرها اجازهٔ باز کردن صفحه‌های داخل چنین پوشه‌هایی را نمی‌دهند. فایل ابزار را روی دسکتاپ بگذارید و از آنجا باز کنید، یا <span dir="ltr">tool-run.bat</span> کنار ابزار را دابل‌کلیک کنید تا خودش صفحه را در جای امن باز کند. گشودن و ذخیرهٔ <span dir="ltr">owner.json</span> داخل پوشهٔ داده از داخل ابزار کاملاً مانعی ندارد — ممنوعیت فقط برای باز شدن خودِ صفحه از آن پوشه‌هاست.</div>
         <ol class="steps">
           <li>در ویندوز <kbd>Win</kbd>+<kbd>R</kbd> را بزنید، <span dir="ltr">%APPDATA%\DarPOSERP</span> را بنویسید و Enter کنید.</li>
           <li>اگر <span dir="ltr">owner.json</span> نبود، با همین ابزار «فایل تازه» بسازید و همان‌جا ذخیره کنید.</li>
           <li>اگر برنامه با پوشهٔ سفارشی نصب شده، فایل را در همان پوشه‌ای بگذارید که <span dir="ltr">pos.db</span> در آن است.</li>
+          <li>نکته: در پنجرهٔ «گشودن owner.json…» می‌توانید مسیر <span dir="ltr">%APPDATA%\DarPOSERP</span> را در کادر نام فایل بچسبانید تا مستقیم همان‌جا بروید.</li>
         </ol>
         <div class="note info"><b>چرا فایل، نه تنظیمات برنامه؟</b> این فایل بیرون از داده‌های فروشگاه زندگی می‌کند؛ حتی «صفر کردن کامل داده‌ها» یا برگرداندن پشتیبان، هویت مالک را پاک نمی‌کند و لازم نیست هر بار دوباره تنظیمش کنید.</div>
       </div>
