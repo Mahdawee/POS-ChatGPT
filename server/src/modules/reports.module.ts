@@ -135,7 +135,7 @@ export class ReportsController {
   /** Core profit computation shared by the report and its period comparison. */
   private async profitFor(start: Date, end: Date): Promise<ProfitFor> {
     const range = { gte: start, lte: end };
-    const [sales, saleItems, returns, purchasesAgg, expensesAgg, mix, users, sessions] = await Promise.all([
+    const [sales, saleItems, returns, purchasesAgg, expensesAgg, mix, users, sessions, windowCount] = await Promise.all([
       // Hard cap protects memory on very long ranges; a small shop cannot
       // realistically reach 50k sales inside one report window.
       // Round 40: sales and lines load as two FLAT queries instead of one
@@ -161,6 +161,10 @@ export class ReportsController {
       this.prisma.sale.aggregate({ _sum: { cashPart: true, mobilePart: true, creditPart: true, walletPart: true }, where: { createdAt: range, voidedAt: null } }),
       this.prisma.user.findMany({ select: { id: true, displayName: true } }),
       this.prisma.cashSession.findMany({ where: { openedAt: { lte: end } }, select: { id: true, userId: true, openedAt: true, closedAt: true }, orderBy: { openedAt: "desc" }, take: 200 }),
+      // True invoice count for the window: the 50k memory cap above can
+      // silently truncate a multi-year range, and the report must SAY so
+      // instead of quietly showing a fifth of the decade.
+      this.prisma.sale.count({ where: { createdAt: range, voidedAt: null } }),
     ]);
     // Group the flat line rows back under their invoice for the per-invoice
     // passes below (day/hour/cashier buckets and per-product totals). Raw
@@ -301,6 +305,8 @@ export class ReportsController {
       _perProduct: perProduct,
       _perCategory: perCategory,
       _perHour: perHour,
+      _windowInvoiceCount: windowCount,
+      _truncated: windowCount > sales.length,
     } as ProfitFor & Record<string, unknown>;
   }
 
@@ -326,6 +332,9 @@ export class ReportsController {
       margin: data.netRevenue > 0 ? data.profit / data.netRevenue : 0,
       unknownCostRevenue: data._unknownCostRevenue as number,
       invoiceCount: data.invoiceCount,
+      /** True when the 50k-sale memory cap left invoices outside the report. */
+      truncated: Boolean(data._truncated),
+      trueInvoiceCount: (data._windowInvoiceCount as number) ?? data.invoiceCount,
       purchasesTotal: data._purchases as number,
       byDay: data.byDay,
       byUser: data.byUser,

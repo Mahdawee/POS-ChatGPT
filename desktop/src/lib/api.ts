@@ -108,6 +108,8 @@ export type SupplierDetail = { supplier: Contact; purchasesTotal: number; paidAt
 export type ProfitReport = {
   from: string; to: string; revenue: number; refunds: number; netRevenue: number; cost: number; profit: number; margin: number;
   unknownCostRevenue: number; invoiceCount: number; purchasesTotal: number; expenses: number; netProfit: number;
+  /** Server flags windows larger than the 50k-invoice report cap. */
+  truncated?: boolean; trueInvoiceCount?: number;
   byDay: { day: string; revenue: number; profit: number }[];
   byUser?: { userId: string; cashier: string; revenue: number; profit: number; count: number }[];
   bySession?: { sessionId: string; cashier: string; openedAt: string; closedAt: string | null; revenue: number; count: number }[];

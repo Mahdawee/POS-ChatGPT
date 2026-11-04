@@ -14,6 +14,8 @@ function setup() {
     sale: {
       findMany: jest.fn().mockImplementation(({ where }: { where?: { createdAt?: { gte?: Date; lte?: Date } } }) =>
         Promise.resolve(allSales.filter((sale) => (!where?.createdAt?.gte || sale.createdAt >= where.createdAt.gte) && (!where?.createdAt?.lte || sale.createdAt <= where.createdAt.lte)))),
+      count: jest.fn().mockImplementation(({ where }: { where?: { createdAt?: { gte?: Date; lte?: Date } } }) =>
+        Promise.resolve(allSales.filter((sale) => (!where?.createdAt?.gte || sale.createdAt >= where.createdAt.gte) && (!where?.createdAt?.lte || sale.createdAt <= where.createdAt.lte)).length)),
       aggregate: jest.fn().mockResolvedValue({ _sum: { cashPart: 40, mobilePart: 0, creditPart: 15, walletPart: 0 } }),
     },
     // Round 40: profitFor reads invoice lines as ONE FLAT raw join (bound
@@ -90,6 +92,20 @@ describe("Profit report", () => {
       { category: "نوشیدنی", revenue: 25, profit: 13, quantity: 2 },
       { category: "خواربار", revenue: 20, profit: 8, quantity: 1 },
     ]);
+  });
+
+  it("flags a window larger than the 50k-invoice cap instead of silently truncating it", async () => {
+    // A decade-old shop can select a 10-year range; the report caps at 50k
+    // invoices for memory. The response must SAY so (round 40).
+    const { controller, prisma } = setup();
+    // Previous cases cached the same date range — start from a clean slate.
+    invalidateReportCache();
+    // The window truly holds 60,002 invoices but only the capped 2 rows load.
+    prisma.sale.count.mockResolvedValue(60002);
+    const report = (await controller.profit("2026-11-01", "2026-11-30")) as { truncated: boolean; trueInvoiceCount: number; invoiceCount: number };
+    expect(report.truncated).toBe(true);
+    expect(report.trueInvoiceCount).toBe(60002);
+    expect(report.invoiceCount).toBe(2);
   });
 
   it("compares with the same-length previous window when compare=1", async () => {
