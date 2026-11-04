@@ -44,8 +44,18 @@ export class QuotesController {
       const products = await tx.product.findMany({ where: { id: { in: lines.map(([id]) => id) }, isActive: true } });
       if (products.length !== lines.length) throw new BadRequestException("یکی از کالاها غیرفعال است یا پیدا نشد.");
       const productMap = new Map(products.map((product) => [product.id, product]));
+      // Countable goods are quoted in whole units (round-30 stepper repair);
+      // fractional counts would demand a fractional serial count at conversion.
+      for (const [productId, quantity] of quantities) {
+        const product = productMap.get(productId)!;
+        if (product.isWeighted) continue;
+        const rounded = Math.round(quantity);
+        if (rounded < 1) throw new BadRequestException(`تعداد «${product.name}» باید عدد صحیح و حداقل ۱ باشد.`);
+        quantities.set(productId, rounded);
+      }
+      const roundedLines = [...quantities.entries()];
       let total = 0;
-      const items = lines.map(([productId, quantity]) => {
+      const items = roundedLines.map(([productId, quantity]) => {
         const product = productMap.get(productId)!;
         // Same wholesale rule as checkout, so a converted quote cannot
         // silently change price between offer and invoice.

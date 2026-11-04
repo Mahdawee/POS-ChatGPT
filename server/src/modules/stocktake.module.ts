@@ -42,6 +42,11 @@ export class StocktakesController {
       const products = await tx.product.findMany({ where: { id: { in: lines.map(([id]) => id) }, isActive: true } });
       if (products.length !== lines.length) throw new BadRequestException("یکی از کالاها غیرفعال است یا پیدا نشد.");
       const productMap = new Map(products.map((product) => [product.id, product]));
+      // Countable goods are counted in whole units (round-30 stepper repair).
+      for (const line of lines) {
+        const product = productMap.get(line[0])!;
+        if (!product.isWeighted) line[1] = Math.round(line[1]);
+      }
       const record = await tx.stocktake.create({
         data: {
           name: dto.name?.trim() || null,

@@ -250,7 +250,7 @@ export function OrdersPage({ notify }: { notify: Notify }) {
         <label className="field full"><span>{t("یادداشت")}</span><input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder={t("اختیاری")}/></label>
         {form.lines.map((line, index) => <div className="bundle-row full" key={index}>
           <select value={line.productId} onChange={(e) => setForm({ ...form, lines: form.lines.map((row, i) => i === index ? { ...row, productId: e.target.value } : row) })}><option value="">{t("انتخاب کالا…")}</option>{products.filter((p) => !p.isBundle).map((p) => <option key={p.id} value={p.id}>{p.name} — {t("آزاد")}: {p.stock - (p.reserved || 0)}</option>)}</select>
-          <input type="number" min="0.001" step={products.find((p) => p.id === line.productId)?.isWeighted ? 0.001 : 1} dir="ltr" value={line.quantity} onChange={(e) => setForm({ ...form, lines: form.lines.map((row, i) => i === index ? { ...row, quantity: numberValue(e) } : row) })}/>
+          <input type="number" min={products.find((p) => p.id === line.productId)?.isWeighted ? 0.001 : 1} step={products.find((p) => p.id === line.productId)?.isWeighted ? 0.001 : 1} dir="ltr" value={line.quantity} onChange={(e) => setForm({ ...form, lines: form.lines.map((row, i) => i === index ? { ...row, quantity: numberValue(e) } : row) })}/>
           <button type="button" className="text-button danger-text" onClick={() => setForm({ ...form, lines: form.lines.length > 1 ? form.lines.filter((_, i) => i !== index) : form.lines })}><Trash2 size={15}/></button>
         </div>)}
         <div className="form-actions full">

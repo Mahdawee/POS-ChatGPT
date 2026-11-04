@@ -39,6 +39,13 @@ describe("Quotes", () => {
     ]);
   });
 
+  it("rounds stray fractional counts of countable goods to whole units (round-30 stepper repair)", async () => {
+    const { controller } = setup();
+    const quote = (await controller.create({ items: [{ productId: "product-1", quantity: 2.001 }, { productId: "product-2", quantity: 4 }] }, user)) as { items: { quantity: number; lineTotal: number }[]; total: number };
+    expect(quote.items.map((item) => item.quantity)).toEqual([2, 4]);
+    expect(quote.total).toBe(80);
+  });
+
   it("windows the quote list so quotes beyond the first page stay reachable", async () => {
     const { controller, prisma } = setup();
     await controller.list("30", "50");

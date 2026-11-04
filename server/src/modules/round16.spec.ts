@@ -339,6 +339,18 @@ describe("Round 16 — orders reserve and release stock", () => {
     expect(tx.customerOrder.update).not.toHaveBeenCalled();
   });
 
+  it("rounds stray fractional counts of countable goods to whole units at create (round-30 stepper repair)", async () => {
+    const { controller, tx } = ordersSetup({ id: "product-1", name: "چای", sku: "T-1", price: 10, stock: 10, reserved: 0, isBundle: false, isActive: true });
+    const order = (await controller.create({ items: [{ productId: "product-1", quantity: 2.001 }] }, admin)) as { lines: { quantity: number }[] };
+    expect(order.lines[0].quantity).toBe(2);
+    expect(tx.product.update).toHaveBeenCalledWith(expect.objectContaining({ data: { reserved: { increment: 2 } } }));
+  });
+
+  it("rejects a countable order line that rounds below one unit", async () => {
+    const { controller } = ordersSetup({ id: "product-1", name: "چای", sku: "T-1", price: 10, stock: 10, reserved: 0, isBundle: false, isActive: true });
+    await expect(controller.create({ items: [{ productId: "product-1", quantity: 0.4 }] }, admin)).rejects.toThrow(/صحیح/);
+  });
+
   it("refuses an order above free stock", async () => {
     const { controller } = ordersSetup({ id: "product-1", name: "چای", sku: "T-1", price: 10, stock: 3, reserved: 0, isBundle: false, isActive: true });
     await expect(controller.create({ items: [{ productId: "product-1", quantity: 4 }] }, admin)).rejects.toThrow(/آزاد/);

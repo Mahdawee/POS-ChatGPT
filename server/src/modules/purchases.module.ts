@@ -44,6 +44,15 @@ export class PurchasesController {
         if (product.isBundle) throw new BadRequestException(`«${product.name}» بسته است و خریدنی نیست؛ اجزای آن را جداگانه وارد کنید.`);
       }
       const productMap = new Map(products.map((product) => [product.id, product]));
+      // Countable goods are bought in whole units — a stray 1.001 from a
+      // misaligned stepper must not poison stock math or serial counts.
+      // `lines` shares these value objects, so rounding once heals every write.
+      for (const [productId, line] of merged) {
+        if (productMap.get(productId)!.isWeighted) continue;
+        const rounded = Math.round(line.quantity);
+        if (rounded < 1) throw new BadRequestException(`تعداد «${productMap.get(productId)!.name}» باید عدد صحیح و حداقل ۱ باشد.`);
+        line.quantity = rounded;
+      }
       let total = 0;
       for (const [, { quantity, unitCost }] of lines) {
         const lineTotal = Math.round(quantity * unitCost);

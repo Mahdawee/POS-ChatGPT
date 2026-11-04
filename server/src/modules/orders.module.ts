@@ -28,8 +28,16 @@ export class OrdersController {
       const products = await tx.product.findMany({ where: { id: { in: [...quantities.keys()] }, isActive: true } });
       if (products.length !== quantities.size) throw new BadRequestException("یکی از کالاها غیرفعال است یا پیدا نشد.");
       for (const product of products) {
-        const quantity = quantities.get(product.id)!;
+        let quantity = quantities.get(product.id)!;
         if (product.isBundle) throw new BadRequestException(`«${product.name}» بسته است و فعلاً در سفارش رزرو نمی‌شود؛ اجزای آن را جدا سفارش دهید.`);
+        // Countable goods are reserved in whole units — a stray 1.001 from a
+        // misaligned stepper would make the order undeliverable (a 0.001
+        // remainder keeps it OPEN forever).
+        if (!product.isWeighted) {
+          quantity = Math.round(quantity);
+          if (quantity < 1) throw new BadRequestException(`تعداد «${product.name}» باید عدد صحیح و حداقل ۱ باشد.`);
+          quantities.set(product.id, quantity);
+        }
         const available = product.stock - product.reserved;
         if (available < quantity) throw new BadRequestException(`موجودی آزاد ${product.name} کافی نیست. موجودی آزاد: ${available}`);
       }

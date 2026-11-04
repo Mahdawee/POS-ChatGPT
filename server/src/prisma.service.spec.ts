@@ -1,4 +1,4 @@
-import { backfillPaymentParts, ensureColumnMigrations, ensureUniqueInvoiceNos } from "./prisma.service";
+import { backfillPaymentParts, ensureColumnMigrations, ensureUniqueInvoiceNos, repairFractionalQuantities } from "./prisma.service";
 
 function db(tableColumns: Record<string, string[]>) {
   const statements: string[] = [];
@@ -74,6 +74,27 @@ describe("Column migrations for installed databases", () => {
     const { client, statements } = db({ SaleItem: ["unitCost", "discount"] });
     await ensureColumnMigrations(client);
     expect(statements).toEqual([]);
+  });
+});
+
+describe("Fractional-quantity repair for countable goods (round-30 stepper bug)", () => {
+  it("heals workflow lines, open stocktakes and recomputes reservations", async () => {
+    const statements: string[] = [];
+    const client = { $executeRawUnsafe: jest.fn().mockImplementation((sql: string) => { statements.push(sql); return Promise.resolve(0); }) };
+    await repairFractionalQuantities(client);
+    // Only fractional quantities of countable (non-weighted) goods are touched…
+    expect(statements[0]).toEqual(expect.stringContaining(`UPDATE "CustomerOrderLine" SET "quantity" = ROUND("quantity") WHERE "quantity" != ROUND("quantity") AND "productId" IN (SELECT id FROM "Product" WHERE "isWeighted" = 0)`));
+    expect(statements[1]).toEqual(expect.stringContaining(`UPDATE "QuoteItem" SET "quantity" = ROUND("quantity")`));
+    expect(statements[2]).toEqual(expect.stringContaining(`UPDATE "PurchaseItem" SET "quantity" = ROUND("quantity")`));
+    expect(statements[3]).toEqual(expect.stringContaining(`UPDATE "StocktakeLine" SET "counted" = ROUND("counted")`));
+    expect(statements[3]).toEqual(expect.stringContaining(`status = 'OPEN'`));
+    // …and reservations are recomputed from the healed OPEN order lines, so
+    // products whose lines were rounded down release the phantom fraction.
+    expect(statements[4]).toEqual(expect.stringContaining(`UPDATE "Product" SET "reserved" = COALESCE((SELECT SUM(l."quantity" - l."deliveredQty")`));
+    // Sales history stays untouched — financial records are never rewritten.
+    expect(statements.some((sql) => sql.includes('"SaleItem"') || sql.includes('"SaleReturnItem"'))).toBe(false);
+    // Idempotent: whole numbers never match `quantity != ROUND(quantity)`.
+    expect(statements[0]).toEqual(expect.stringContaining(`WHERE "quantity" != ROUND("quantity")`));
   });
 });
 

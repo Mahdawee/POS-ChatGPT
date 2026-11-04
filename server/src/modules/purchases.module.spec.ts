@@ -38,6 +38,13 @@ describe("Purchases", () => {
     expect(tx.productBatch.create).toHaveBeenCalledTimes(1);
   });
 
+  it("rounds stray fractional counts of countable goods to whole units (round-30 stepper repair)", async () => {
+    const { controller, tx } = setup();
+    await controller.create({ items: [{ productId: "product-1", quantity: 5.002, unitCost: 12 }] }, user);
+    expect(tx.product.update).toHaveBeenCalledWith({ where: { id: "product-1" }, data: { stock: { increment: 5 }, cost: 12 } });
+    expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ quantity: 5, stockAfter: 7 }) }));
+  });
+
   it("merges duplicated lines for the same product before writing", async () => {
     const { controller, tx } = setup();
     await controller.create({ items: [{ productId: "product-1", quantity: 2, unitCost: 10 }, { productId: "product-1", quantity: 3, unitCost: 10 }] }, user);

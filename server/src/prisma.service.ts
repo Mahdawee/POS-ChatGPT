@@ -106,6 +106,25 @@ export async function ensureUniqueInvoiceNos(db: { $queryRawUnsafe(sql: string):
 }
 
 /**
+ * Rounds fractional quantities of COUNTABLE (non-weighted) goods on workflow
+ * lines. The round-30 stepper bug (min 0.001 combined with unit steps) let
+ * order/quote/purchase lines slip in as 1.001/2.001 — such an order can never
+ * be fully delivered (a 0.001 remainder keeps it OPEN forever) and serialized
+ * lines demand a fractional serial count. Weighted goods keep their
+ * 3-decimal precision. Idempotent: whole numbers are untouched, and Product
+ * reservations are recomputed to the true "open order lines" invariant.
+ */
+export async function repairFractionalQuantities(db: { $executeRawUnsafe(sql: string): Promise<unknown> }): Promise<void> {
+  const countable = `SELECT id FROM "Product" WHERE "isWeighted" = 0`;
+  await db.$executeRawUnsafe(`UPDATE "CustomerOrderLine" SET "quantity" = ROUND("quantity") WHERE "quantity" != ROUND("quantity") AND "productId" IN (${countable})`);
+  await db.$executeRawUnsafe(`UPDATE "QuoteItem" SET "quantity" = ROUND("quantity") WHERE "quantity" != ROUND("quantity") AND "productId" IN (${countable})`);
+  await db.$executeRawUnsafe(`UPDATE "PurchaseItem" SET "quantity" = ROUND("quantity") WHERE "quantity" != ROUND("quantity") AND "productId" IN (${countable})`);
+  await db.$executeRawUnsafe(`UPDATE "StocktakeLine" SET "counted" = ROUND("counted") WHERE "counted" IS NOT NULL AND "counted" != ROUND("counted") AND "productId" IN (${countable}) AND "stocktakeId" IN (SELECT id FROM "Stocktake" WHERE status = 'OPEN')`);
+  // Reservations follow the healed lines: reserved = Σ(undelivered OPEN lines).
+  await db.$executeRawUnsafe(`UPDATE "Product" SET "reserved" = COALESCE((SELECT SUM(l."quantity" - l."deliveredQty") FROM "CustomerOrderLine" l JOIN "CustomerOrder" o ON o."id" = l."orderId" WHERE l."productId" = "Product"."id" AND o."status" = 'OPEN'), 0)`);
+}
+
+/**
  * SQLite tuning applied to every database at boot:
  * - WAL lets reads (reports, lists) continue while a sale is being written.
  *   (WAL is a property of the database file, so this one statement covers
@@ -171,6 +190,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     const schema = readFileSync(schemaPath, "utf8");
     for (const statement of schema.split(";").map((sql) => sql.trim()).filter(Boolean)) await this.$executeRawUnsafe(statement);
     await backfillPaymentParts(this);
+    await repairFractionalQuantities(this);
     await ensureInitialData(this);
     this.optimizeTimer = setInterval(() => {
       this.$queryRawUnsafe("PRAGMA optimize").catch(() => undefined);
