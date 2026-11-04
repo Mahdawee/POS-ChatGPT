@@ -98,7 +98,7 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => { void applyBrandWindowTitle(brand.appName); }, [brand.appName]);
+  useEffect(() => { void applyBrandWindowTitle(brand.appName); }, [brand.appName, lang]);
 
   useEffect(() => {
     const checkLicense = () => { get<LicenseStatus>("/license/status").then((state) => { setLicenseOk(state.ok); setLicense(state); }).catch(() => setLicenseOk(true)); };

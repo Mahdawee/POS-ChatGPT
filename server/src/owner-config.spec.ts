@@ -37,6 +37,45 @@ describe("Owner config — the owner.json file", () => {
     expect(parseOwnerConfig('"just a string"')).toBeNull();
   });
 
+  it("strips control characters from values — they can never reach receipts or the UI", () => {
+    const parsed = parseOwnerConfig(JSON.stringify({ appName: "فروش\u0000گاه\u0007 نوری\u001F" }));
+    expect(parsed).toEqual({ appName: "فروشگاه نوری" });
+  });
+
+  it("keeps the last GOOD values when the file is momentarily broken (editor mid-save)", () => {
+    const { service, dir } = makeService(JSON.stringify({ appName: "نوری" }));
+    service.onModuleInit();
+    writeFileSync(join(dir, "owner.json"), '{"appName": "نو', "utf8"); // نصف‌نوشته
+    service.reload();
+    expect(service.effectiveAppName()).toBe("نوری"); // برند نپرید
+    service.onModuleDestroy();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("never reads an oversized file — the last good values stay untouched", () => {
+    const { service, dir } = makeService(JSON.stringify({ appName: "نوری" }));
+    service.onModuleInit();
+    writeFileSync(
+      service.ownerConfigPath(),
+      JSON.stringify({ appName: "x".repeat(3 * 1024 * 1024) }),
+    );
+    service.reload();
+    expect(service.effectiveAppName()).toBe("نوری");
+    service.onModuleDestroy();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("deleting the file is honored — the brand falls back to the default", () => {
+    const { service, dir } = makeService(JSON.stringify({ appName: "نوری" }));
+    service.onModuleInit();
+    rmSync(join(dir, "owner.json"));
+    service.reload();
+    expect(service.readOwnerConfig()).toEqual({});
+    expect(service.effectiveAppName()).toBe(DEFAULT_APP_NAME);
+    service.onModuleDestroy();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("loads the file at boot and falls back to the default app name when it is absent", () => {
     const { service } = makeService(null);
     service.onModuleInit();

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { qrSvg } from "./qr";
 import { dateTime, dayLabel, dir, fullDate, lang, money, moneyPlain, percent, t } from "../i18n";
+import { getBrand } from "./brand";
 import type { CustomerDetail, ProfitReport, Product, PurchaseReturn, Sale, SaleReturn, ShopSettings, ZReport } from "./api";
 
 /** Escapes user data before it is embedded into the print document. */
@@ -104,7 +105,9 @@ export function textReceipt(sale: Sale, shop: ShopSettings): string {
   if (contact) rows.push(contact);
   rows.push("=".repeat(40));
   rows.push(line(t("رسید فروش"), sale.receiptNo));
-  rows.push(line(t("زمان"), new Date(sale.createdAt).toLocaleString("en-GB")));
+  // زمان روی رسید متنی هم ۱۲ساعته است (ساعت ۲۴نگاره‌ای فقط ابهام می‌سازد)؛
+  // ارقام لاتین می‌مانند چون فونت پیش‌فرض چاپگرهای حرارتی ارقام دری را ندارد.
+  rows.push(line(t("زمان"), new Date(sale.createdAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short", hour12: true })));
   rows.push(line(t("مشتری"), sale.customer?.name || t("مشتری گذری")));
   rows.push("-".repeat(40));
   for (const item of sale.items) rows.push(line(`${item.name} x${item.quantity}`, moneyPlain(item.lineTotal)));
@@ -170,7 +173,7 @@ export function printDebtReceipt(detail: CustomerDetail, shop: ShopSettings): vo
 
 /** Smoke-tests the quick-print channel from the Settings page. */
 export async function testQuickPrint(shop: ShopSettings): Promise<void> {
-  await invoke("quick_print", { printer: shop.quickPrinter || "", text: ["ROSHAN — " + t("آزمون چاپ سریع"), "=".repeat(40), t("اگر این متن را می‌خوانید، چاپ سریع فعال است."), new Date().toLocaleString("en-GB")].join("\r\n") });
+  await invoke("quick_print", { printer: shop.quickPrinter || "", text: [getBrand().appName + " — " + t("آزمون چاپ سریع"), "=".repeat(40), t("اگر این متن را می‌خوانید، چاپ سریع فعال است."), new Date().toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short", hour12: true })].join("\r\n") });
 }
 
 /** Shop header shared by every printed document: logo (if configured) + name. */

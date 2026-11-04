@@ -93,7 +93,10 @@ const dateOptions = (): { calendar: string; timeZone?: string } => {
 export const money = (value: number): string => `${new Intl.NumberFormat(activeLocale(), { maximumFractionDigits: 0 }).format(value)} ${t(currencyLabel(currentCurrency))}`;
 export const moneyPlain = (value: number): string => new Intl.NumberFormat(activeLocale(), { maximumFractionDigits: 0 }).format(value);
 export const qty = (value: number): string => new Intl.NumberFormat(activeLocale(), { maximumFractionDigits: 3 }).format(value);
-export const dateTime = (value: string | Date): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium", timeStyle: "short", ...dateOptions() }).format(new Date(value));
+// زمان‌ها در کل برنامه ۱۲ساعته‌اند (ق.ظ/ب.ظ، AM/PM) — درخواست مالک؛
+// hour12 صریحاً گذاشته شده تا هیچ زبانی به ساعت ۲۴نگاره‌ای برنگردد.
+export const dateTime = (value: string | Date): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium", timeStyle: "short", hour12: true, ...dateOptions() }).format(new Date(value));
+export const timeOnly = (value: string | Date): string => new Intl.DateTimeFormat(activeLocale(), { hour: "2-digit", minute: "2-digit", hour12: true, ...dateOptions() }).format(new Date(value));
 export const dateOnly = (value: string | Date): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium", ...dateOptions() }).format(new Date(value));
 export const dayLabel = (day: string): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium", ...dateOptions() }).format(new Date(`${day}T00:00:00`));
 export const todayLabel = (): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium", ...dateOptions() }).format(new Date());
@@ -111,12 +114,14 @@ export function licensePlanLabel(plan: string | null): string {
   }
 }
 
-/** Applies the language to the document (direction, lang, title) — called by the provider and at boot. */
+/** Applies the language to the document (direction, lang) — called by the provider and at boot.
+ *  The window/tab TITLE is deliberately not touched here: it belongs to the
+ *  owner-controlled brand (lib/brand.ts), which re-applies it on every
+ *  language or brand change. */
 export function applyDocumentLanguage(which: Lang): void {
   const root = document.documentElement;
   root.lang = which === "fa" ? "fa" : which === "ps" ? "ps" : "en";
   root.dir = which === "en" ? "ltr" : "rtl";
-  document.title = t("روشن | فروش و مدیریت فروشگاه");
 }
 
 type LanguageContextValue = { lang: Lang; dir: "rtl" | "ltr"; setLang: (which: Lang) => void };
