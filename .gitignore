@@ -13,3 +13,4 @@ tools/license/keys/*.key
 
 # License panel ledger (issued licenses stay on the vendor machine)
 tools/license/ledger.json
+.prisma-engines/

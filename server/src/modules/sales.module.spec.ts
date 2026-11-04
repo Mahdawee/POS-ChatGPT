@@ -33,6 +33,12 @@ function setup(stock = 2) {
 }
 
 describe("POS checkout", () => {
+  it("filters the register history by payment method (months of use: reconcile نسیه)", async () => {
+    const { controller, prisma } = setup();
+    await controller.list(undefined, undefined, undefined, undefined, "CREDIT");
+    expect(prisma.sale.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ paymentMethod: "CREDIT" }) }));
+  });
+
   it("rejects a sale that would take stock below zero before writing anything", async () => {
     const { service, tx } = setup(2);
     await expect(service.checkout({ items: [{ productId: "product-1", quantity: 3 }], paymentMethod: "CASH", amountPaid: 30 }, admin)).rejects.toBeInstanceOf(BadRequestException);

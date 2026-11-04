@@ -32,6 +32,79 @@ describe("Products page endpoint", () => {
     expect(page.hasMore).toBe(false);
   });
 
+  it("sorts by the whitelisted column and direction (months of use: sort by stock/price)", async () => {
+    const { controller, prisma } = setup(rows);
+    await controller.page(undefined, undefined, undefined, "stock", "desc");
+    expect(prisma.product.findMany).toHaveBeenCalledWith(expect.objectContaining({ orderBy: { stock: "desc" } }));
+  });
+
+  it("falls back to name-asc for an unknown sort column (never reaches raw SQL)", async () => {
+    const { controller, prisma } = setup(rows);
+    await controller.page(undefined, undefined, undefined, "name); DROP TABLE Product", "desc");
+    // The injected string never reaches SQL; the whitelisted fallback keeps
+    // the user's requested direction.
+    expect(prisma.product.findMany).toHaveBeenCalledWith(expect.objectContaining({ orderBy: { name: "desc" } }));
+  });
+
+  it("keeps the current search after an in-place reload (edit no longer wipes it)", async () => {
+    // The default parameter used to read "" instead of the live query, so
+    // saving a product while searching silently reset the list.
+    const { controller, prisma } = setup(rows);
+    await controller.page(undefined, "شکر", undefined, "name", "asc");
+    const where = (prisma.product.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(where.OR).toBeDefined();
+  });
+
+  it("resolves the low-stock window in raw SQL (stock <= minStock needs column comparison)", async () => {
+    const prisma = {
+      product: { findMany: jest.fn().mockResolvedValue([{ id: "p1", name: "چای", stock: 1 }]) },
+      $queryRawUnsafe: jest.fn().mockImplementation((sql: string) =>
+        sql.startsWith("SELECT COUNT(*)") ? Promise.resolve([{ count: 12 }]) : Promise.resolve([{ id: "p1" }])),
+    };
+    const controller = new ProductsController(prisma as never);
+    const page = await controller.page(undefined, "چای", "100", "stock", "asc", "low");
+    const calls = (prisma.$queryRawUnsafe as jest.Mock).mock.calls.map((call) => call[0]);
+    expect(calls[0]).toContain("stock <= minStock");
+    expect(calls[0]).toContain("isBundle = 0");
+    expect(calls[0]).toContain("LIKE ?");
+    expect(calls[0]).toContain("LIMIT 100 OFFSET 100");
+    expect(page.total).toBe(12);
+    expect(page.list).toEqual([{ id: "p1", name: "چای", stock: 1 }]);
+    expect(page.hasMore).toBe(false); // 100 + 1 < 12 is false → last page
+  });
+
+  it("keeps the raw stock-filter window on ACTIVE products (archived flag matches the Prisma branch)", async () => {
+    // The raw id-window used to bind isActive to (archived === "1" ? 1 : 0) —
+    // the exact inverse of the Prisma branch (isActive: archived !== "1") —
+    // so the default low/out filters returned archived goods and nothing else.
+    const prisma = {
+      product: { findMany: jest.fn().mockResolvedValue([{ id: "p1", stock: 1 }]) },
+      $queryRawUnsafe: jest.fn().mockImplementation((sql: string) =>
+        sql.startsWith("SELECT COUNT(*)") ? Promise.resolve([{ count: 1 }]) : Promise.resolve([{ id: "p1" }])),
+    };
+    const controller = new ProductsController(prisma as never);
+    await controller.page(undefined, undefined, "0", "stock", "asc", "low");
+    const defaultCall = (prisma.$queryRawUnsafe as jest.Mock).mock.calls[0];
+    expect(defaultCall[0]).toContain("isActive = ?");
+    expect(defaultCall[1]).toBe(1); // default view = active products
+    await controller.page("1", undefined, "0", "stock", "asc", "low");
+    const archivedCall = (prisma.$queryRawUnsafe as jest.Mock).mock.calls[2];
+    expect(archivedCall[1]).toBe(0); // archived view = deactivated products
+  });
+
+  it("out-of-stock filter compares stock <= 0 and hydrates in id order", async () => {
+    const prisma = {
+      product: { findMany: jest.fn().mockResolvedValue([{ id: "b" }, { id: "a" }]) },
+      $queryRawUnsafe: jest.fn().mockImplementation((sql: string) =>
+        sql.startsWith("SELECT COUNT(*)") ? Promise.resolve([{ count: 2 }]) : Promise.resolve([{ id: "a" }, { id: "b" }])),
+    };
+    const controller = new ProductsController(prisma as never);
+    const page = await controller.page(undefined, undefined, "0", "stock", "asc", "out");
+    expect((prisma.$queryRawUnsafe as jest.Mock).mock.calls[0][0]).toContain("stock <= 0");
+    // Raw id order wins: pagination stays contiguous regardless of findMany order.
+    expect(page.list.map((row: { id: string }) => row.id)).toEqual(["a", "b"]);
+  });
+
   it("applies the archived flag and passes the search term into the where filter", async () => {
     const { controller, prisma } = setup(rows);
     await controller.page("1", "شکر", "0");

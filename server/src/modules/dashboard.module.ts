@@ -45,14 +45,23 @@ export class DashboardController {
     start.setHours(0, 0, 0, 0);
     const chartStart = new Date(start);
     chartStart.setDate(chartStart.getDate() - 13);
-    const [sales, productCount, lowStock, expiring, recentSales, purchasesToday, returnsToday, creditSalesTotal, creditReturnsTotal, paymentsTotal, stockValue, chartSales, backroom, overdueInstallments, openOrders] = await Promise.all([
+    // Prisma persists DateTime columns as epoch milliseconds in SQLite, so the
+    // expiry window must be compared as an INTEGER. `<= datetime('now', ...)`
+    // compares INTEGER to TEXT, which SQLite orders as always-true — with real
+    // months of data the card counted every dated item, not the near-expiry ones.
+    const expiryCutoff = Date.now() + 14 * 24 * 60 * 60 * 1000;
+    const [sales, productCount, lowStock, lowStockCountRows, expiring, recentSales, purchasesToday, returnsToday, creditSalesTotal, creditReturnsTotal, paymentsTotal, stockValue, chartSales, backroom, overdueInstallments, openOrders] = await Promise.all([
       this.prisma.sale.findMany({ where: { createdAt: { gte: start } }, select: { total: true } }),
       this.prisma.product.count({ where: { isActive: true } }),
       // Bundles never carry their own stock (availability is built from their
       // components), so a kit's permanent stock=0 must not light up the
       // low-stock card. The unit travels along for an honest display.
       this.prisma.$queryRaw<Array<{ id: string; name: string; sku: string; unit: string; stock: number; minStock: number }>>`SELECT id, name, sku, unit, stock, minStock FROM Product WHERE isActive = 1 AND isBundle = 0 AND stock <= minStock ORDER BY stock ASC LIMIT 8`,
-      this.prisma.$queryRaw<Array<{ id: string; name: string; sku: string; expiryDate: string }>>`SELECT id, name, sku, expiryDate FROM Product WHERE isActive = 1 AND expiryDate IS NOT NULL AND expiryDate <= datetime('now', '+14 days') ORDER BY expiryDate ASC LIMIT 8`,
+      // True low-stock count: the list above is capped at 8 rows for the
+      // card, but months of use leave dozens of items below minimum —
+      // "۱۲ کالا کم‌موجود" must not silently read as ۸.
+      this.prisma.$queryRaw<Array<{ count: number | bigint }>>`SELECT COUNT(*) AS count FROM Product WHERE isActive = 1 AND isBundle = 0 AND stock <= minStock`,
+      this.prisma.$queryRaw<Array<{ id: string; name: string; sku: string; expiryDate: string }>>`SELECT id, name, sku, expiryDate FROM Product WHERE isActive = 1 AND expiryDate IS NOT NULL AND expiryDate <= ${expiryCutoff} ORDER BY expiryDate ASC LIMIT 8`,
       this.prisma.sale.findMany({ take: 6, include: { customer: { select: { name: true } }, user: { select: { displayName: true } }, items: true }, orderBy: { createdAt: "desc" } }),
       this.prisma.purchase.aggregate({ _sum: { total: true }, where: { createdAt: { gte: start } } }),
       this.prisma.saleReturn.aggregate({ _sum: { total: true, creditRelief: true }, where: { createdAt: { gte: start } } }),
@@ -71,10 +80,17 @@ export class DashboardController {
     // with live batches are suppressed from the product-level list so a
     // single item never appears twice.
     const batchExpiring = await this.prisma.$queryRawUnsafe<Array<{ id: string; name: string; sku: string; expiryDate: string; remainingQty: number }>>(
-      "SELECT b.id, p.name, p.sku, b.expiryDate, b.remainingQty FROM ProductBatch b JOIN Product p ON p.id = b.productId WHERE b.remainingQty > 0 AND b.expiryDate <= datetime('now', '+14 days') ORDER BY b.expiryDate ASC LIMIT 8",
+      `SELECT b.id, p.name, p.sku, b.expiryDate, b.remainingQty FROM ProductBatch b JOIN Product p ON p.id = b.productId WHERE b.remainingQty > 0 AND b.expiryDate <= ${expiryCutoff} ORDER BY b.expiryDate ASC LIMIT 8`,
     );
     const batchProductIds = new Set((await this.prisma.$queryRawUnsafe<Array<{ productId: string }>>("SELECT DISTINCT productId FROM ProductBatch WHERE remainingQty > 0")).map((row) => row.productId));
     const productExpiring = expiring.filter((item) => !batchProductIds.has(item.id));
+    // True expiry count with the same suppression rule as the card list:
+    // product-level dates for goods WITHOUT live batches, plus live batches
+    // themselves. The merged card list is capped at 8 — the count must not be.
+    const [productExpiringCountRows, batchExpiringCountRows] = await Promise.all([
+      this.prisma.$queryRawUnsafe<Array<{ count: number | bigint }>>(`SELECT COUNT(*) AS count FROM Product WHERE isActive = 1 AND expiryDate IS NOT NULL AND expiryDate <= ${expiryCutoff} AND id NOT IN (SELECT DISTINCT productId FROM ProductBatch WHERE remainingQty > 0)`),
+      this.prisma.$queryRawUnsafe<Array<{ count: number | bigint }>>(`SELECT COUNT(*) AS count FROM ProductBatch WHERE remainingQty > 0 AND expiryDate <= ${expiryCutoff}`),
+    ]);
     const mergedExpiring = [...batchExpiring, ...productExpiring]
       .sort((a, b) => String(a.expiryDate).localeCompare(String(b.expiryDate)))
       .slice(0, 8);
@@ -87,9 +103,9 @@ export class DashboardController {
       stockValue: Number(stockValue[0]?.value ?? 0),
       backroomValue: Number(backroom[0]?.value ?? 0),
       productCount,
-      lowStockCount: lowStock.length,
+      lowStockCount: Number(lowStockCountRows[0]?.count ?? 0),
       lowStock,
-      expiringCount: mergedExpiring.length,
+      expiringCount: Number(productExpiringCountRows[0]?.count ?? 0) + Number(batchExpiringCountRows[0]?.count ?? 0),
       expiring: mergedExpiring,
       recentSales,
       // Newest backup file age, for the "has it been a while?" warning.
@@ -104,15 +120,23 @@ export class DashboardController {
       // machine's LOCAL day. SQLite's date() would bucket by UTC day, which
       // shifts sales made after midnight (e.g. 00:00-04:30 in UTC+4:30) into
       // the previous day's bar and desyncs the chart from the "today" cards.
-      salesByDay: Object.entries(
-        chartSales.reduce((perDay: Record<string, number>, sale) => {
+      salesByDay: (() => {
+        const perDay = chartSales.reduce((perDay: Record<string, number>, sale) => {
           const day = localDay(sale.createdAt);
           perDay[day] = (perDay[day] || 0) + sale.total;
           return perDay;
-        }, {}),
-      )
-        .sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([day, total]) => ({ day, total })),
+        }, {});
+        // Zero-fill every day of the window: a closed Friday is a 0-bar, not
+        // a missing column that quietly shifts the rest of the chart.
+        const days: Array<{ day: string; total: number }> = [];
+        for (let back = 13; back >= 0; back -= 1) {
+          const date = new Date(start);
+          date.setDate(date.getDate() - back);
+          const key = localDay(date);
+          days.push({ day: key, total: perDay[key] || 0 });
+        }
+        return days;
+      })(),
     };
   }
 }

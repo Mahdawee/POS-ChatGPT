@@ -8,10 +8,12 @@ import { CheckoutService } from "../services/checkout";
 @Controller("sales")
 export class SalesController {
   constructor(private readonly prisma: PrismaService, private readonly checkoutService: CheckoutService) {}
-  @Get() list(@Query("from") from?: string, @Query("to") to?: string, @Query("skip") skip?: string, @Query("take") take?: string) {
-    const where: { createdAt?: { gte?: Date; lte?: Date } } = {};
+  @Get() list(@Query("from") from?: string, @Query("to") to?: string, @Query("skip") skip?: string, @Query("take") take?: string, @Query("method") method?: string) {
+    const where: { createdAt?: { gte?: Date; lte?: Date }; paymentMethod?: "CASH" | "MOBILE" | "CREDIT" | "WALLET" } = {};
     if (from) where.createdAt = { ...where.createdAt, gte: new Date(from) };
     if (to) where.createdAt = { ...where.createdAt, lte: new Date(to.length === 10 ? `${to}T23:59:59.999` : to) };
+    // Payment-method filter for the register's history table.
+    if (method === "CASH" || method === "MOBILE" || method === "CREDIT" || method === "WALLET") where.paymentMethod = method;
     // Windowed listing ("load more"): each request is capped so a busy
     // register never pulls its whole history at once.
     const limit = Math.min(300, Math.max(1, Number(take) || 100));

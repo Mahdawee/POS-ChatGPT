@@ -46,16 +46,53 @@ export class ProductsController {
   /** Paged variant of list() for the management table: same filters, but only
    *  one page of rows plus the total, so a 10k-item warehouse never ships the
    *  whole catalog (or renders it) at once. Consumers that need everything
-   *  (POS local copy, purchase pickers) keep using GET /products. */
-  @Get("page") async page(@Query("archived") archived?: string, @Query("q") q?: string, @Query("skip") skip?: string) {
+   *  (POS local copy, purchase pickers) keep using GET /products.
+   *  Shopkeeper requests from months of use: sort by price/stock (not just
+   *  name) and jump straight to low- or out-of-stock goods. */
+  @Get("page") async page(
+    @Query("archived") archived?: string, @Query("q") q?: string, @Query("skip") skip?: string,
+    @Query("sort") sort?: string, @Query("dir") dir?: string,
+    @Query("stock") stock?: string, @Query("categoryId") categoryId?: string,
+  ) {
     const search = q?.trim();
-    const where: { isActive: boolean; OR?: Array<{ name: { contains: string } } | { sku: { contains: string } } | { barcode: { contains: string } }> } = { isActive: archived !== "1" };
+    const where: { isActive: boolean; OR?: Array<{ name: { contains: string } } | { sku: { contains: string } } | { barcode: { contains: string } }>; categoryId?: string } = { isActive: archived !== "1" };
     if (search) where.OR = [{ name: { contains: search } }, { sku: { contains: search } }, { barcode: { contains: search } }];
+    if (categoryId) where.categoryId = categoryId;
+    // Sortable columns are whitelisted — the value also reaches raw SQL below,
+    // so an unknown name must never pass through.
+    const column = (["name", "sku", "price", "stock", "cost"] as const).includes(sort as "name" | "sku" | "price" | "stock" | "cost") ? sort : "name";
+    const direction: "asc" | "desc" = dir === "desc" ? "desc" : "asc";
+    const orderBy = column === "stock" ? { stock: direction } : column === "price" ? { price: direction } : column === "cost" ? { cost: direction } : column === "sku" ? { sku: direction } : { name: direction };
     const take = 100;
     const offset = Math.max(0, Number(skip) || 0);
     const include = { category: true, bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true, stock: true, reserved: true, isSerialized: true } } } }, serialUnits: { where: { status: "IN_STOCK" }, select: { id: true } } } as const;
+    // "کم‌موجود / ناموجود" compare two COLUMNS (stock vs minStock), which
+    // Prisma's where cannot express — those filters resolve the id window in
+    // raw SQL first, then hydrate it through the same include as everyone
+    // else. Bundles are excluded: their own stock is always 0 by design, so
+    // they would light up every low-stock filter forever.
+    if (stock === "low" || stock === "out") {
+      // The Prisma branch above reads isActive: archived !== "1" — active rows
+      // by default. The raw id-window must agree: 1 (active) unless archived=1.
+      const params: unknown[] = [archived === "1" ? 0 : 1];
+      const conditions = ["isActive = ?", "isBundle = 0", stock === "low" ? "stock <= minStock" : "stock <= 0"];
+      if (search) { conditions.push("(name LIKE ? OR sku LIKE ? OR barcode LIKE ?)"); params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
+      if (categoryId) { conditions.push("categoryId = ?"); params.push(categoryId); }
+      const base = `SELECT id FROM Product WHERE ${conditions.join(" AND ")}`;
+      const order = ` ORDER BY ${column} ${direction === "desc" ? "DESC" : "ASC"}, name ASC`;
+      const [idRows, countRows] = await Promise.all([
+        this.prisma.$queryRawUnsafe<Array<{ id: string }>>(`${base}${order} LIMIT ${take} OFFSET ${offset}`, ...params),
+        this.prisma.$queryRawUnsafe<Array<{ count: number | bigint }>>(`SELECT COUNT(*) AS count FROM (${base})`, ...params),
+      ]);
+      const ids = idRows.map((row) => row.id);
+      const rows = ids.length ? await this.prisma.product.findMany({ where: { id: { in: ids } }, include }) : [];
+      const byId = new Map(rows.map((row) => [row.id, row]));
+      const list = ids.map((id) => byId.get(id)).filter((row) => row != null) as typeof rows;
+      const total = Number(countRows[0]?.count ?? 0);
+      return { list, total, hasMore: offset + list.length < total };
+    }
     const [list, total] = await Promise.all([
-      this.prisma.product.findMany({ where, include, orderBy: { name: "asc" }, take, skip: offset }),
+      this.prisma.product.findMany({ where, include, orderBy, take, skip: offset }),
       this.prisma.product.count({ where }),
     ]);
     return { list, total, hasMore: offset + list.length < total };
