@@ -24,7 +24,7 @@ function setup(products = [
   // The controller runs conversions inside one transaction via checkoutInTx.
   const checkoutInTx = jest.fn();
   const prisma = { $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)), quote: tx.quote, auditLog: tx.auditLog };
-  const controller = new QuotesController(prisma as never, { checkout, checkoutInTx } as never);
+  const controller = new QuotesController(prisma as never, { checkout, checkoutInTx, assertLicensed: jest.fn().mockResolvedValue(undefined) } as never);
   return { controller, tx, prisma: prisma, checkout, checkoutInTx, quoteRow };
 }
 

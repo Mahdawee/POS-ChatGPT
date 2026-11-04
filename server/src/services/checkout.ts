@@ -53,7 +53,25 @@ export class CheckoutService {
   }
 
   async checkout(dto: SaleDto, user: SessionUser, idempotencyKey?: string): Promise<unknown> {
-    return this.prisma.$transaction((tx) => this.checkoutInTx(tx, dto, user, idempotencyKey));
+    // License gate BEFORE the transaction opens. assertLicensed() reads and
+    // writes the licenseState row through the pooled (parent) client, but a
+    // SQLite interactive transaction owns the only pooled connection (and
+    // the write lock) from its first statement — any parent-client query
+    // inside the callback can never complete, the transaction expires after
+    // its 5 s window and every sale dies with P2028 (“سرور موقتاً مشغول است”).
+    // Callers that hand us their own transaction (order delivery, quote
+    // conversion) run this gate before opening it.
+    await this.assertLicensed();
+    // A wider window than the 5 s default: a large invoice on a slow disk
+    // (or a second register waiting on SQLite's busy_timeout) is a retryable
+    // hiccup, not a lost basket.
+    return this.prisma.$transaction((tx) => this.checkoutInTx(tx, dto, user, idempotencyKey), { timeout: 15_000, maxWait: 5_000 });
+  }
+
+  /** License gate shared by every checkout entry point — POS, quote
+   *  conversion and order delivery. Always OUTSIDE the caller's transaction. */
+  async assertLicensed(): Promise<void> {
+    await this.license?.assertLicensed();
   }
 
   /** The whole checkout inside a CALLER-PROVIDED transaction. Order delivery
@@ -62,7 +80,9 @@ export class CheckoutService {
    *  ONE unit: a crash between the steps can never leave an order
    *  deliverable twice or an OPEN quote convertible again (double sale). */
   async checkoutInTx(tx: Prisma.TransactionClient, dto: SaleDto, user: SessionUser, idempotencyKey?: string): Promise<unknown> {
-    if (this.license) await this.license.assertLicensed();
+    // NOTE: no license check here — it queries the parent client and would
+    // deadlock the transaction on SQLite (see checkout()). Callers must run
+    // assertLicensed() before opening the transaction.
     if (idempotencyKey) {
       const previous = await tx.sale.findUnique({ where: { idempotencyKey }, include: { items: true, customer: true } });
       if (previous) return previous;

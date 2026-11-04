@@ -92,6 +92,9 @@ export class OrdersController {
       const deliverQty = requested.get(line.id) || 0;
       if (deliverQty > 0) releasing.push({ productId: line.productId, quantity: deliverQty });
     }
+    // License gate before the transaction opens (an in-transaction check
+    // deadlocks on SQLite — see CheckoutService.checkout).
+    await this.checkout.assertLicensed();
     // ONE transaction: release the reservation, run the shared checkout
     // pipeline and record the delivery together. Any failure (funds, stock,
     // license, crash) rolls the whole delivery back — a compensating-write

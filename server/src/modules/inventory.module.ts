@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Module, Post, Query } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Module, NotFoundException, Post, Query } from "@nestjs/common";
 import { CurrentUser, SessionUser } from "../auth";
 import { InventoryAdjustmentDto, StockTransferDto } from "../dto";
 import { PrismaService } from "../prisma.service";
@@ -22,8 +22,17 @@ export class InventoryController {
 
   /** لیست دستگاه‌های سریال‌دار یک کالا (IMEI/سریال) با وضعیت هرکدام. */
   @Get("serials")
-  serials(@Query("productId") productId?: string, @Query("status") status?: string, @Query("q") q?: string) {
-    const where: { productId?: string; status?: string; serial?: { contains: string } } = {};
+  async serials(@Query("productId") productId?: string, @Query("status") status?: string, @Query("q") q?: string, @Query("saleId") saleId?: string) {
+    const where: { productId?: string; status?: string; serial?: { contains: string }; saleItemId?: { in: string[] } } = {};
+    // saleId narrows the list to the units this invoice handed over (their
+    // saleItemId points at one of its items) — the sale-return screen offers
+    // exactly those for picking, status SOLD filtering out already-returned
+    // ones.
+    if (saleId) {
+      const sale = await this.prisma.sale.findUnique({ where: { id: saleId }, select: { items: { select: { id: true } } } });
+      if (!sale) throw new NotFoundException("فاکتور پیدا نشد.");
+      where.saleItemId = { in: sale.items.map((item) => item.id) };
+    }
     if (productId) where.productId = productId;
     if (status === "IN_STOCK" || status === "SOLD" || status === "RETURNED") where.status = status;
     const search = q?.trim();

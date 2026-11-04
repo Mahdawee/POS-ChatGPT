@@ -69,6 +69,9 @@ export class QuotesController {
   /** تبدیل پیش‌فاکتور به فروش واقعی؛ سپس پیش‌فاکتور CONVERTED می‌شود. */
   @Post(":id/convert")
   async convert(@Param("id") id: string, @Body() dto: ConvertQuoteDto, @CurrentUser() user: SessionUser) {
+    // License gate before the transaction opens (an in-transaction check
+    // deadlocks on SQLite — see CheckoutService.checkout).
+    await this.checkoutService.assertLicensed();
     // ONE transaction: the sale and the quote's OPEN → CONVERTED transition
     // commit together, so a failure between them can never leave an OPEN
     // quote convertible a second time (double sale).

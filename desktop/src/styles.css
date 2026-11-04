@@ -184,6 +184,18 @@
 .return-serials{flex-basis:100%;display:flex;flex-direction:column;gap:5px;margin-top:4px}
 .return-serials span{font-size:10px;color:var(--amber-ink)}
 .return-serials textarea{border:1px solid var(--field-line);border-radius:7px;background:var(--surface);padding:7px 9px;font-size:11px;outline:0;resize:vertical;font-family:inherit}
+/* ── Serial picker (POS cart lines, return forms, quote conversion) ── */
+.serial-picker{flex:1;min-width:220px;display:flex;flex-direction:column;gap:5px;border:1px solid var(--field-line);border-radius:8px;padding:7px 9px;background:var(--surface-3)}
+.serial-picker-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.serial-picker-head span{font-size:10px;color:var(--amber-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.serial-picker-head input{border:1px solid var(--line-2);border-radius:7px;background:var(--surface);padding:4px 8px;font-size:11px;outline:0;width:11rem;min-width:8rem;font-family:inherit}
+.serial-picker-head input:focus{border-color:var(--accent-border)}
+.serial-chips{display:flex;flex-wrap:wrap;gap:4px;max-height:86px;overflow-y:auto}
+.serial-chip{height:24px;padding:0 8px;font-size:10px;display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);direction:ltr}
+.serial-chip.active{background:var(--accent-soft);border-color:var(--accent-border);color:var(--accent-ink)}
+.serial-picker small{font-size:9px}
+.serial-picker textarea{border:1px dashed var(--line-2);border-radius:7px;background:var(--surface);padding:6px 8px;font-size:11px;outline:0;resize:vertical;font-family:inherit}
+.serial-line{display:flex;flex-wrap:wrap;gap:6px}
 .return-line.spent,.return-line.quiet{opacity:.62}
 .return-line-info{flex:1;min-width:200px;display:flex;flex-direction:column;gap:3px}
 .return-line-info b{font-size:12px}

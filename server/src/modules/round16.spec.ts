@@ -313,7 +313,7 @@ describe("Round 16 — orders reserve and release stock", () => {
       customerOrder: { findUnique: findOrder, findMany: jest.fn().mockResolvedValue([]) },
     };
     // Deliveries run inside one transaction via checkoutInTx.
-    const checkout = { checkout: jest.fn().mockResolvedValue({ id: "sale-1", total: 100 }), checkoutInTx: jest.fn().mockResolvedValue({ id: "sale-1", total: 100 }) };
+    const checkout = { checkout: jest.fn().mockResolvedValue({ id: "sale-1", total: 100 }), checkoutInTx: jest.fn().mockResolvedValue({ id: "sale-1", total: 100 }), assertLicensed: jest.fn().mockResolvedValue(undefined) };
     const controller = new OrdersController(prisma as never, checkout as never);
     return { controller, tx, prisma, checkout, findOrder };
   }
@@ -465,5 +465,54 @@ describe("Round 16 audit — regression fixes", () => {
     await expect(controller.create({ customerId: "customer-1", total: 9000, installmentCount: 3, saleId: "sale-9" }, admin)).rejects.toThrow(/فاکتور/);
     // No saleId → no link check, plan is created as before.
     await expect(controller.create({ customerId: "customer-1", total: 9000, installmentCount: 3 }, admin)).resolves.toBeTruthy();
+  });
+});
+
+describe("Round 30 — sale deadlock fix + serial picking", () => {
+  it("checks the license BEFORE opening the transaction (SQLite P2028 regression)", async () => {
+    // The bug: assertLicensed() used to run INSIDE the $transaction callback
+    // and queried the parent client. SQLite gives an interactive transaction
+    // the only pooled connection, so that query could never finish — the
+    // transaction expired after 5 s and every sale died with P2028.
+    const calls: string[] = [];
+    const license = { assertLicensed: jest.fn(async () => { calls.push("license"); }) };
+    const { tx } = checkoutSetup([product()]);
+    const prisma = {
+      $transaction: jest.fn(async (work: (client: unknown) => unknown) => { calls.push("transaction"); return work(tx); }),
+    };
+    const service = new CheckoutService(prisma as never, license as never);
+    await service.checkout({ items: [{ productId: "product-1", quantity: 1 }], paymentMethod: "CASH" }, admin);
+    expect(calls).toEqual(["license", "transaction"]);
+    // A wider window than the 5 s default, so slow disks retry instead of failing.
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 15000, maxWait: 5000 });
+  });
+
+  it("exposes assertLicensed for callers that open their own transaction", async () => {
+    const license = { assertLicensed: jest.fn().mockResolvedValue(undefined) };
+    const service = new CheckoutService({} as never, license as never);
+    await service.assertLicensed();
+    expect(license.assertLicensed).toHaveBeenCalledTimes(1);
+    const bare = new CheckoutService({} as never);
+    await expect(bare.assertLicensed()).resolves.toBeUndefined();
+  });
+
+  it("serials(saleId) narrows the list to one invoice's still-out units", async () => {
+    const prisma = {
+      sale: { findUnique: jest.fn().mockResolvedValue({ items: [{ id: "item-1" }, { id: "item-2" }] }) },
+      serialUnit: { findMany: jest.fn().mockResolvedValue([{ serial: "S1", saleItemId: "item-1", status: "SOLD" }]) },
+    };
+    const controller = new InventoryController(prisma as never);
+    await controller.serials(undefined, "SOLD", undefined, "sale-1");
+    expect(prisma.sale.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "sale-1" } }));
+    expect(prisma.serialUnit.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ saleItemId: { in: ["item-1", "item-2"] }, status: "SOLD" }) }));
+  });
+
+  it("serials(saleId) rejects an unknown invoice", async () => {
+    const prisma = {
+      sale: { findUnique: jest.fn().mockResolvedValue(null) },
+      serialUnit: { findMany: jest.fn() },
+    };
+    const controller = new InventoryController(prisma as never);
+    await expect(controller.serials(undefined, undefined, undefined, "nope")).rejects.toThrow(/فاکتور پیدا نشد/);
   });
 });
