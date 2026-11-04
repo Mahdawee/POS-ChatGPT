@@ -53,7 +53,14 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     throw new Error(message);
   }
   if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+  // Some routes answer 200 with an EMPTY body (e.g. /cash/current when the
+  // drawer is closed — Nest sends nothing for a null return). Calling
+  // response.json() on that throws "Unexpected end of JSON input", which used
+  // to crash the cash page and the POS basket. An empty body now reads as
+  // "no data" instead of an error.
+  const text = await response.text();
+  if (!text) return undefined as T;
+  return JSON.parse(text) as T;
 }
 
 import { t } from "../i18n";
