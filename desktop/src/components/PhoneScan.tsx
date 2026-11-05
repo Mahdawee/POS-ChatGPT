@@ -1,8 +1,45 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Copy, Smartphone, CircleAlert, CircleCheck } from "lucide-react";
 import { t, dateTime } from "../i18n";
 import { apiBase, get } from "../lib/api";
-import { qrSvg } from "../lib/qr";
+import { qrCreate } from "../lib/vendor/qr-core";
+
+/** نسخهٔ بصری پنل — اگر این متن را در تنظیمات نمی‌بینید، برنامهٔ در حال
+ *  اجرا قدیمی است و باید دوباره ساخته شود (تشخیص قطعی build کهنه). */
+const PHONE_SCAN_PANEL_VERSION = "۶";
+
+/** رندر QR روی canvas — مطمئن‌ترین راه نمایش در هر WebView: بدون <img>،
+ *  بدون data-URI و بدون SVG؛ پیکسل‌ها مستقیم با جاوااسکریپت نقش می‌شوند
+ *  و ماتریسِ همان موتور QR رسیدهای چاپی (تأییدشده در عمل) است. */
+function QrCanvas({ text, target }: { text: string; target: number }) {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+    try {
+      const qr = qrCreate(text, "M");
+      const margin = 4; // ناحیهٔ ساکت — استاندارد QR
+      const total = qr.size + margin * 2;
+      const scale = Math.max(4, Math.round(target / total));
+      const px = total * scale;
+      canvas.width = px;
+      canvas.height = px;
+      canvas.style.width = `${px}px`;
+      canvas.style.height = `${px}px`;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, px, px);
+      ctx.fillStyle = "#000";
+      for (let row = 0; row < qr.size; row++) {
+        for (let col = 0; col < qr.size; col++) {
+          if (qr.get(row, col) === 1) ctx.fillRect((col + margin) * scale, (row + margin) * scale, scale, scale);
+        }
+      }
+    } catch { /* متن پشتیبانی‌نشده — نشانی متنی زیر کادر باقی است */ }
+  }, [text, target]);
+  return <canvas ref={ref}/>;
+}
 
 /**
  * ── پل موقت اسکن با دوربین گوشی (دور ۵۳) ──────────────────────────────────
@@ -163,7 +200,7 @@ export function PhoneScanPanel() {
       <Smartphone size={19}/>
       <div className="grow">
         <b>{t("اسکن موقت با دوربین گوشی")}</b>
-        <small>{t("گوشی و کامپیوتر باید در یک WiFi باشند؛ نشانی زیر را در مرورگر گوشی باز کنید و با کد PIN جفت کنید.")}</small>
+        <small>{t("گوشی و کامپیوتر باید در یک WiFi باشند؛ بارکد زیر را با دوربین گوشی اسکن کنید تا بدون تایپ، خودکار وصل شود.")}</small>
       </div>
       {status && <span className={`phone-scan-badge ${status.running ? "ok" : ""}`}>{status.running ? t("فعال") : t("غیرفعال")}</span>}
     </div>
@@ -199,9 +236,7 @@ export function PhoneScanPanel() {
         </div>
         {phoneUrl
           ? <div className="phone-scan-qr" title={t("بارکد را با دوربین گوشی بخوانید")}>
-              {/* SVG درون‌خطی (مثل QR رسید چاپ) — بدون img و data-URI که روی
-                  برخی WebViewها رندر نمی‌شد؛ این راه همیشه کار می‌کند. */}
-              <div className="phone-scan-qr-svg" dangerouslySetInnerHTML={{ __html: qrSvg(phoneUrl) }}/>
+              <QrCanvas text={phoneUrl} target={200}/>
               <small dir="ltr">{phoneUrl}</small>
             </div>
           : <div className="hint-box phone-scan-warn"><CircleAlert size={17}/>{t("این دستگاه به شبکهٔ محلی وصل نیست؛ برای اتصال گوشی، به WiFi همان شبکه بپیوندید.")}</div>}
@@ -255,5 +290,9 @@ export function PhoneScanPanel() {
           : <small className="muted">{t("کدی هنوز از گوشی فرستاده نشده است.")}</small>}
       </div>
     </>}
+
+    {/* نشانگر نسخه — اگر این خط را نمی‌بینید یعنی برنامهٔ در حال اجرا قدیمی
+        است و کد QR جدید (رندر canvas) داخلش نیست؛ دوباره build بگیرید. */}
+    <div className="phone-scan-version"><small className="muted">{t("نسخهٔ پل گوشی: {v}", { v: PHONE_SCAN_PANEL_VERSION })}</small></div>
   </div>;
 }
