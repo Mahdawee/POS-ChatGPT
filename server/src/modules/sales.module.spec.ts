@@ -263,7 +263,7 @@ function returnSetup(sale: typeof saleFixture = saleFixture) {
     customer: { update: jest.fn().mockResolvedValue({}) },
     cashSession: { findFirst: jest.fn().mockResolvedValue({ id: "cash-1" }), findUnique: jest.fn().mockResolvedValue(null) },
     cashMovement: { create: jest.fn().mockResolvedValue({}) },
-    inventoryMovement: { create: jest.fn().mockResolvedValue({}) },
+    inventoryMovement: { create: jest.fn().mockResolvedValue({}), findMany: jest.fn().mockResolvedValue([]) },
     serialUnit: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn().mockResolvedValue({}) },
     bundleComponent: { findMany: jest.fn().mockResolvedValue([]) },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
@@ -282,6 +282,23 @@ describe("Sale returns", () => {
     expect(tx.saleReturn.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ items: { create: [expect.objectContaining({ unitCost: 6 })] } }) }));
     expect(record.total).toBe(20);
     expect(tx.auditLog.create).toHaveBeenCalled();
+  });
+
+  it("never restocks more of a kit component than the invoice deducted (recipe edited after the sale)", async () => {
+    const bundleSale = {
+      ...saleFixture,
+      receiptNo: "POS-2",
+      items: [{ id: "item-b", productId: "bundle-1", name: "بستهٔ نمونه", sku: "B-1", quantity: 1, unitPrice: 50, unitCost: 30, lineTotal: 50, discount: 0 }],
+    };
+    const { controller, tx } = returnSetup(bundleSale);
+    tx.product.findMany.mockResolvedValue([{ id: "bundle-1", name: "بستهٔ نمونه", isBundle: true, stock: 0 }]);
+    // TODAY's recipe wants 9 of the component per kit…
+    tx.bundleComponent.findMany.mockResolvedValue([{ componentId: "component-1", quantity: 9, component: { id: "component-1", name: "جزء نمونه", stock: 0 } }]);
+    // …but this invoice's SALE movements only ever took 3.
+    tx.inventoryMovement.findMany.mockResolvedValue([{ productId: "component-1", quantity: -3 }]);
+    await controller.returnSale("sale-1", { items: [{ productId: "bundle-1", quantity: 1 }] }, admin);
+    expect(tx.product.update).toHaveBeenCalledWith({ where: { id: "component-1" }, data: { stock: { increment: 3 } } });
+    expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "SALE_RETURN", quantity: 3, stockAfter: 3 }) }));
   });
 
   it("rejects returning more than what was sold, including already returned amounts", async () => {
@@ -423,7 +440,12 @@ describe("voiding a sale (ابطال فاکتور)", () => {
         { id: "product-1", isBundle: false, bundleComponents: [] },
         { id: "product-2", isBundle: true, bundleComponents: [{ componentId: "component-1", quantity: 3 }] },
       ]), update: jest.fn().mockImplementation(({ data }: { data: { stock: { increment?: number; decrement?: number } } }) => Promise.resolve({ stock: (data.stock.increment ?? 10) })) },
-      inventoryMovement: { create: jest.fn().mockResolvedValue({}) },
+      inventoryMovement: {
+        create: jest.fn().mockResolvedValue({}),
+        // What THIS invoice actually took from the shelf at checkout time:
+        // 2 of product-1 plus 3 of component-1 (inside the kit line).
+        findMany: jest.fn().mockResolvedValue([{ productId: "product-1", quantity: -2 }, { productId: "component-1", quantity: -3 }]),
+      },
       serialUnit: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
       customer: { update: jest.fn().mockResolvedValue({}) },
       customerWalletTxn: { create: jest.fn().mockResolvedValue({}) },
@@ -456,6 +478,21 @@ describe("voiding a sale (ابطال فاکتور)", () => {
     // the row is flagged, never deleted, with reason and actor
     expect(tx.sale.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ voidReason: "فاکتور اشتباه صادر شد", voidedBy: "auditor" }) }));
     expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: "VOID_SALE" }) }));
+  });
+
+  it("voids against what the invoice actually deducted, not the kit's CURRENT recipe", async () => {
+    const { controller, tx } = voidSetup();
+    // The kit's recipe was edited AFTER the sale: it now demands 9 of the
+    // component per kit, while the sale only ever took 3 off the shelf.
+    tx.product.findMany.mockResolvedValue([
+      { id: "product-1", isBundle: false, bundleComponents: [] },
+      { id: "product-2", isBundle: true, bundleComponents: [{ componentId: "component-1", quantity: 9 }] },
+    ]);
+    await controller.voidSale("sale-1", { reason: "دستور بسته بعد از فروش عوض شد" }, voidUser);
+    const updates = tx.product.update.mock.calls.map((call) => [call[0].where.id, call[0].data.stock.increment]);
+    // The SALE movements (2 × product-1, 3 × component-1) are the truth.
+    expect(updates).toEqual(expect.arrayContaining([["product-1", 2], ["component-1", 3]]));
+    expect(updates).not.toContainEqual(["component-1", 9]);
   });
 
   it("does not touch a CLOSED drawer — history stays as it was", async () => {

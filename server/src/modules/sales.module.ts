@@ -160,6 +160,19 @@ export class SalesController {
         }
       }
       const returnNo = `RET-${Date.now()}-${randomBytes(2).toString("hex").toUpperCase()}`;
+      // Net shelf usage of THIS invoice: what its SALE movements took minus
+      // what earlier returns already put back. A kit's recipe may have been
+      // edited after the sale, so returning TODAY'S recipe could restock a
+      // component this invoice never deducted. Clamping every component to
+      // the net usage keeps the shelf from silently inflating.
+      const takenMoves = await tx.inventoryMovement.findMany({ where: { reference: sale.receiptNo, type: "SALE" }, select: { productId: true, quantity: true } });
+      const taken = new Map<string, number>();
+      for (const move of takenMoves) taken.set(move.productId, (taken.get(move.productId) || 0) + Math.abs(move.quantity));
+      const earlierReturnNos = sale.returns.map((record) => record.returnNo).filter((value): value is string => Boolean(value));
+      const putBackMoves = earlierReturnNos.length ? await tx.inventoryMovement.findMany({ where: { reference: { in: earlierReturnNos }, type: "SALE_RETURN" }, select: { productId: true, quantity: true } }) : [];
+      const putBack = new Map<string, number>();
+      for (const move of putBackMoves) putBack.set(move.productId, (putBack.get(move.productId) || 0) + move.quantity);
+      const roomFor = (productId: string): number => Math.max(0, (taken.get(productId) || 0) - (putBack.get(productId) || 0));
       // Restock with a running stock map: a component shared by several
       // returned bundles must chain its increments so every movement row's
       // stockAfter stays truthful.
@@ -181,7 +194,13 @@ export class SalesController {
         // Bundles never carried their own stock: the components come back.
         if (product.isBundle) {
           const rows = await tx.bundleComponent.findMany({ where: { bundleId: line.productId }, include: { component: true } });
-          for (const row of rows) await restock(row.component, row.quantity * line.quantity, `برگشت جزء بستهٔ ${product.name}`);
+          for (const row of rows) {
+            const want = row.quantity * line.quantity;
+            // Cap at the net usage when movements are on record; a kit whose
+            // recipe grew after the sale must not stock more than it took.
+            const allowed = takenMoves.length ? Math.min(want, roomFor(row.componentId)) : want;
+            if (allowed > 0) await restock(row.component, allowed, `برگشت جزء بستهٔ ${product.name}`);
+          }
         } else {
           await restock(product, line.quantity, "برگشت از فروش");
         }
@@ -280,16 +299,27 @@ export class SalesController {
       const plans = await tx.installmentPlan.findMany({ where: { saleId: id } });
       if (plans.some((plan) => plan.paidAmount > 0)) throw new BadRequestException("برای این فاکتور قسط پرداخت‌شده وجود دارد؛ نخست اقساط را تسویه کنید.");
 
-      // Shelf stock comes back — bundles expand into their components.
-      const products = await tx.product.findMany({ where: { id: { in: [...new Set(sale.items.map((item) => item.productId))] } }, include: { bundleComponents: true } });
-      const byId = new Map(products.map((product) => [product.id, product]));
+      // Shelf stock comes back. The exact quantities are replayed from THIS
+      // invoice's own SALE movements (written at checkout, bundle components
+      // included) instead of re-expanding the bundle's CURRENT recipe: the
+      // shop may have edited a kit's components since the sale, and restocking
+      // today's recipe would put back goods this invoice never took.
+      const saleMoves = await tx.inventoryMovement.findMany({ where: { reference: sale.receiptNo, type: "SALE" }, select: { productId: true, quantity: true } });
       const restock = new Map<string, number>();
-      for (const item of sale.items) {
-        const product = byId.get(item.productId);
-        if (!product) continue;
-        if (product.isBundle) {
-          for (const part of product.bundleComponents) restock.set(part.componentId, (restock.get(part.componentId) || 0) + part.quantity * item.quantity);
-        } else restock.set(product.id, (restock.get(product.id) || 0) + item.quantity);
+      if (saleMoves.length) {
+        for (const move of saleMoves) restock.set(move.productId, (restock.get(move.productId) || 0) + Math.abs(move.quantity));
+      } else {
+        // Legacy sale rows written before movements existed (or by a foreign
+        // write path): fall back to expanding items with the current recipe.
+        const products = await tx.product.findMany({ where: { id: { in: [...new Set(sale.items.map((item) => item.productId))] } }, include: { bundleComponents: true } });
+        const byId = new Map(products.map((product) => [product.id, product]));
+        for (const item of sale.items) {
+          const product = byId.get(item.productId);
+          if (!product) continue;
+          if (product.isBundle) {
+            for (const part of product.bundleComponents) restock.set(part.componentId, (restock.get(part.componentId) || 0) + part.quantity * item.quantity);
+          } else restock.set(product.id, (restock.get(product.id) || 0) + item.quantity);
+        }
       }
       for (const [productId, quantity] of restock) {
         const product = await tx.product.update({ where: { id: productId }, data: { stock: { increment: quantity } }, select: { stock: true } });

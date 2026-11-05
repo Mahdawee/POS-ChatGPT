@@ -119,6 +119,7 @@ function returnSetup() {
     purchase: { findUnique: jest.fn().mockResolvedValue({ supplierId: "supplier-1" }) },
     purchaseReturn: { create: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ id: "return-1", ...data })) },
     inventoryMovement: { create: jest.fn().mockResolvedValue({}) },
+    productBatch: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn().mockResolvedValue({}) },
     serialUnit: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn().mockResolvedValue({}) },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
   };
@@ -135,6 +136,20 @@ describe("Purchase returns", () => {
     expect(tx.product.update).toHaveBeenCalledWith({ where: { id: "product-1" }, data: { stock: { decrement: 5 } } });
     expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "PURCHASE_RETURN", quantity: 5, stockAfter: 3 }) }));
     expect(tx.auditLog.create).toHaveBeenCalled();
+  });
+
+  it("releases the returned quantity from expiry lots — the linked receipt's lots first, then the rest", async () => {
+    const { controller, tx } = returnSetup();
+    tx.productBatch.findMany.mockImplementation(({ where }: { where: { purchaseId?: unknown } }) =>
+      Promise.resolve(where?.purchaseId === "purchase-1"
+        ? [{ id: "b-own", productId: "product-1", purchaseId: "purchase-1", remainingQty: 3, expiryDate: new Date("2027-01-01") }]
+        : [{ id: "b-other", productId: "product-1", remainingQty: 9, expiryDate: new Date("2026-06-01") }]));
+    await controller.createReturn({ purchaseId: "purchase-1", items: [{ productId: "product-1", quantity: 5 }] }, user);
+    // 3 units come off the linked receipt's own lot, the remaining 2 fall
+    // through to the product's other (older) lot — never silently skipped.
+    expect(tx.productBatch.update).toHaveBeenNthCalledWith(1, { where: { id: "b-own" }, data: { remainingQty: { decrement: 3 } } });
+    expect(tx.productBatch.update).toHaveBeenNthCalledWith(2, { where: { id: "b-other" }, data: { remainingQty: { decrement: 2 } } });
+    expect(tx.productBatch.update).toHaveBeenCalledTimes(2);
   });
 
   it("rejects a return larger than the stock on hand", async () => {

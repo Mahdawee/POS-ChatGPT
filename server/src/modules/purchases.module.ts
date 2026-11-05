@@ -269,6 +269,22 @@ export class PurchaseReturnsController {
         const product = productMap.get(row.productId)!;
         await tx.product.update({ where: { id: row.productId }, data: { stock: { decrement: row.quantity } } });
         await tx.inventoryMovement.create({ data: { productId: row.productId, type: "PURCHASE_RETURN", quantity: row.quantity, stockAfter: product.stock - row.quantity, reference: returnNo, note: "برگشت خرید" } });
+        // Expiry lots must give the returned units back too, or the expiry
+        // dashboard keeps warning about stock that physically left the shop
+        // (and FEFO sale deductions would look for units that are not there).
+        // Linked receipts release their own lots first, then any remaining
+        // quantity falls through to the product's other lots, oldest first.
+        let batchRemaining = row.quantity;
+        const ownLots = dto.purchaseId
+          ? await tx.productBatch.findMany({ where: { productId: row.productId, purchaseId: dto.purchaseId, remainingQty: { gt: 0 } }, orderBy: { expiryDate: "asc" } })
+          : [];
+        const otherLots = await tx.productBatch.findMany({ where: { productId: row.productId, remainingQty: { gt: 0 }, ...(dto.purchaseId ? { purchaseId: { not: dto.purchaseId } } : {}) }, orderBy: { expiryDate: "asc" } });
+        for (const batch of [...ownLots, ...otherLots]) {
+          if (batchRemaining <= 0) break;
+          const take = Math.min(batch.remainingQty, batchRemaining);
+          await tx.productBatch.update({ where: { id: batch.id }, data: { remainingQty: { decrement: take } } });
+          batchRemaining -= take;
+        }
         // Tracked units physically leave the shop: mark them RETURNED so the
         // serial list stays truthful and they can never be sold here again.
         if (product.isSerialized) {

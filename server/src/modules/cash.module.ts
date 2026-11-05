@@ -15,6 +15,12 @@ export class CashController {
     // Mixed payments contribute their cash part; a session is linked to a
     // sale exactly when that part is non-zero.
     const cashSalesAmount = session.sales.reduce((total, sale) => total + sale.cashPart, 0);
+    // A CLOSED shift is history: its expected cash was computed and stored at
+    // the moment of closing, and that number must never drift afterwards. A
+    // sale voided (or a refund issued) AFTER the drawer closed posts no
+    // movement to it, so re-deriving the sum today would contradict the
+    // money that was actually counted that night.
+    if (session.status === "CLOSED") return { ...session, cashSalesAmount, sales: undefined };
     return { ...session, expectedCash: session.openingCash + manual + cashSalesAmount, cashSalesAmount, sales: undefined };
   }
 

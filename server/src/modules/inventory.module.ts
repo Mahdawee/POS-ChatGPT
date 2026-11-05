@@ -50,7 +50,9 @@ export class InventoryController {
     const since = new Date(Date.now() - 30 * 86400000);
     const [products, soldRows, returnedRows, purchases] = await Promise.all([
       this.prisma.product.findMany({ where: { isActive: true, isBundle: false }, select: { id: true, name: true, sku: true, unit: true, stock: true, backstock: true, reserved: true, minStock: true, cost: true } }),
-      this.prisma.saleItem.findMany({ where: { sale: { createdAt: { gte: since } } }, select: { productId: true, quantity: true } }),
+      // Voided invoices never really left the shelf — they must not inflate
+      // the sales velocity behind the reorder suggestion.
+      this.prisma.saleItem.findMany({ where: { sale: { createdAt: { gte: since }, voidedAt: null } }, select: { productId: true, quantity: true } }),
       this.prisma.saleReturnItem.findMany({ where: { saleReturn: { createdAt: { gte: since } } }, select: { productId: true, quantity: true } }),
       this.prisma.purchaseItem.findMany({ orderBy: { purchase: { createdAt: "desc" } }, take: 2000, select: { productId: true, purchase: { select: { supplier: { select: { id: true, name: true, phone: true } } } } } }),
     ]);
