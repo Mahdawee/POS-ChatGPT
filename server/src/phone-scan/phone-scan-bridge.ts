@@ -71,6 +71,8 @@ export interface PhoneScanStatus {
   port: number | null;
   /** نشانی‌های IPv4 این دستگاه در شبکهٔ محلی — دسکتاپ از آن‌ها URL گوشی می‌سازد. */
   lan: string[];
+  /** وقتی روشن نیست: آخرین دلیل، برای نمایش راهنما در پنل تنظیمات. */
+  reason?: string;
 }
 
 export interface PhoneScanEntry {
@@ -88,19 +90,29 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
   private scans: PhoneScanEntry[] = [];
   private lastAtByCode = new Map<string, number>();
   private disposed = false;
+  private lastError = "";
 
   /** در تست‌ها (NODE_ENV=test) و با PHONE_SCAN_DISABLE=1 پل خودکار روشن نمی‌شود. */
   async onModuleInit(): Promise<void> {
-    if (process.env.PHONE_SCAN_DISABLE === "1" || process.env.NODE_ENV === "test") return;
+    if (process.env.PHONE_SCAN_DISABLE === "1") { this.lastError = "PHONE_SCAN_DISABLE=1"; return; }
+    if (process.env.NODE_ENV === "test") return;
     // شروع پل کاملاً جدا از بوت اصلی: کمی بعد از راه‌اندازی، بدون انتظار و
     // بدون آنکه هیچ خطایی به سرور اصلی برسد — این قابلیت موقت و اختیاری
-    // است و هرگز نباید بالا آمدن برنامه را معطل کند یا ببندد.
-    const timer = setTimeout(() => {
-      if (this.disposed) return;
-      void this.start().catch((error: unknown) => {
-        console.warn(`[phone-scan] موقت: پل گوشی روشن نشد — ${error instanceof Error ? error.message : String(error)}`);
+    // است و هرگز نباید بالا آمدن برنامه را معطل کند یا ببندد. اگر روشن
+    // نشد (مثلاً پورت موقتاً اشغال است) هر ۲۰ ثانیه خودکار دوباره تلاش
+    // می‌شود تا پنل تنظیمات همیشه دلیل وضعیت را داشته باشد.
+    const attemptStart = (attempt: number): void => {
+      if (this.disposed || this.server) return;
+      void this.start().then(() => { this.lastError = ""; }).catch((error: unknown) => {
+        this.lastError = error instanceof Error ? error.message : String(error);
+        if (!this.disposed) {
+          if (attempt === 1 || attempt % 6 === 0) console.warn(`[phone-scan] موقت: پل گوشی روشن نشد (تلاش ${attempt}) — ${this.lastError}؛ تلاش مجدد خودکار ادامه می‌یابد.`);
+          const retry = setTimeout(() => attemptStart(attempt + 1), 20000);
+          retry.unref?.();
+        }
       });
-    }, 800);
+    };
+    const timer = setTimeout(() => attemptStart(1), 800);
     timer.unref?.();
   }
 
@@ -115,7 +127,13 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
   }
 
   status(): PhoneScanStatus {
-    return { running: Boolean(this.server), tls: this.tlsEnabled, port: this.actualPort, lan: SettingsController.lanAddresses() };
+    return {
+      running: Boolean(this.server),
+      tls: this.tlsEnabled,
+      port: this.actualPort,
+      lan: SettingsController.lanAddresses(),
+      reason: this.server ? undefined : this.lastError || "not-started",
+    };
   }
 
   /** کدهای جدیدتر از `after` — دسکتاپ مهر زمانیِ پاسخ قبلی را پاس می‌کند. */
@@ -149,17 +167,32 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
     } else {
       server = http.createServer(handler);
     }
-    // خطای listen (مثل پورت اشغال) به caller برمی‌گردد؛ خطاهای بعدیِ سوکت
-    // فقط لاگ می‌شوند تا یک اتصال خرابِ گوشی سرور را نیندازد.
-    await new Promise<void>((resolve, reject) => {
+    // خطای listen: اگر پورت پیش‌فرض اشغال باشد (مثلاً یک نمونهٔ دیگر یا
+    // برنامهٔ دیگری روی 4318)، تا پنج پورت بعدی خودکار امتحان می‌شود؛
+    // پورتِ صریحاً خواسته‌شده (تست‌ها) جابه‌جا نمی‌شود.
+    const listenOnce = (onPort: number): Promise<void> => new Promise<void>((resolve, reject) => {
       const onError = (error: Error): void => reject(error);
       server.once("error", onError);
-      server.listen(wantedPort, "0.0.0.0", () => {
+      server.listen(onPort, "0.0.0.0", () => {
         server.removeListener("error", onError);
+        // خطاهای بعدیِ سوکت فقط لاگ می‌شوند تا یک اتصال خراب گوشی سرور را نیندازد
         server.on("error", (error) => log(`خطای اتصال گوشی: ${error.message}`));
         resolve();
       });
     });
+    const maxBump = options.port === undefined ? 5 : 0;
+    let bound = false;
+    for (let bump = 0; bump <= maxBump && !bound; bump++) {
+      const candidate = wantedPort + bump;
+      try {
+        await listenOnce(candidate);
+        bound = true;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== "EADDRINUSE" || bump === maxBump) throw error;
+        log(`پورت ${candidate} اشغال است؛ پورت بعدی امتحان می‌شود…`);
+      }
+    }
     const address = server.address();
     this.actualPort = typeof address === "object" && address ? address.port : wantedPort;
     this.server = server;

@@ -1,3 +1,4 @@
+import * as http from "node:http";
 import { get as httpsGet } from "node:https";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -233,6 +234,42 @@ describe("PhoneScanBridge (پل موقت اسکن گوشی)", () => {
       }
     } finally {
       jest.dontMock("selfsigned");
+    }
+  });
+
+  it("وقتی روشن نیست، status دلیل را گزارش می‌کند", () => {
+    const idle = new PhoneScanBridge();
+    expect(idle.status().running).toBe(false);
+    expect(idle.status().reason).toBe("not-started");
+  });
+
+  it("پورت پیش‌فرض اشغال باشد، پورت بعدی خودکار امتحان می‌شود", async () => {
+    // یک پورت آزاد را با یک سرور ساده اشغال می‌کنیم و PHONE_SCAN_PORT را
+    // همان می‌گذاریم؛ پل باید روی پورتِ بعدی (busy+1) بالا بیاید.
+    const blocker = http.createServer();
+    await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", () => resolve()));
+    const busyPort = (blocker.address() as { port: number }).port;
+    const previous = process.env.PHONE_SCAN_PORT;
+    process.env.PHONE_SCAN_PORT = String(busyPort);
+    const logs: string[] = [];
+    let BridgeCtor: typeof PhoneScanBridge | null = null;
+    jest.isolateModules(() => {
+      const fresh = require("./phone-scan-bridge") as typeof import("./phone-scan-bridge");
+      BridgeCtor = fresh.PhoneScanBridge;
+    });
+    const bridge = new (BridgeCtor as unknown as typeof PhoneScanBridge)();
+    try {
+      await bridge.start({ tls: false, log: (message) => { logs.push(message); } });
+      expect(bridge.status().running).toBe(true);
+      expect(bridge.status().port).toBe(busyPort + 1);
+      expect(logs.some((line) => line.includes("اشغال است"))).toBe(true);
+      const page = await fetch(`http://127.0.0.1:${busyPort + 1}/`);
+      expect(page.status).toBe(200);
+    } finally {
+      await bridge.stop();
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
+      if (previous === undefined) delete process.env.PHONE_SCAN_PORT;
+      else process.env.PHONE_SCAN_PORT = previous;
     }
   });
 });

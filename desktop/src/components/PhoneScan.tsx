@@ -56,8 +56,9 @@ export function PhoneScanListener({ active }: { active: boolean }): null {
         try {
           const token = localStorage.getItem("darpos-token");
           const response = await fetch(`${apiBase()}/phone-scan/pull?after=${after}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-          // بدون ورود/لایسنس بی‌سروصدا صبر می‌کنیم (خواستهٔ جانبی برنامه نمی‌خواهیم)
-          if (response.status === 401 || response.status === 402) { await wait(3000); continue; }
+          // 401/404/402: بدون ورود، سرور قدیمی (بدون این مسیر) یا بدون لایسنس —
+          // بی‌سروصدا و کم‌تر تکرار می‌کنیم تا خواستهٔ جانبی برنامه پیش نرود
+          if (response.status === 401 || response.status === 402 || response.status === 404) { await wait(3000); continue; }
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const data = await response.json() as { scans: Array<{ code: string; at: number }>; now: number };
           after = data.now;
@@ -78,12 +79,15 @@ interface PhoneScanStatusInfo {
   port: number | null;
   lan: string[];
   urls: string[];
+  reason?: string;
 }
 
 const qrDataUri = (text: string): string => `data:image/svg+xml;utf8,${encodeURIComponent(qrSvg(text))}`;
 
 export function PhoneScanPanel() {
   const [status, setStatus] = useState<PhoneScanStatusInfo | null>(null);
+  const [unreachable, setUnreachable] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [pin, setPin] = useState("");
   const [inject, setInject] = useState<boolean>(phoneScanInjectEnabled);
   const [codes, setCodes] = useState<Array<{ code: string; at: number }>>([]);
@@ -97,11 +101,20 @@ export function PhoneScanPanel() {
         const info = await get<PhoneScanStatusInfo>("/phone-scan/status");
         if (stopped) return;
         setStatus(info);
+        setUnreachable(false);
         if (info.running) {
           const pinData = await get<{ pin: string }>("/phone-scan/pin");
           if (!stopped) setPin(pinData.pin);
+        } else {
+          setPin("");
         }
-      } catch { if (!stopped) setStatus(null); }
+      } catch {
+        // مسیر /phone-scan/status در سرور نیست یا سرور در دسترس نیست —
+        // معمولاً یعنی یک نمونهٔ قدیمی از سرور در پس‌زمینه در حال اجراست.
+        if (!stopped) { setStatus(null); setPin(""); setUnreachable(true); }
+      } finally {
+        if (!stopped) setLoaded(true);
+      }
     };
     void load();
     const timer = window.setInterval(() => { void load(); }, 5000);
@@ -144,8 +157,27 @@ export function PhoneScanPanel() {
       {status && <span className={`phone-scan-badge ${status.running ? "ok" : ""}`}>{status.running ? t("فعال") : t("غیرفعال")}</span>}
     </div>
 
-    {!status && <div className="hint-box phone-scan-warn"><CircleAlert size={17}/>{t("پل گوشی در دسترس نیست؛ چند لحظه صبر کنید یا سرور برنامه را دوباره راه‌اندازی کنید.")}</div>}
-    {status && !status.running && <div className="hint-box phone-scan-warn"><CircleAlert size={17}/>{t("پل گوشی فعال نیست؛ سرور برنامه را دوباره راه‌اندازی کنید.")}</div>}
+    {!loaded && <div className="hint-box phone-scan-warn"><CircleAlert size={17}/>{t("در حال بررسی وضعیت پل گوشی…")}</div>}
+
+    {loaded && unreachable && <div className="error-box phone-scan-warn">
+      <CircleAlert size={17}/>
+      <div>
+        <b>{t("بخش اسکن گوشی در این نسخهٔ سرور موجود نیست — یا برنامهٔ در حال اجرا قدیمی است یا یک نمونهٔ قدیمی سرور در پس‌زمینه مانده است.")}</b>
+        <div className="phone-scan-steps" style={{ marginTop: 6 }}>
+          <small>۱. {t("برنامه را کاملاً ببندید؛ در Task Manager هر پروسهٔ node.exe باقی‌مانده را پایان دهید و برنامه را دوباره باز کنید.")}</small>
+          <small>۲. {t("اگر به‌تازگی کد جدید گرفته‌اید، یک بار برنامه را دوباره بسازید تا این بخش اضافه شود.")}</small>
+        </div>
+      </div>
+    </div>}
+
+    {loaded && !unreachable && status && !status.running && <div className="error-box phone-scan-warn">
+      <CircleAlert size={17}/>
+      <div>
+        <b>{t("پل گوشی روشن نشده؛ خودکار دوباره تلاش می‌شود.")}</b>
+        {status.reason && status.reason !== "not-started" && <small>{t("گزارش سرور: {reason}", { reason: status.reason })}</small>}
+        <small>{t("برنامه را کاملاً ببندید؛ در Task Manager هر پروسهٔ node.exe باقی‌مانده را پایان دهید و برنامه را دوباره باز کنید.")}</small>
+      </div>
+    </div>}
 
     {status && status.running && <>
       <div className="phone-scan-grid">

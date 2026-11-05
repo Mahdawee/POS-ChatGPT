@@ -1465,6 +1465,12 @@ export const pashto: Record<string, string> = {
   "آخرین کدهای فرستاده‌شده از گوشی": "له موبایل استول شوي وروستي کوډونه",
   "کدی هنوز از گوشی فرستاده نشده است.": "تر اوسه له موبایل هیڅ کوډ نه دی استول شوی.",
   "بارکد از گوشی: {code}": "له موبایل بارکوډ: {code}",
+  "در حال بررسی وضعیت پل گوشی…": "د موبایل پل حالت بررسی کیږي…",
+  "بخش اسکن گوشی در این نسخهٔ سرور موجود نیست — یا برنامهٔ در حال اجرا قدیمی است یا یک نمونهٔ قدیمی سرور در پس‌زمینه مانده است.": "د موبایل سکن برخه په سرور دا نسخه کې نشته — یا پر ځای روان برنامه زوړ دی یا د سرور یو زوړ نمونه په شاته پاتې شوی دی.",
+  "برنامه را کاملاً ببندید؛ در Task Manager هر پروسهٔ node.exe باقی‌مانده را پایان دهید و برنامه را دوباره باز کنید.": "برنامه په بشپړ ډول بندوه؛ په Task Manager کې هر پاتې node.exe پروسه پای ته ورسوئ او برنامه بیا وخلاصئ.",
+  "اگر به‌تازگی کد جدید گرفته‌اید، یک بار برنامه را دوباره بسازید تا این بخش اضافه شود.": "که تازه نوی کوډ اخیستی وي، برنامه یو ځل بیا جوړه کړئ تر څو دا برخه ورزیاته شي.",
+  "پل گوشی روشن نشده؛ خودکار دوباره تلاش می‌شود.": "د موبایل پل نه دی روښانه شو؛ په خودکار ډول بیا هڅه کیږي.",
+  "گزارش سرور: {reason}": "د سرور راپور: {reason}",
 };
 export const english: Record<string, string> = {
   "تلفن": "Phone",
@@ -2926,4 +2932,10 @@ export const english: Record<string, string> = {
   "آخرین کدهای فرستاده‌شده از گوشی": "Latest codes sent from the phone",
   "کدی هنوز از گوشی فرستاده نشده است.": "No code has been sent from the phone yet.",
   "بارکد از گوشی: {code}": "Barcode from phone: {code}",
+  "در حال بررسی وضعیت پل گوشی…": "Checking the phone bridge status…",
+  "بخش اسکن گوشی در این نسخهٔ سرور موجود نیست — یا برنامهٔ در حال اجرا قدیمی است یا یک نمونهٔ قدیمی سرور در پس‌زمینه مانده است.": "The phone-scan feature is missing from this server version — the running app is old, or an old server instance is left in the background.",
+  "برنامه را کاملاً ببندید؛ در Task Manager هر پروسهٔ node.exe باقی‌مانده را پایان دهید و برنامه را دوباره باز کنید.": "Close the app completely; end any leftover node.exe process in Task Manager, then open the app again.",
+  "اگر به‌تازگی کد جدید گرفته‌اید، یک بار برنامه را دوباره بسازید تا این بخش اضافه شود.": "If you recently pulled new code, rebuild the app once so this section is added.",
+  "پل گوشی روشن نشده؛ خودکار دوباره تلاش می‌شود.": "The phone bridge did not start; it retries automatically.",
+  "گزارش سرور: {reason}": "Server report: {reason}",
 };
