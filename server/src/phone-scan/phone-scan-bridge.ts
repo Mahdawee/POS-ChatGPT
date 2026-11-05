@@ -16,9 +16,11 @@
  *
  * امنیت: PIN تصادفیِ هر راه‌اندازی فقط روی صفحهٔ تنظیماتِ کاربرِ واردشده
  * دیده می‌شود؛ گوشی بعد از تأیید PIN یک token تصادفی می‌گیرد. TLS با
- * گواهی خودامضای ثابت (کش در dataDir) تا کاربر فقط یک‌بار در مرورگر گوشی
- * آن را بپذیرد. این پل کاملاً «موقت/آزمایشی» است؛ با PHONE_SCAN_DISABLE=1
- * یا حذف PhoneScanModule از app.module.ts به‌کل خاموش می‌شود.
+ * CA محلیِ ثابت (کش در dataDir) + برگِ امضاشده — گوشی فایل /ca.crt را
+ * یک‌بار نصب می‌کند و بعدش صفحهٔ امن بدون هیچ هشدار مرورگری باز می‌شود
+ * (مثل mkcert؛ با تغییر IP شبکه فقط برگ عوض می‌شود، نه CA). این پل
+ * کاملاً «موقت/آزمایشی» است؛ با PHONE_SCAN_DISABLE=1 یا حذف
+ * PhoneScanModule از app.module.ts به‌کل خاموش می‌شود.
  */
 import { Controller, Get, Injectable, Module, OnModuleDestroy, OnModuleInit, Query } from "@nestjs/common";
 import * as http from "node:http";
@@ -36,13 +38,16 @@ import { ZXING_UMD_JS } from "./zxing-umd";
  * تایپ محلی بستهٔ selfsigned — بسته با requireِ تأخیری (داخل certificate)
  * بار می‌شود، نه در سطح ماژول. اگر این بستهٔ اختیاری در runtime نباشد،
  * فقط پل گوشی به HTTP ساده برمی‌گردد و هرگز کل سرور از کار نمی‌افتد.
+ * گزینهٔ ca (بستهٔ ۵+) گواهی برگ را با CA ما امضا می‌کند — مثل mkcert.
  */
 interface SelfsignedLike {
   generate(attrs: Array<{ name: string; value: string }>, options: {
     notAfterDate?: Date;
     keySize?: number;
     algorithm?: string;
-    extensions?: Array<{ name: "subjectAltName"; altNames: Array<{ type: 2; value: string } | { type: 7; ip: string }> }>;
+    /** CA محلی برای امضای برگ؛ نبودش یعنی خودامضا. */
+    ca?: { key: string; cert: string };
+    extensions?: Array<{ name: string } & Record<string, unknown>>;
   }): Promise<{ cert: string; private: string }>;
 }
 
@@ -104,6 +109,8 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
   private plainPort: number | null = null;
   private tlsEnabled = true;
   private actualPort: number | null = null;
+  /** PEM گواهی CA محلی — گوشی با دانلود و نصب /ca.crt دیگر هیچ هشداری نمی‌بیند. */
+  private caCert = "";
   private pin = "";
   private token = "";
   private scans: PhoneScanEntry[] = [];
@@ -277,6 +284,7 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
     const server = this.server;
     this.server = null;
     this.actualPort = null;
+    this.caCert = "";
     const plain = this.plainServer;
     this.plainServer = null;
     this.plainPort = null;
@@ -302,28 +310,71 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
    *  کش می‌شود تا پذیرشِ یک‌بارهٔ کاربر در مرورگر گوشی با ری‌استارت‌ها باطل نشود.
    *  بستهٔ selfsigned همین‌جا و با require تأخیری بار می‌شود تا نبودنش هرگز
    *  اجرای کل برنامه را متوقف نکند (فقط همین پل به HTTP برمی‌گردد). */
+  /** گواهی HTTPS مثل mkcert: یک «CA محلی» که گوشی یک‌بار نصبش می‌کند و
+   *  بعدش صفحهٔ امن بدون هیچ هشدار مرورگری باز می‌شود؛ برگِ سرور با همان
+   *  CA امضا می‌شود و با تغییر IP شبکه فقط برگ عوض می‌شود (نه CA) تا اعتمادِ
+   *  نصب‌شده در گوشی برای همیشه معتبر بماند. هر دو در dataDir کش می‌شوند.
+   *  بستهٔ selfsigned همین‌جا و با require تأخیری بار می‌شود تا نبودنش هرگز
+   *  اجرای کل برنامه را متوقف نکند (فقط همین پل به HTTP برمی‌گردد). */
   private async certificate(dataDir?: string): Promise<{ key: string; cert: string }> {
-    const file = join(dataDir ?? configureLocalStorage(), "phone-scan-cert.json");
-    try {
-      const cached = JSON.parse(readFileSync(file, "utf8")) as { cert?: string; private?: string };
-      if (cached.cert && cached.private) return { key: cached.private, cert: cached.cert };
-    } catch { /* هنوز کشی نیست — در ادامه ساخته می‌شود */ }
+    const dir = dataDir ?? configureLocalStorage();
     // require تأخیری: خطای «Cannot find module» اینجا ظاهر می‌شود، نه هنگام
     // بارگذاری ماژول — و توسط start() به fallback HTTP تبدیل می‌شود.
     const selfsigned = require("selfsigned") as SelfsignedLike;
-    const altNames: Array<{ type: 2; value: string } | { type: 7; ip: string }> = [{ type: 2, value: "localhost" }];
+    // ۱) CA محلی — فقط یک‌بار ساخته و برای همیشه کش می‌شود؛ نصبِ یک‌بارهٔ
+    //    آن در گوشی (فایل /ca.crt) مثل نصب یک اپ کوچک است و ماندگار است.
+    const caFile = join(dir, "phone-scan-ca.json");
+    let caCert = "";
+    let caKey = "";
+    try {
+      const cached = JSON.parse(readFileSync(caFile, "utf8")) as { cert?: string; private?: string };
+      if (cached.cert && cached.private) { caCert = cached.cert; caKey = cached.private; }
+    } catch { /* هنوز CAای نیست — در ادامه ساخته می‌شود */ }
+    if (!caCert) {
+      const ca = await selfsigned.generate([{ name: "commonName", value: "Dar POS Local CA" }], {
+        // ده سال اعتبار — CA هرگز نباید عوض شود تا اعتماد گوشی باطل نشود
+        notAfterDate: new Date(Date.now() + 3650 * 24 * 60 * 60 * 1000),
+        keySize: 2048,
+        algorithm: "sha256",
+        extensions: [
+          { name: "basicConstraints", cA: true, critical: true },
+          { name: "keyUsage", keyCertSign: true, cRLSign: true, critical: true },
+        ],
+      });
+      caCert = ca.cert;
+      caKey = ca.private;
+      try { writeFileSync(caFile, JSON.stringify({ cert: caCert, private: caKey }), { mode: 0o600 }); } catch { /* بدون کش ادامه */ }
+    }
+    this.caCert = caCert;
+    // ۲) برگِ سرور با SANِ امروز (localhost + IPهای شبکه)؛ امضاشده با همان
+    //    CA. اگر IPها عوض شده باشند برگ تازه ساخته می‌شود — زنجیره همچنان
+    //    معتبر است چون CA همان مانده و SAN جدید IP تازه را پوشش می‌دهد.
+    const altNames: Array<{ type: 2; value: string } | { type: 7; ip: string }> = [
+      { type: 2, value: "localhost" },
+      { type: 7, ip: "127.0.0.1" },
+    ];
     for (const ip of SettingsController.lanAddresses()) altNames.push({ type: 7, ip });
-    const generated = await selfsigned.generate([{ name: "commonName", value: "Dar POS Phone Scan" }], {
-      // ده سال اعتبار تا پذیرش یک‌بارهٔ کاربر در گوشی ماندگار بماند
-      notAfterDate: new Date(Date.now() + 3650 * 24 * 60 * 60 * 1000),
+    const leafFile = join(dir, "phone-scan-leaf.json");
+    try {
+      const cached = JSON.parse(readFileSync(leafFile, "utf8")) as { cert?: string; private?: string; altNames?: typeof altNames };
+      if (cached.cert && cached.private && JSON.stringify(cached.altNames) === JSON.stringify(altNames)) return { key: cached.private, cert: cached.cert };
+    } catch { /* هنوز برگی نیست — در ادامه ساخته می‌شود */ }
+    const leaf = await selfsigned.generate([{ name: "commonName", value: "Dar POS Phone Scan" }], {
+      // حدود دو سال و نیم — بازهٔ استاندارد برگ‌های محلی
+      notAfterDate: new Date(Date.now() + 825 * 24 * 60 * 60 * 1000),
       keySize: 2048,
       algorithm: "sha256",
-      extensions: [{ name: "subjectAltName", altNames }],
+      ca: { key: caKey, cert: caCert },
+      extensions: [
+        { name: "basicConstraints", cA: false },
+        { name: "keyUsage", digitalSignature: true, keyEncipherment: true },
+        { name: "subjectAltName", altNames },
+      ],
     });
     try {
-      writeFileSync(file, JSON.stringify({ cert: generated.cert, private: generated.private }), { mode: 0o600 });
+      writeFileSync(leafFile, JSON.stringify({ cert: leaf.cert, private: leaf.private, altNames }), { mode: 0o600 });
     } catch { /* اگر نوشتن نشد، فقط بدون کش ادامه می‌دهیم */ }
-    return { key: generated.private, cert: generated.cert };
+    return { key: leaf.private, cert: leaf.cert };
   }
 
   private handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -350,6 +401,14 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
     }
     if (req.method === "GET" && (path === "/manifest.webmanifest" || path === "/manifest.json")) {
       this.send(res, 200, PHONE_SCAN_MANIFEST, "application/manifest+json; charset=utf-8", "public, max-age=3600");
+      return;
+    }
+    // گواهی CA محلی برای نصبِ یک‌باره در گوشی (مثل mkcert) — اندروید فایل را
+    // با نصب‌کنندهٔ گواهی باز می‌کند و iOS پروفایل نصب می‌کند. بعد از آن
+    // صفحهٔ امن (اسکن زنده) بدون هیچ هشدار مرورگری باز می‌شود.
+    if (req.method === "GET" && (path === "/ca.crt" || path === "/ca.pem" || path === "/darpos-ca.crt")) {
+      if (!this.caCert) { this.send(res, 404, "CA not available", "text/plain; charset=utf-8"); return; }
+      this.send(res, 200, this.caCert, "application/x-x509-ca-cert", "public, max-age=3600");
       return;
     }
     if (req.method === "POST" && path === "/api/pair") {

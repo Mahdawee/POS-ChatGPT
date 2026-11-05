@@ -54,6 +54,8 @@ export const PHONE_SCAN_HTML = `<!doctype html>
   .last .row code { direction: ltr; font-size: 14px; }
   .last .row span { color: #93a4bb; font-size: 11px; }
   footer { text-align: center; color: #5c6b80; font-size: 11px; padding: 10px 0 16px; }
+  a.primary { display: block; text-align: center; text-decoration: none; color: #fff; padding: 13px 16px; }
+  #httpBanner .sub { line-height: 2.1; }
   #installCard { border-color: #2a3a2a; }
   #installCard h1 { font-size: 15px; }
   .spin { width: 18px; height: 18px; border: 2px solid #2f6fed; border-top-color: transparent; border-radius: 50%; animation: sp 1s linear infinite; margin: 0 auto 8px; }
@@ -71,8 +73,10 @@ export const PHONE_SCAN_HTML = `<!doctype html>
 
   <div id="main" hidden style="display:flex;flex-direction:column;gap:12px">
     <div class="notice" id="httpBanner" hidden>
-      <b>فعال‌سازی اسکن زندهٔ دوربین (فقط یک‌بار):</b> این نشانی ساده است و مرورگر در آن دوربینِ زنده را باز نمی‌کند؛ اما «اسکن با عکس» همین‌جا کامل کار می‌کند. برای اسکن زنده، یک‌بار با دکمهٔ زیر به نشانی امن بروید و هشدار امنیتی مرورگر را تأیید کنید (گزینهٔ «پیشرفته» و سپس «ادامه») — گواهی محلی برنامه است و بعد از این دیگر این هشدار را نمی‌بینید.
-      <button class="primary" id="goHttps" style="margin-top:10px">فعال‌سازی اسکن زندهٔ دوربین</button>
+      <b>اسکن زندهٔ دوربین (فقط یک‌بار تنظیم می‌شود):</b> «اسکن با عکس» همین‌جا بدون هیچ تنظیمی کار می‌کند. اگر می‌خواهید دوربین مدام باز بماند، گواهی امنیتی برنامه را یک‌بار در گوشی نصب کنید — مثل نصب یک اپ کوچک. بعد از آن دیگر <b>هیچ هشدار امنیتی نمی‌بینید</b> و اسکن زنده برای همیشه باز می‌شود.
+      <a class="primary" href="/ca.crt" download="Dar-POS-CA.crt" id="certBtn" style="margin-top:10px">۱) دانلود گواهی امنیتی برنامه</a>
+      <div class="sub" id="certSteps" style="margin-top:8px;color:#e8edf4"></div>
+      <button class="primary" id="goHttps" style="margin-top:10px">۳) رفتن به اسکن زنده</button>
     </div>
     <div class="modes">
       <button class="mode on" id="mLive"><span class="ico">📷</span>اسکن زنده</button>
@@ -253,7 +257,7 @@ function loop() {
 function startLive() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     $("liveView").querySelector(".live-bar").insertAdjacentHTML("afterbegin",
-      '<div class="notice" style="flex:1">این مرورگر دوربین را روی نشانی غیرامن باز نمی‌کند. دو راه دارید: <b>۱)</b> هشدار امنیتی را موقع بازکردن صفحه پذیرفته باشید (پیشرفته ← ادامه) یا <b>۲)</b> از حالت «اسکن با عکس» استفاده کنید که همه‌جا کار می‌کند.</div>');
+      '<div class="notice" style="flex:1">این مرورگر دوربین را روی نشانی ساده باز نمی‌کند. دو راه دارید: <b>۱)</b> از حالت «اسکن با عکس» استفاده کنید که همین‌جا کار می‌کند، یا <b>۲)</b> به نشانی امن بروید — اگر گواهی برنامه را نصب کرده‌اید، بدون هیچ هشداری باز می‌شود.</div>');
     return;
   }
   navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false })
@@ -269,7 +273,7 @@ function startLive() {
     })
     .catch(function (err) {
       $("liveView").querySelector(".live-bar").insertAdjacentHTML("afterbegin",
-        '<div class="notice" style="flex:1">دوربین باز نشد (' + String(err && err.name || err).replace(/[<>]/g, "") + '). هشدار امنیتی مرورگر را پذیرفته باشید یا از حالت «اسکن با عکس» استفاده کنید.</div>');
+        '<div class="notice" style="flex:1">دوربین باز نشد (' + String(err && err.name || err).replace(/[<>]/g, "") + '). مطمئن شوید نشانی امن را با گواهی نصب‌شده باز کرده‌اید؛ حالت «اسکن با عکس» همیشه کار می‌کند.</div>');
     });
 }
 function stopLive() {
@@ -334,6 +338,15 @@ var startPin = (location.hash || "").replace(/[^0-9]/g, "");
 var securePage = location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
 if (location.protocol === "http:" && httpsPort) {
   $("httpBanner").hidden = false;
+  // مراحل نصب گواهی، مخصوص همان گوشی — ساده و قدم‌به‌قدم
+  var ua = navigator.userAgent || "";
+  if (/iphone|ipad|ipod/i.test(ua)) {
+    $("certSteps").innerHTML = "۲) در آیفون: بعد از دانلود، به <b>تنظیمات</b> گوشی بروید، روی <b>Profile Downloaded</b> بزنید و <b>Install</b> کنید؛ بعد در <b>تنظیمات ← General ← About ← Certificate Trust Settings</b> گزینهٔ <b>Dar POS Local CA</b> را روشن کنید.";
+  } else if (/android/i.test(ua)) {
+    $("certSteps").innerHTML = "۲) در اندروید: فایل دانلودشده (<b>Dar-POS-CA.crt</b>) را از نوتیفیکیشن یا پوشهٔ Downloads باز کنید و به‌عنوان <b>CA certificate</b> نصب کنید. راه طولانی: تنظیمات ← Security ← Install a certificate ← CA certificate. اگر گوشی رمز یا تأیید خواست، تأیید کنید.";
+  } else {
+    $("certSteps").innerHTML = "۲) فایل دانلودشده را در تنظیمات مرورگر/سیستم به‌عنوان گواهی CA نصب کنید.";
+  }
   $("goHttps").addEventListener("click", function () {
     location.href = "https://" + location.hostname + ":" + httpsPort + "/" + (startPin ? "#" + startPin : "");
   });

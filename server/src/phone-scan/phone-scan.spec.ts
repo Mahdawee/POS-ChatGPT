@@ -179,16 +179,24 @@ describe("PhoneScanBridge (پل موقت اسکن گوشی)", () => {
     }
   });
 
-  it("گواهی خودامضا کش می‌شود و HTTPS هم می‌پذیرد", async () => {
+  it("CA محلی کش می‌شود، زنجیرهٔ HTTPS معتبر است و گوشی با نصب /ca.crt بدون هشدار وصل می‌شود", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "phone-scan-cert-"));
     const tlsBridge = new PhoneScanBridge();
     await tlsBridge.start({ tls: true, port: 0, dataDir, log: () => undefined });
     const port = tlsBridge.status().port as number;
     try {
       expect(tlsBridge.status().tls).toBe(true);
+      // فایل CA برای نصبِ یک‌باره در گوشی — روی هر دو مبدأ سرو می‌شود
+      const caPem = await fetch(`http://127.0.0.1:${tlsBridge.status().httpPort}/ca.crt`).then((res) => {
+        expect(res.status).toBe(200);
+        expect(res.headers.get("content-type")).toBe("application/x-x509-ca-cert");
+        return res.text();
+      });
+      expect(caPem).toMatch(/-----BEGIN CERTIFICATE-----/);
+      // کلاینتی که فقط CA را می‌شناسد (گوشیِ نصب‌کرده) بدون هیچ خطای گواهی
+      // وصل می‌شود — نه rejectUnauthorized و نه هشدار مرورگر.
       const body = await new Promise<string>((resolve, reject) => {
-        // cert خودامضاست؛ مثل مرورگرِ گوشیِ کاربر که یک‌بار آن را پذیرفته
-        httpsGet({ host: "127.0.0.1", port, path: "/", rejectUnauthorized: false }, (res) => {
+        httpsGet({ host: "127.0.0.1", port, path: "/", ca: [caPem], servername: "localhost" }, (res) => {
           expect(res.statusCode).toBe(200);
           let data = "";
           res.on("data", (chunk) => { data += chunk; });
@@ -196,10 +204,27 @@ describe("PhoneScanBridge (پل موقت اسکن گوشی)", () => {
         }).on("error", reject);
       });
       expect(body).toContain("dir=\"rtl\"");
-      // کش: دفعهٔ بعد همان گواهی از دیسک برمی‌گردد
-      const cached = JSON.parse(readFileSync(join(dataDir, "phone-scan-cert.json"), "utf8")) as { cert: string; private: string };
-      expect(cached.cert).toMatch(/BEGIN CERTIFICATE/);
-      expect(cached.private).toMatch(/BEGIN PRIVATE KEY/);
+      expect(body).toContain("certBtn"); // دکمهٔ دانلود گواهی برای نصب یک‌باره در گوشی
+      // کنترل منفی: بدون CA باید رد شود (همان هشداری که با نصب رفع می‌شود)
+      await new Promise<void>((resolve) => {
+        httpsGet({ host: "127.0.0.1", port, path: "/" }, () => resolve()).on("error", () => resolve());
+      });
+      // کش: CA و برگ روی دیسک ماندند تا اعتماد گوشی با ری‌استارت باطل نشود
+      const cachedCa = JSON.parse(readFileSync(join(dataDir, "phone-scan-ca.json"), "utf8")) as { cert: string; private: string };
+      expect(cachedCa.cert).toMatch(/BEGIN CERTIFICATE/);
+      expect(cachedCa.private).toMatch(/BEGIN PRIVATE KEY/);
+      const cachedLeaf = JSON.parse(readFileSync(join(dataDir, "phone-scan-leaf.json"), "utf8")) as { cert: string; altNames: Array<{ type: number; ip?: string; value?: string }> };
+      expect(cachedLeaf.cert).toMatch(/BEGIN CERTIFICATE/);
+      // SAN برگ باید localhost + 127.0.0.1 را پوشش دهد
+      const sans = cachedLeaf.altNames.map((a) => a.ip || a.value);
+      expect(sans).toEqual(expect.arrayContaining(["localhost", "127.0.0.1"]));
+      // CA بین راه‌اندازی‌ها ثابت می‌ماند — نصب گوشی فقط یک‌بار کافی است
+      await tlsBridge.stop();
+      const again = new PhoneScanBridge();
+      await again.start({ tls: true, port: 0, dataDir, log: () => undefined });
+      const caAgain = await fetch(`http://127.0.0.1:${again.status().httpPort}/ca.crt`).then((res) => res.text());
+      expect(caAgain).toBe(caPem);
+      await again.stop();
     } finally {
       await tlsBridge.stop();
     }
