@@ -129,7 +129,9 @@ export function PhoneScanPanel() {
     try { await navigator.clipboard.writeText(text); setCopied(text); window.setTimeout(() => setCopied(""), 1500); } catch { /* کلیپ‌بورد در دسترس نیست */ }
   };
 
-  const phoneUrl = status && status.running ? (status.lan.length ? `https://${status.lan[0]}:${status.port}` : null) : null;
+  // نشانی گوشی از وضعیت واقعی پل ساخته می‌شود (https یا http در حالت fallback)
+  const scheme = status?.tls === false ? "http" : "https";
+  const phoneUrl = status && status.running ? (status.lan.length ? `${scheme}://${status.lan[0]}:${status.port}` : null) : null;
   const allUrls = status && status.running ? status.urls : [];
 
   return <div className="phone-scan-panel">
@@ -174,8 +176,8 @@ export function PhoneScanPanel() {
       <div className="phone-scan-steps">
         <span>{t("راهنمای اتصال:")}</span>
         <small>۱. {t("در ویندوز اگر هشدار فایروال ظاهر شد، اجازهٔ دسترسی Node.js در «شبکه‌های خصوصی» را بدهید.")}</small>
-        <small>۲. {t("مرورگر گوشی هشدار امنیتی نشان می‌دهد؛ «پیشرفته» و سپس «ادامه به نشانی» را بزنید. فقط یک‌بار لازم است.")}</small>
-        <small>۳. {t("اگر دوربین زنده باز نشد، در همان صفحه از حالت «اسکن با عکس» استفاده کنید که روی هر گوشی کار می‌کند.")}</small>
+        {status.tls && <small>۲. {t("مرورگر گوشی هشدار امنیتی نشان می‌دهد؛ «پیشرفته» و سپس «ادامه به نشانی» را بزنید. فقط یک‌بار لازم است.")}</small>}
+        <small>{status.tls ? "۳." : "۲."} {t("اگر دوربین زنده باز نشد، در همان صفحه از حالت «اسکن با عکس» استفاده کنید که روی هر گوشی کار می‌کند.")}</small>
       </div>
 
       <div className="phone-scan-last">

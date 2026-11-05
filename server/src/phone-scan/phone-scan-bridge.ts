@@ -26,11 +26,24 @@ import * as https from "node:https";
 import { randomBytes, randomInt } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { generate as generateSelfSigned } from "selfsigned";
 import { configureLocalStorage } from "../storage";
 import { SettingsController } from "../modules/settings.module";
 import { PHONE_SCAN_HTML } from "./phone-scan-page";
 import { ZXING_UMD_JS } from "./zxing-umd";
+
+/**
+ * تایپ محلی بستهٔ selfsigned — بسته با requireِ تأخیری (داخل certificate)
+ * بار می‌شود، نه در سطح ماژول. اگر این بستهٔ اختیاری در runtime نباشد،
+ * فقط پل گوشی به HTTP ساده برمی‌گردد و هرگز کل سرور از کار نمی‌افتد.
+ */
+interface SelfsignedLike {
+  generate(attrs: Array<{ name: string; value: string }>, options: {
+    notAfterDate?: Date;
+    keySize?: number;
+    algorithm?: string;
+    extensions?: Array<{ name: "subjectAltName"; altNames: Array<{ type: 2; value: string } | { type: 7; ip: string }> }>;
+  }): Promise<{ cert: string; private: string }>;
+}
 
 /** پیش‌فرض‌های پل — با متغیرهای محیطی قابل تغییر. */
 const DEFAULT_PORT = Number(process.env.PHONE_SCAN_PORT || 4318);
@@ -74,19 +87,25 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
   private token = "";
   private scans: PhoneScanEntry[] = [];
   private lastAtByCode = new Map<string, number>();
+  private disposed = false;
 
   /** در تست‌ها (NODE_ENV=test) و با PHONE_SCAN_DISABLE=1 پل خودکار روشن نمی‌شود. */
   async onModuleInit(): Promise<void> {
     if (process.env.PHONE_SCAN_DISABLE === "1" || process.env.NODE_ENV === "test") return;
-    try {
-      await this.start();
-    } catch (error) {
-      // پل اختیاری است؛ خرابی آن (مثلاً پورت اشغال) نباید سرور اصلی را زمین بزند.
-      console.warn(`[phone-scan] موقت: پل گوشی روشن نشد — ${error instanceof Error ? error.message : String(error)}`);
-    }
+    // شروع پل کاملاً جدا از بوت اصلی: کمی بعد از راه‌اندازی، بدون انتظار و
+    // بدون آنکه هیچ خطایی به سرور اصلی برسد — این قابلیت موقت و اختیاری
+    // است و هرگز نباید بالا آمدن برنامه را معطل کند یا ببندد.
+    const timer = setTimeout(() => {
+      if (this.disposed) return;
+      void this.start().catch((error: unknown) => {
+        console.warn(`[phone-scan] موقت: پل گوشی روشن نشد — ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }, 800);
+    timer.unref?.();
   }
 
   async onModuleDestroy(): Promise<void> {
+    this.disposed = true;
     await this.stop();
   }
 
@@ -114,9 +133,22 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
     this.scans = [];
     this.lastAtByCode.clear();
     const log = options.log ?? ((message: string) => console.log(`[phone-scan] ${message}`));
-    const server = this.tlsEnabled
-      ? https.createServer(await this.certificate(options.dataDir), (req, res) => this.handleRequest(req, res))
-      : http.createServer((req, res) => this.handleRequest(req, res));
+    const handler = (req: http.IncomingMessage, res: http.ServerResponse): void => this.handleRequest(req, res);
+    let server: http.Server | https.Server;
+    if (this.tlsEnabled) {
+      try {
+        server = https.createServer(await this.certificate(options.dataDir), handler);
+      } catch (error) {
+        // گواهی ممکن نشد (بستهٔ selfsigned در runtime نیست، webcrypto قدیمی،
+        // دسترسی به دیسک و…). به‌جای از کار انداختن پل، با HTTP ساده ادامه
+        // می‌دهیم — حالت «اسکن با عکس» و «ورود دستی» گوشی همچنان کار می‌کند.
+        this.tlsEnabled = false;
+        log(`گواهی HTTPS ساخته نشد (${error instanceof Error ? error.message : String(error)}) — ادامه با HTTP ساده؛ اسکن عکس گوشی کار می‌کند.`);
+        server = http.createServer(handler);
+      }
+    } else {
+      server = http.createServer(handler);
+    }
     // خطای listen (مثل پورت اشغال) به caller برمی‌گردد؛ خطاهای بعدیِ سوکت
     // فقط لاگ می‌شوند تا یک اتصال خرابِ گوشی سرور را نیندازد.
     await new Promise<void>((resolve, reject) => {
@@ -149,16 +181,21 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
   }
 
   /** گواهی خودامضا با SAN شامل localhost و IPهای فعلی شبکه؛ در dataDir
-   *  کش می‌شود تا پذیرشِ یک‌بارهٔ کاربر در مرورگر گوشی با ری‌استارت‌ها باطل نشود. */
+   *  کش می‌شود تا پذیرشِ یک‌بارهٔ کاربر در مرورگر گوشی با ری‌استارت‌ها باطل نشود.
+   *  بستهٔ selfsigned همین‌جا و با require تأخیری بار می‌شود تا نبودنش هرگز
+   *  اجرای کل برنامه را متوقف نکند (فقط همین پل به HTTP برمی‌گردد). */
   private async certificate(dataDir?: string): Promise<{ key: string; cert: string }> {
     const file = join(dataDir ?? configureLocalStorage(), "phone-scan-cert.json");
     try {
       const cached = JSON.parse(readFileSync(file, "utf8")) as { cert?: string; private?: string };
       if (cached.cert && cached.private) return { key: cached.private, cert: cached.cert };
     } catch { /* هنوز کشی نیست — در ادامه ساخته می‌شود */ }
+    // require تأخیری: خطای «Cannot find module» اینجا ظاهر می‌شود، نه هنگام
+    // بارگذاری ماژول — و توسط start() به fallback HTTP تبدیل می‌شود.
+    const selfsigned = require("selfsigned") as SelfsignedLike;
     const altNames: Array<{ type: 2; value: string } | { type: 7; ip: string }> = [{ type: 2, value: "localhost" }];
     for (const ip of SettingsController.lanAddresses()) altNames.push({ type: 7, ip });
-    const generated = await generateSelfSigned([{ name: "commonName", value: "Dar POS Phone Scan" }], {
+    const generated = await selfsigned.generate([{ name: "commonName", value: "Dar POS Phone Scan" }], {
       // ده سال اعتبار تا پذیرش یک‌بارهٔ کاربر در گوشی ماندگار بماند
       notAfterDate: new Date(Date.now() + 3650 * 24 * 60 * 60 * 1000),
       keySize: 2048,

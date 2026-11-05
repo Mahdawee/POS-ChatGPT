@@ -178,4 +178,61 @@ describe("PhoneScanBridge (پل موقت اسکن گوشی)", () => {
       await tlsBridge.stop();
     }
   });
+
+  // شبیه‌سازی «بستهٔ selfsigned در runtime نصب نیست» — همان حالتی که اگر
+  // رخ دهد نباید اجرای کل برنامه را متوقف کند (قابلیت موقتِ اختیاری است).
+  const mockMissingSelfsigned = (): void => {
+    jest.doMock("selfsigned", () => {
+      const error = new Error("Cannot find module 'selfsigned'") as NodeJS.ErrnoException;
+      error.code = "MODULE_NOT_FOUND";
+      throw error;
+    });
+  };
+
+  it("بارگذاری ماژول حتی بدون بستهٔ selfsigned ممکن است", () => {
+    mockMissingSelfsigned();
+    try {
+      jest.isolateModules(() => {
+        // اگر selfsigned در سطح ماژول require می‌شد، همین require می‌ترکید
+        const fresh = require("./phone-scan-bridge") as typeof import("./phone-scan-bridge");
+        expect(typeof fresh.PhoneScanBridge).toBe("function");
+      });
+    } finally {
+      jest.dontMock("selfsigned");
+    }
+  });
+
+  it("نبود بستهٔ گواهی فقط پل را به HTTP ساده برمی‌گرداند، نه بیشتر", async () => {
+    mockMissingSelfsigned();
+    let fallbackLog = "";
+    // ماژول bridge باید با mock تازه (بدون selfsigned) بارگذاری شود
+    const loadBridgeClass = (): typeof PhoneScanBridge => {
+      let Ctor: typeof PhoneScanBridge | null = null;
+      jest.isolateModules(() => {
+        const fresh = require("./phone-scan-bridge") as typeof import("./phone-scan-bridge");
+        Ctor = fresh.PhoneScanBridge;
+      });
+      return Ctor as unknown as typeof PhoneScanBridge;
+    };
+    try {
+      const bridge = new (loadBridgeClass())();
+      await bridge.start({ tls: true, port: 0, dataDir: mkdtempSync(join(tmpdir(), "phone-scan-nocert-")), log: (message) => { fallbackLog += message + "\n"; } });
+      try {
+        // پل با HTTP ساده بالا آمده و صفحه را سرو می‌کند
+        expect(bridge.status().running).toBe(true);
+        expect(bridge.status().tls).toBe(false);
+        expect(fallbackLog).toContain("HTTP ساده");
+        const page = await fetch(`http://127.0.0.1:${bridge.status().port}/`);
+        expect(page.status).toBe(200);
+        expect(await page.text()).toContain("api/pair");
+        // جفت‌کردن هم روی HTTP کار می‌کند
+        const pair = await fetch(`http://127.0.0.1:${bridge.status().port}/api/pair`, { method: "POST", body: JSON.stringify({ pin: bridge.currentPin }) });
+        expect(pair.status).toBe(200);
+      } finally {
+        await bridge.stop();
+      }
+    } finally {
+      jest.dontMock("selfsigned");
+    }
+  });
 });
