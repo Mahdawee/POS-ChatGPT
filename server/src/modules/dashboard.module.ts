@@ -68,9 +68,9 @@ export class DashboardController {
       this.prisma.sale.aggregate({ _sum: { creditPart: true }, where: { creditPart: { gt: 0 }, voidedAt: null } }),
       this.prisma.saleReturn.aggregate({ _sum: { creditRelief: true }, where: { sale: { creditPart: { gt: 0 } } } }),
       this.prisma.customerPayment.aggregate({ _sum: { amount: true } }),
-      this.prisma.$queryRaw<Array<{ value: number | bigint }>>`SELECT COALESCE(SUM(stock * cost), 0) AS value FROM Product WHERE isActive = 1`,
+      this.prisma.$queryRaw<Array<{ value: number | bigint }>>`SELECT COALESCE(SUM(stock * cost), 0) AS value FROM Product WHERE isActive = 1 AND isBundle = 0`,
       this.prisma.sale.findMany({ where: { createdAt: { gte: chartStart }, voidedAt: null }, select: { createdAt: true, total: true } }),
-      this.prisma.$queryRaw<Array<{ value: number | bigint }>>`SELECT COALESCE(SUM(backstock * cost), 0) AS value FROM Product WHERE isActive = 1`,
+      this.prisma.$queryRaw<Array<{ value: number | bigint }>>`SELECT COALESCE(SUM(backstock * cost), 0) AS value FROM Product WHERE isActive = 1 AND isBundle = 0`,
       // Round 16 cards: overdue installments and open pre-orders.
       this.prisma.installment.findMany({ where: { paidAt: null, dueDate: { lt: new Date() }, plan: { status: "OPEN" } }, include: { plan: { include: { customer: { select: { id: true, name: true, phone: true } } } } }, orderBy: { dueDate: "asc" }, take: 50 }),
       this.prisma.customerOrder.findMany({ where: { status: "OPEN" }, include: { lines: true, customer: { select: { id: true, name: true, phone: true } } }, orderBy: { createdAt: "desc" }, take: 20 }),

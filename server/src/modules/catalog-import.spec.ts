@@ -62,4 +62,15 @@ describe("Bulk product import", () => {
     expect(result.created).toBe(0);
     expect(result.errors).toHaveLength(1);
   });
+
+  it("rejects bundle/serialized rows explicitly instead of silently dropping the flags", async () => {
+    const { controller, tx } = setup();
+    const result = await controller.importProducts({ rows: [{ name: "کیت", sku: "K-1", isBundle: true }, { name: "گوشی", sku: "PH-1", isSerialized: true }, { name: "چای", sku: "T-9" }] }, user);
+    // The two special-type rows are rejected with a clear message; the plain
+    // row still imports — the flags are never swallowed silently.
+    expect(result.created).toBe(1);
+    expect(result.errors).toHaveLength(2);
+    expect(result.errors.every((error) => error.message.includes("پشتیبانی نمی‌شود"))).toBe(true);
+    expect(tx.product.create).toHaveBeenCalledTimes(1);
+  });
 });

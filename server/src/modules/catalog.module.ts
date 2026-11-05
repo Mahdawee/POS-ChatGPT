@@ -167,7 +167,16 @@ export class ProductsController {
     });
   }
 
-  @Patch(":id/archive") async archive(@Param("id") id: string) { return this.prisma.product.update({ where: { id }, data: { isActive: false } }); }
+  @Patch(":id/archive")
+  async archive(@Param("id") id: string) {
+    const product = await this.prisma.product.findUnique({ where: { id } });
+    if (!product) throw new BadRequestException("کالا پیدا نشد.");
+    // Reserved units belong to open pre-orders: archiving the product would
+    // leave those orders permanently undeliverable (checkout refuses inactive
+    // products) with their reservation locked on the shelf forever.
+    if ((product.reserved || 0) > 0) throw new BadRequestException(`«${product.name}» برای سفارش باز رزرو شده و قابل بایگانی نیست؛ نخست سفارش را تحویل یا لغو کنید.`);
+    return this.prisma.product.update({ where: { id }, data: { isActive: false } });
+  }
   @Patch(":id/restore") async restore(@Param("id") id: string) { return this.prisma.product.update({ where: { id }, data: { isActive: true } }); }
 
   /** ورود گروهی کالا از فایل CSV/اکسل (برگزیدهٔ CSV) — ایجاد یا به‌روزرسانی بر اساس بارکد/کد/نام */
@@ -180,6 +189,11 @@ export class ProductsController {
     for (const [index, row] of dto.rows.entries()) {
       const name = row.name?.trim();
       if (!name) { errors.push({ row: index + 2, message: "نام کالا خالی است." }); continue; }
+      // Bundle/serialized goods need their components/serial lists, which a
+      // spreadsheet row cannot carry — silently dropping the flags would
+      // create a half-configured product, so the row is rejected with a
+      // clear message instead (the product form is the right place).
+      if (row.isBundle || row.isSerialized) { errors.push({ row: index + 2, message: "کالای بسته یا سریال‌دار از فایل ورودی پشتیبانی نمی‌شود؛ آن را از فرم «کالای جدید» ثبت کنید." }); continue; }
       try {
         await this.prisma.$transaction(async (tx) => {
           const existing = (row.barcode?.trim() ? await tx.product.findUnique({ where: { barcode: row.barcode.trim() } }) : null)

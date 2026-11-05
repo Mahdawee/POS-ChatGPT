@@ -53,19 +53,24 @@ export class QuotesController {
         if (rounded < 1) throw new BadRequestException(`تعداد «${product.name}» باید عدد صحیح و حداقل ۱ باشد.`);
         quantities.set(productId, rounded);
       }
+      let customerTier: string | null = null;
+      if (dto.customerId) {
+        const customer = await tx.customer.findUnique({ where: { id: dto.customerId }, select: { tier: true } });
+        if (!customer) throw new BadRequestException("مشتری پیدا نشد.");
+        customerTier = customer.tier;
+      }
       const roundedLines = [...quantities.entries()];
       let total = 0;
       const items = roundedLines.map(([productId, quantity]) => {
         const product = productMap.get(productId)!;
-        // Same wholesale rule as checkout, so a converted quote cannot
-        // silently change price between offer and invoice.
-        const unitPrice = product.wholesalePrice != null && product.wholesaleMinQty != null && quantity >= product.wholesaleMinQty ? product.wholesalePrice : product.price;
+        // Same wholesale rule as checkout — tier OR minimum — so a converted
+        // quote cannot silently change price between offer and invoice.
+        const unitPrice = product.wholesalePrice != null && (customerTier === "WHOLESALE" || (product.wholesaleMinQty != null && quantity >= product.wholesaleMinQty)) ? product.wholesalePrice : product.price;
         const lineTotal = Math.round(unitPrice * quantity);
         if (lineTotal > 2147483647) throw new BadRequestException("مبلغ یک قلم از سقف مجاز بیشتر است.");
         total += lineTotal;
         return { productId, name: product.name, sku: product.sku, quantity, unitPrice, lineTotal };
       });
-      if (dto.customerId && !(await tx.customer.findUnique({ where: { id: dto.customerId } }))) throw new BadRequestException("مشتری پیدا نشد.");
       const quoteNo = `QTE-${Date.now()}-${randomBytes(2).toString("hex").toUpperCase()}`;
       const quote = await tx.quote.create({
         data: { quoteNo, customerId: dto.customerId || null, note: dto.note?.trim(), total, status: "OPEN", userId: user.id, items: { create: items } },

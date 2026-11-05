@@ -39,6 +39,16 @@ describe("Quotes", () => {
     ]);
   });
 
+  it("prices a wholesale-tier customer at wholesale immediately (quote/convert parity)", async () => {
+    const { controller, tx } = setup();
+    tx.customer.findUnique.mockResolvedValue({ tier: "WHOLESALE" });
+    // product-2: retail 20, wholesale 15 from 4 units — the tier must beat
+    // the minimum, exactly like checkoutInTx will price the conversion.
+    const quote = (await controller.create({ items: [{ productId: "product-2", quantity: 2 }], customerId: "customer-1" }, user)) as { total: number; items: { unitPrice: number }[] };
+    expect(quote.items[0].unitPrice).toBe(15);
+    expect(quote.total).toBe(30);
+  });
+
   it("rounds stray fractional counts of countable goods to whole units (round-30 stepper repair)", async () => {
     const { controller } = setup();
     const quote = (await controller.create({ items: [{ productId: "product-1", quantity: 2.001 }, { productId: "product-2", quantity: 4 }] }, user)) as { items: { quantity: number; lineTotal: number }[]; total: number };

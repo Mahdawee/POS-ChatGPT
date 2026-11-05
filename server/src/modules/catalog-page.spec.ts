@@ -161,3 +161,28 @@ describe("Product update — bundle flip", () => {
     expect(tx.bundleComponent.deleteMany).not.toHaveBeenCalled();
   });
 });
+
+describe("archiving products", () => {
+  it("refuses to archive a product reserved by an open order", async () => {
+    const prisma = {
+      product: {
+        findUnique: jest.fn().mockResolvedValue({ id: "p1", name: "چای", reserved: 3 }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+    };
+    const controller = new ProductsController(prisma as never);
+    await expect(controller.archive("p1")).rejects.toThrow(/رزرو/);
+    expect(prisma.product.update).not.toHaveBeenCalled();
+  });
+
+  it("archives a product with no reservations", async () => {
+    const prisma = {
+      product: {
+        findUnique: jest.fn().mockResolvedValue({ id: "p1", name: "چای", reserved: 0 }),
+        update: jest.fn().mockResolvedValue({ id: "p1", isActive: false }),
+      },
+    };
+    const controller = new ProductsController(prisma as never);
+    await expect(controller.archive("p1")).resolves.toEqual(expect.objectContaining({ isActive: false }));
+  });
+});
