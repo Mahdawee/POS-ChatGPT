@@ -29,6 +29,7 @@ import { join } from "node:path";
 import { configureLocalStorage } from "../storage";
 import { SettingsController } from "../modules/settings.module";
 import { PHONE_SCAN_HTML } from "./phone-scan-page";
+import { PHONE_SCAN_ICON_PNG, PHONE_SCAN_MANIFEST } from "./phone-scan-icon";
 import { ZXING_UMD_JS } from "./zxing-umd";
 
 /**
@@ -341,6 +342,16 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
       this.send(res, 200, ZXING_UMD_JS, "application/javascript; charset=utf-8", "public, max-age=86400");
       return;
     }
+    // «افزودن به صفحهٔ اصلی» (A2HS): آیکون و مانیفست روی هر دو مبدأ
+    // (HTTPS و HTTP ساده) سرو می‌شوند تا نصب از هر نشانی‌ای ممکن باشد.
+    if (req.method === "GET" && path === "/icon.png") {
+      this.send(res, 200, PHONE_SCAN_ICON_PNG, "image/png", "public, max-age=86400");
+      return;
+    }
+    if (req.method === "GET" && (path === "/manifest.webmanifest" || path === "/manifest.json")) {
+      this.send(res, 200, PHONE_SCAN_MANIFEST, "application/manifest+json; charset=utf-8", "public, max-age=3600");
+      return;
+    }
     if (req.method === "POST" && path === "/api/pair") {
       this.readJson(req, res, (body) => {
         const { pin, token } = body as { pin?: unknown; token?: unknown };
@@ -391,7 +402,7 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
     this.send(res, 404, "not found", "text/plain; charset=utf-8");
   }
 
-  private send(res: http.ServerResponse, status: number, body: string, contentType: string, cacheControl = "no-store"): void {
+  private send(res: http.ServerResponse, status: number, body: string | Buffer, contentType: string, cacheControl = "no-store"): void {
     res.writeHead(status, { "Content-Type": contentType, "Cache-Control": cacheControl });
     res.end(body);
   }

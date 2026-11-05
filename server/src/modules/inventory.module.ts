@@ -7,7 +7,14 @@ import { PrismaService } from "../prisma.service";
 export class InventoryController {
   constructor(private readonly prisma: PrismaService) {}
   @Get("movements")
-  movements(@Query("take") take = "100") { return this.prisma.inventoryMovement.findMany({ take: Math.min(250, Math.max(1, Number(take) || 100)), include: { product: { select: { name: true, sku: true, unit: true } } }, orderBy: { createdAt: "desc" } }); }
+  movements(@Query("take") take = "100", @Query("productId") productId?: string) {
+    return this.prisma.inventoryMovement.findMany({
+      take: Math.min(250, Math.max(1, Number(take) || 100)),
+      where: productId ? { productId } : undefined,
+      include: { product: { select: { name: true, sku: true, unit: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+  }
 
   /** Live batch/lot quantities with their own expiry dates (FEFO list). */
   @Get("batches")

@@ -435,7 +435,7 @@ describe("voiding a sale (ابطال فاکتور)", () => {
       ...saleOverrides,
     };
     const tx = {
-      sale: { findUnique: jest.fn().mockResolvedValue(sale), update: jest.fn().mockResolvedValue({}) },
+      sale: { findUnique: jest.fn().mockResolvedValue(sale), update: jest.fn().mockResolvedValue({}), aggregate: jest.fn().mockResolvedValue({ _sum: { creditPart: 0 } }) },
       product: { findMany: jest.fn().mockResolvedValue([
         { id: "product-1", isBundle: false, bundleComponents: [] },
         { id: "product-2", isBundle: true, bundleComponents: [{ componentId: "component-1", quantity: 3 }] },
@@ -449,6 +449,8 @@ describe("voiding a sale (ابطال فاکتور)", () => {
       serialUnit: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
       customer: { update: jest.fn().mockResolvedValue({}) },
       customerWalletTxn: { create: jest.fn().mockResolvedValue({}) },
+      customerPayment: { aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }), create: jest.fn().mockResolvedValue({}) },
+      saleReturn: { aggregate: jest.fn().mockResolvedValue({ _sum: { creditRelief: 0 } }) },
       cashSession: { findUnique: jest.fn().mockResolvedValue({ id: "cash-1", closedAt: null }) },
       cashMovement: { create: jest.fn().mockResolvedValue({}) },
       installmentPlan: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn().mockResolvedValue({}) },
@@ -457,7 +459,6 @@ describe("voiding a sale (ابطال فاکتور)", () => {
     const prisma = { $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)) };
     return { controller: new SalesController(prisma as never, {} as never), tx, sale };
   }
-
   it("reverses stock (bundles restock components), wallet, drawer and marks the trail — in ONE transaction", async () => {
     const { controller, tx } = voidSetup();
     const result = await controller.voidSale("sale-1", { reason: "فاکتور اشتباه صادر شد" }, voidUser);
@@ -493,6 +494,38 @@ describe("voiding a sale (ابطال فاکتور)", () => {
     // The SALE movements (2 × product-1, 3 × component-1) are the truth.
     expect(updates).toEqual(expect.arrayContaining([["product-1", 2], ["component-1", 3]]));
     expect(updates).not.toContainEqual(["component-1", 9]);
+  });
+
+  it("voiding a SETTLED credit sale returns the collected money to the wallet (نه بستانکار معلق در دفتر)", async () => {
+    // نسیِ ۲۸۰ که بعداً کامل تسویه شده: بدهی 0 است. با ابطال، اگر کاری
+    // نکنیم دفتر مشتری −۲۸۰ می‌شود (پرداخت‌ها می‌مانند، بدهی حذف می‌شود).
+    // فیکس: همان ۲۸۰ به کیف پول برمی‌گردد و یک پرداخت خنثی‌کننده ثبت
+    // می‌شود تا (نسی − برگشت − پرداخت) دقیقاً صفر بماند.
+    const { controller, tx } = voidSetup({ total: 280, cashPart: 0, creditPart: 280, walletPart: 0 });
+    tx.customerPayment.aggregate.mockResolvedValue({ _sum: { amount: 280 } });
+    await controller.voidSale("sale-1", { reason: "ابطال بعد از تسویه" }, voidUser);
+    expect(tx.customer.update).toHaveBeenCalledWith({ where: { id: "customer-1" }, data: { walletBalance: { increment: 280 } } });
+    expect(tx.customerWalletTxn.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "REFUND", amount: 280, saleId: "sale-1" }) }));
+    expect(tx.customerPayment.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ customerId: "customer-1", amount: -280 }) }));
+  });
+
+  it("voiding a PARTIALLY paid credit sale returns only the orphaned share to the wallet", async () => {
+    // نسیِ ۲۸۰ با ۱۰۰ تسویهٔ جزئی: با ابطال، آن ۱۰۰ دیگر به هیچ فاکتوری
+    // وصل نیست → فقط همان ۱۰۰ (نه ۲۸۰) به کیف برمی‌گردد.
+    const { controller, tx } = voidSetup({ total: 280, cashPart: 0, creditPart: 280, walletPart: 0 });
+    tx.customerPayment.aggregate.mockResolvedValue({ _sum: { amount: 100 } });
+    await controller.voidSale("sale-1", { reason: "ابطال نسی با تسویهٔ جزئی" }, voidUser);
+    expect(tx.customer.update).toHaveBeenCalledWith({ where: { id: "customer-1" }, data: { walletBalance: { increment: 100 } } });
+    expect(tx.customerPayment.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ customerId: "customer-1", amount: -100 }) }));
+  });
+
+  it("voiding a credit sale with NO payments touches neither wallet nor payments", async () => {
+    // نسیِ خالص بدون هیچ پرداختی: دفتر بعد از ابطال صفر است → هیچ برگشتی لازم نیست.
+    const { controller, tx } = voidSetup({ total: 280, cashPart: 0, creditPart: 280, walletPart: 0 });
+    await controller.voidSale("sale-1", { reason: "ابطال نسی پرداخت‌نشده" }, voidUser);
+    expect(tx.customer.update).not.toHaveBeenCalled();
+    expect(tx.customerWalletTxn.create).not.toHaveBeenCalled();
+    expect(tx.customerPayment.create).not.toHaveBeenCalled();
   });
 
   it("does not touch a CLOSED drawer — history stays as it was", async () => {

@@ -333,6 +333,26 @@ export class SalesController {
         await tx.customer.update({ where: { id: sale.customerId }, data: { walletBalance: { increment: sale.walletPart } } });
         await tx.customerWalletTxn.create({ data: { customerId: sale.customerId, type: "REFUND", amount: sale.walletPart, note: `ابطال فاکتور ${sale.receiptNo} — ${dto.reason}`, saleId: sale.id, userId: user.id } });
       }
+      // یافتهٔ شکار باگ: ابطال فاکتور نسیِ بعداً تسویه‌شده، پرداخت‌های مشتری
+      // را بستانکارِ معلق در دفتر می‌کرد (بدهی منفی، بدون هیچ راه برگشتی
+      // برای پول). حالا اگر با حذف نسیِ همین فاکتور دفتر مشتری منفی شود،
+      // همان‌اندازه — حداکثر به اندازهٔ نسیِ این فاکتور — به کیف پولش
+      // برمی‌گردد و یک ردیف پرداختِ خنثی‌کننده ثبت می‌شود تا دفتر
+      // (نسی − برگشت − پرداخت) دقیقاً صفر بماند و پول قابل خرج شود.
+      if (sale.creditPart > 0 && sale.customerId) {
+        const [otherCredit, returnsAgg, paidAgg] = await Promise.all([
+          tx.sale.aggregate({ _sum: { creditPart: true }, where: { customerId: sale.customerId, voidedAt: null, id: { not: sale.id } } }),
+          tx.saleReturn.aggregate({ _sum: { creditRelief: true }, where: { sale: { customerId: sale.customerId } } }),
+          tx.customerPayment.aggregate({ _sum: { amount: true }, where: { customerId: sale.customerId } }),
+        ]);
+        const balanceAfter = (otherCredit._sum.creditPart || 0) - (returnsAgg._sum.creditRelief || 0) - (paidAgg._sum.amount || 0);
+        const creditRefund = Math.min(sale.creditPart, Math.max(0, -balanceAfter));
+        if (creditRefund > 0) {
+          await tx.customer.update({ where: { id: sale.customerId }, data: { walletBalance: { increment: creditRefund } } });
+          await tx.customerWalletTxn.create({ data: { customerId: sale.customerId, type: "REFUND", amount: creditRefund, note: `ابطال فاکتور نسی ${sale.receiptNo} — پرداخت شما به کیف پول برگشت`, saleId: sale.id, userId: user.id } });
+          await tx.customerPayment.create({ data: { customerId: sale.customerId, amount: -creditRefund, note: `خنثی‌سازی پرداخت‌ها پس از ابطال فاکتور ${sale.receiptNo}`, userId: user.id } });
+        }
+      }
       // Cash part: only the STILL-OPEN drawer gives the money back (as a
       // normal OUT movement, so the close math stays honest). Closed drawers
       // are history — the void itself is the correction.

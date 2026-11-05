@@ -10,6 +10,13 @@ export const PHONE_SCAN_HTML = `<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="theme-color" content="#10151c">
 <title>اسکنر موقت — Dar POS</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" href="/icon.png">
+<link rel="apple-touch-icon" href="/icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="اسکنر POS">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
   body { font-family: system-ui, "Segoe UI", Tahoma, sans-serif; background: #10151c; color: #e8edf4; min-height: 100vh; display: flex; flex-direction: column; }
@@ -47,6 +54,8 @@ export const PHONE_SCAN_HTML = `<!doctype html>
   .last .row code { direction: ltr; font-size: 14px; }
   .last .row span { color: #93a4bb; font-size: 11px; }
   footer { text-align: center; color: #5c6b80; font-size: 11px; padding: 10px 0 16px; }
+  #installCard { border-color: #2a3a2a; }
+  #installCard h1 { font-size: 15px; }
   .spin { width: 18px; height: 18px; border: 2px solid #2f6fed; border-top-color: transparent; border-radius: 50%; animation: sp 1s linear infinite; margin: 0 auto 8px; }
   @keyframes sp { to { transform: rotate(360deg); } }
 </style></head>
@@ -96,6 +105,13 @@ export const PHONE_SCAN_HTML = `<!doctype html>
       <div class="last" id="lastList" style="margin-top:8px"><div class="sub">هنوز چیزی فرستاده نشده.</div></div>
     </section>
   </div>
+
+  <section class="card" id="installCard">
+    <h1>📲 نصب روی گوشی</h1>
+    <div class="sub" id="installHint">این صفحه را مثل یک اپ روی گوشی نصب کنید تا آیکونش بین اپ‌هایتان باشد و هر روز با یک لمس باز شود.</div>
+    <button class="primary" id="installBtn" style="margin-top:10px" hidden>افزودن به صفحهٔ اصلی</button>
+    <div class="sub" id="iosHint" style="margin-top:8px" hidden>در آیفون: دکمهٔ <b>اشتراک‌گذاری</b> (مربع با فلش رو به بالا) را بزنید و گزینهٔ <b>Add to Home Screen</b> را انتخاب کنید.</div>
+  </section>
 </main>
 <div id="flash"><span>✓ فرستاده شد</span><code id="flashCode"></code></div>
 <footer>Dar POS — ابزار موقت آزمایش اسکن · بدون اینترنت کار می‌کند</footer>
@@ -155,6 +171,26 @@ $("pairBtn").addEventListener("click", function () {
     .catch(function (e) { $("pairErr").textContent = e.message || "اتصال ممکن نشد."; });
 });
 $("pinInput").addEventListener("keydown", function (e) { if (e.key === "Enter") $("pairBtn").click(); });
+
+/* ---------- نصب روی گوشی (Add to Home Screen) ---------- */
+(function () {
+  var card = $("installCard");
+  if (!card) return;
+  var standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+  if (standalone) { card.hidden = true; return; } // از قبل مثل اپ نصب شده
+  var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  var deferred = null;
+  window.addEventListener("beforeinstallprompt", function (e) {
+    e.preventDefault(); deferred = e; $("installBtn").hidden = false;
+  });
+  window.addEventListener("appinstalled", function () { card.hidden = true; });
+  $("installBtn").addEventListener("click", function () {
+    if (!deferred) return;
+    deferred.prompt();
+    deferred.userChoice.then(function () { deferred = null; $("installBtn").hidden = true; }).catch(function () {});
+  });
+  if (isIOS) $("iosHint").hidden = false;
+})();
 
 /* ---------- حالت‌ها ---------- */
 var mode = "live";

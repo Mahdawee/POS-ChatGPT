@@ -52,6 +52,31 @@ describe("PhoneScanBridge (پل موقت اسکن گوشی)", () => {
     expect(zxing).toContain("HybridBinarizer");
   });
 
+  it("آیکون و مانیفست «افزودن به صفحهٔ اصلی» سرو می‌شوند و صفحه به آنها ارجاع دارد", async () => {
+    // A2HS: مانیفست وب‌اپ + آیکون ۲۵۶ (همان لوگوی دسکتاپ) + لینک‌های iOS
+    const manifest = await fetch(`${base}/manifest.webmanifest`).then((res) => {
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("manifest+json");
+      return res.json();
+    });
+    expect(manifest.display).toBe("standalone");
+    expect(manifest.icons[0].src).toBe("/icon.png");
+    const icon = await fetch(`${base}/icon.png`).then((res) => {
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("image/png");
+      return res.arrayBuffer();
+    });
+    // PNG واقعی (امضای فایل) با محتوای معقول برای آیکون ۲۵۶×۲۵۶
+    const sig = new Uint8Array(icon.slice(0, 8));
+    expect(Array.from(sig)).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    expect(icon.byteLength).toBeGreaterThan(500);
+    const page = await fetch(`${base}/`).then((res) => res.text());
+    expect(page).toContain('rel="manifest"');
+    expect(page).toContain('rel="apple-touch-icon"');
+    expect(page).toContain("beforeinstallprompt");
+    expect(page).toContain("installCard");
+  });
+
   it("PIN غلط رد و PIN درست توکن می‌دهد؛ توکن معتبر قابل تمدید است", async () => {
     const wrong = await fetch(`${base}/api/pair`, { method: "POST", body: JSON.stringify({ pin: "0000" }) });
     expect(wrong.status).toBe(403);
