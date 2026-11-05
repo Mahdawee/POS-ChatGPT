@@ -69,10 +69,25 @@ export interface PhoneScanStatus {
   running: boolean;
   tls: boolean;
   port: number | null;
+  /** پورت همدم HTTP ساده — همیشه بدون هشدار گواهی باز می‌شود (وقتی TLS روشن است). */
+  httpPort?: number | null;
   /** نشانی‌های IPv4 این دستگاه در شبکهٔ محلی — دسکتاپ از آن‌ها URL گوشی می‌سازد. */
   lan: string[];
   /** وقتی روشن نیست: آخرین دلیل، برای نمایش راهنما در پنل تنظیمات. */
   reason?: string;
+  /** خودتشخیص زندهٔ اتصال گوشی: آیا اصلاً به پل رسیده، صفحه باز کرده، PIN زده؟ */
+  phone?: PhoneScanStats;
+}
+
+/** شمارنده‌های تشخیصی — فقط برای راهنمایی کاربر در پنل تنظیمات. */
+export interface PhoneScanStats {
+  /** آخرین اتصال TCP از هر دستگاهی (حتی بدون باز شدن صفحه). */
+  lastSeen: number | null;
+  /** تعداد درخواست‌های HTTP رسیده (صفحه باز شده باشد ≥ ۱). */
+  requests: number;
+  lastRequestAt: number | null;
+  /** آخرین جفت‌شدن موفق گوشی با PIN/token. */
+  pairedAt: number | null;
 }
 
 export interface PhoneScanEntry {
@@ -83,6 +98,9 @@ export interface PhoneScanEntry {
 @Injectable()
 export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
   private server: http.Server | https.Server | null = null;
+  /** همدم HTTP ساده — همان صفحه را بدون هشدار گواهی سرو می‌کند. */
+  private plainServer: http.Server | null = null;
+  private plainPort: number | null = null;
   private tlsEnabled = true;
   private actualPort: number | null = null;
   private pin = "";
@@ -91,6 +109,7 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
   private lastAtByCode = new Map<string, number>();
   private disposed = false;
   private lastError = "";
+  private stats: PhoneScanStats = { lastSeen: null, requests: 0, lastRequestAt: null, pairedAt: null };
 
   /** در تست‌ها (NODE_ENV=test) و با PHONE_SCAN_DISABLE=1 پل خودکار روشن نمی‌شود. */
   async onModuleInit(): Promise<void> {
@@ -131,8 +150,10 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
       running: Boolean(this.server),
       tls: this.tlsEnabled,
       port: this.actualPort,
+      httpPort: this.plainPort,
       lan: SettingsController.lanAddresses(),
       reason: this.server ? undefined : this.lastError || "not-started",
+      phone: { ...this.stats },
     };
   }
 
@@ -196,21 +217,78 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
     const address = server.address();
     this.actualPort = typeof address === "object" && address ? address.port : wantedPort;
     this.server = server;
+    // هر اتصال TCP (حتی نیمه‌کاره/ردشده به‌خاطر گواهی) برای خودتشخیص ثبت
+    // می‌شود تا پنل بگوید گوشی اصلاً به سرور رسیده یا نه (فایروال/WiFi).
+    server.on("connection", () => { this.stats.lastSeen = Date.now(); });
     log(`پل موقت اسکن گوشی فعال شد روی ${this.tlsEnabled ? "https" : "http"}://0.0.0.0:${this.actualPort} (PIN: ${this.pin})`);
+    // همدم HTTP ساده: نشانی‌ای که همیشه بدون هشدار گواهی مرورگر باز می‌شود.
+    // جفت‌کردن و «اسکن با عکس» آنجا کامل کار می‌کند و خودِ صفحه راهنمای
+    // فعال‌سازی یک‌بارهٔ دوربین زنده (نشانی امن) را نشان می‌دهد. شکستن این
+    // سرور هرگز پل اصلی را نمی‌بندد — فقط نشانی ساده در دسترس نمی‌ماند.
+    if (this.tlsEnabled) {
+      const wantedPlain = Number(process.env.PHONE_SCAN_HTTP_PORT || (this.actualPort + 1));
+      const plain = http.createServer(handler);
+      // خطای این سرور اختیاری هرگز پروسه را نمی‌اندازد و پل اصلی را نمی‌بندد
+      plain.on("error", () => undefined);
+      plain.on("connection", () => { this.stats.lastSeen = Date.now(); });
+      // فوراً ثبت می‌شود تا stop() حتی وسط راه‌اندازی بتواند همان را ببندد
+      this.plainServer = plain;
+      // تا settle شدن همدم صبر می‌کنیم (چند میلی‌ثانیه) تا status بلافاصله
+      // پورت ساده را گزارش کند؛ سقف ۳ ثانیه فقط بیمهٔ حالت‌های غیرعادی است.
+      await new Promise<void>((resolvePlain) => {
+        let listening = false;
+        const timer = setTimeout(resolvePlain, 3000);
+        timer.unref?.();
+        const done = (): void => { clearTimeout(timer); resolvePlain(); };
+        const tryPlain = (onPort: number, left: number): void => {
+          plain.once("error", (error: Error) => {
+            if (listening) return; // خطای دیرهنگام بعد از موفقیت — نادیده
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code === "EADDRINUSE" && left > 0) {
+              log(`پورت سادهٔ ${onPort} اشغال است؛ پورت بعدی امتحان می‌شود…`);
+              tryPlain(onPort + 1, left - 1);
+            } else {
+              if (this.plainServer === plain) { this.plainServer = null; this.plainPort = null; }
+              log(`پل سادهٔ HTTP روی پورت ${onPort} باز نشد (${code || "خطا"}) — فقط نشانی امن در دسترس است.`);
+              done();
+            }
+          });
+          plain.listen(onPort, "0.0.0.0", () => {
+            if (this.plainServer !== plain) { done(); return; } // همین حالا stop شده است
+            listening = true;
+            this.plainPort = onPort;
+            log(`نشانی سادهٔ گوشی (بدون هشدار گواهی): http://0.0.0.0:${onPort}`);
+            done();
+          });
+        };
+        tryPlain(wantedPlain, 4);
+      });
+    }
   }
 
   async stop(): Promise<void> {
     const server = this.server;
     this.server = null;
     this.actualPort = null;
-    if (!server) return;
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, 2000);
-      timer.unref?.();
-      // اتصال‌های بازِ نگه‌داشته‌شده (keep-alive گوشی) بسته می‌شوند تا close برگردد.
-      (server as http.Server).closeAllConnections?.();
-      server.close(() => resolve());
-    });
+    const plain = this.plainServer;
+    this.plainServer = null;
+    this.plainPort = null;
+    const closeOne = async (target: http.Server | https.Server | null): Promise<void> => {
+      if (!target) return;
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 2000);
+        timer.unref?.();
+        try {
+          // اتصال‌های بازِ نگه‌داشته‌شده (keep-alive گوشی) بسته می‌شوند تا close برگردد.
+          (target as http.Server).closeAllConnections?.();
+          target.close(() => resolve());
+        } catch {
+          // سرور هنوز listening نشده بود — چیزی برای بستن نیست
+          resolve();
+        }
+      });
+    };
+    await Promise.all([closeOne(server), closeOne(plain)]);
   }
 
   /** گواهی خودامضا با SAN شامل localhost و IPهای فعلی شبکه؛ در dataDir
@@ -242,9 +320,15 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
   }
 
   private handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+    // شمارش برای خودتشخیص پنل: هر درخواست یعنی صفحه‌ای روی گوشی باز شده
+    this.stats.requests += 1;
+    this.stats.lastRequestAt = Date.now();
     const path = (req.url || "/").split("?")[0];
     if (req.method === "GET" && (path === "/" || path === "/index.html")) {
-      this.send(res, 200, PHONE_SCAN_HTML, "text/html; charset=utf-8");
+      // پورت نشانی امن در صفحه جایگذاری می‌شود تا دکمهٔ «فعال‌سازی دوربین
+      // زنده» بداند به کجا برود؛ وقتی TLS نیست، 0 یعنی دکمه مخفی بماند.
+      const html = PHONE_SCAN_HTML.replace(/__HTTPS_PORT__/g, String(this.tlsEnabled ? this.actualPort : 0));
+      this.send(res, 200, html, "text/html; charset=utf-8");
       return;
     }
     if (req.method === "GET" && path === "/zxing.js") {
@@ -256,11 +340,13 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
         const { pin, token } = body as { pin?: unknown; token?: unknown };
         // ادامهٔ جفت‌شدن با token قبلی (بعد از ری‌استارت سرور یا بازگشت به صفحه).
         if (typeof token === "string" && token === this.token) {
+          this.stats.pairedAt = Date.now();
           this.send(res, 200, JSON.stringify({ token: this.token }), "application/json");
           return;
         }
         if (typeof pin === "string" && pin === this.pin) {
           this.token = randomBytes(16).toString("hex");
+          this.stats.pairedAt = Date.now();
           this.send(res, 200, JSON.stringify({ token: this.token }), "application/json");
           return;
         }
@@ -343,9 +429,12 @@ export class PhoneScanController {
   status(): PhoneScanStatus & { urls: string[] } {
     const info = this.bridge.status();
     const scheme = info.tls ? "https" : "http";
+    const urls = [`127.0.0.1`, ...info.lan].map((host) => `${scheme}://${host}:${info.port}`);
+    // نشانی ساده (HTTP) — فقط برای LAN؛ 127.0.0.1 برای گوشی بی‌معناست
+    if (info.httpPort) urls.push(...info.lan.map((host) => `http://${host}:${info.httpPort}`));
     return {
       ...info,
-      urls: [`127.0.0.1`, ...info.lan].map((host) => `${scheme}://${host}:${info.port}`),
+      urls,
     };
   }
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Copy, Smartphone, CircleAlert } from "lucide-react";
+import { Copy, Smartphone, CircleAlert, CircleCheck } from "lucide-react";
 import { t, dateTime } from "../i18n";
 import { apiBase, get } from "../lib/api";
 import { qrSvg } from "../lib/qr";
@@ -77,12 +77,13 @@ interface PhoneScanStatusInfo {
   running: boolean;
   tls: boolean;
   port: number | null;
+  /** پورت همدم HTTP ساده — همیشه بدون هشدار گواهی باز می‌شود. */
+  httpPort?: number | null;
   lan: string[];
   urls: string[];
   reason?: string;
+  phone?: { lastSeen: number | null; requests: number; lastRequestAt: number | null; pairedAt: number | null };
 }
-
-const qrDataUri = (text: string): string => `data:image/svg+xml;utf8,${encodeURIComponent(qrSvg(text))}`;
 
 export function PhoneScanPanel() {
   const [status, setStatus] = useState<PhoneScanStatusInfo | null>(null);
@@ -142,10 +143,20 @@ export function PhoneScanPanel() {
     try { await navigator.clipboard.writeText(text); setCopied(text); window.setTimeout(() => setCopied(""), 1500); } catch { /* کلیپ‌بورد در دسترس نیست */ }
   };
 
-  // نشانی گوشی از وضعیت واقعی پل ساخته می‌شود (https یا http در حالت fallback)
-  const scheme = status?.tls === false ? "http" : "https";
-  const phoneUrl = status && status.running ? (status.lan.length ? `${scheme}://${status.lan[0]}:${status.port}` : null) : null;
+  // نشانیِ داخل QR: ترجیحاً نشانی سادهٔ HTTP (همیشه بدون هشدار گواهی باز
+  // می‌شود و اسکن عکس همان‌جا کار می‌کند)؛ PIN هم در انتهای نشانی می‌آید تا
+  // گوشی بدون تایپ، خودکار جفت شود. اگر همدم ساده نبود، همان نشانی امن.
+  const qrPort = status?.httpPort ?? status?.port ?? null;
+  const qrScheme = status?.httpPort || status?.tls === false ? "http" : "https";
+  const phoneUrl = status && status.running && status.lan.length && qrPort
+    ? `${qrScheme}://${status.lan[0]}:${qrPort}/${pin ? `#${pin}` : ""}`
+    : null;
   const allUrls = status && status.running ? status.urls : [];
+
+  // خودتشخیص زندهٔ اتصال گوشی — دقیقاً می‌گوید کاربر کجای راه گیر کرده است
+  const seen = Boolean(status?.phone?.lastSeen);
+  const opened = Boolean((status?.phone?.requests ?? 0) > 0);
+  const paired = Boolean(status?.phone?.pairedAt);
 
   return <div className="phone-scan-panel">
     <div className="phone-scan-head">
@@ -188,11 +199,36 @@ export function PhoneScanPanel() {
         </div>
         {phoneUrl
           ? <div className="phone-scan-qr" title={t("بارکد را با دوربین گوشی بخوانید")}>
-              <img src={qrDataUri(phoneUrl)} alt="QR" width={118} height={118}/>
+              {/* SVG درون‌خطی (مثل QR رسید چاپ) — بدون img و data-URI که روی
+                  برخی WebViewها رندر نمی‌شد؛ این راه همیشه کار می‌کند. */}
+              <div className="phone-scan-qr-svg" dangerouslySetInnerHTML={{ __html: qrSvg(phoneUrl) }}/>
               <small dir="ltr">{phoneUrl}</small>
             </div>
           : <div className="hint-box phone-scan-warn"><CircleAlert size={17}/>{t("این دستگاه به شبکهٔ محلی وصل نیست؛ برای اتصال گوشی، به WiFi همان شبکه بپیوندید.")}</div>}
       </div>
+
+      {status.phone && !paired && !seen && <div className="error-box phone-scan-warn">
+        <CircleAlert size={17}/>
+        <div>
+          <b>{t("هنوز هیچ گوشی‌ای به سرور نرسیده است.")}</b>
+          <small>{t("بارکد را با گوشی اسکن کنید یا نشانی را در مرورگر گوشی باز کنید. اگر باز نشد: هر دو دستگاه باید در یک WiFi باشند و فایروال ویندوز باید اجازهٔ دسترسی Node.js را بدهد (Windows Security ← Firewall ← Allow an app to pass through Firewall).")}</small>
+        </div>
+      </div>}
+
+      {status.phone && !paired && seen && !opened && <div className="hint-box phone-scan-warn">
+        <CircleAlert size={17}/>
+        <small>{t("گوشی به سرور رسیده ولی صفحه باز نشده — هشدار امنیتی مرورگر گوشی را بپذیرید: «پیشرفته» و سپس «ادامه به نشانی». این هشدار به‌خاطر گواهی محلی برنامه است و فقط یک‌بار لازم است.")}</small>
+      </div>}
+
+      {status.phone && !paired && opened && <div className="hint-box phone-scan-warn">
+        <CircleAlert size={17}/>
+        <small>{t("صفحهٔ گوشی باز شده؛ فقط کد PIN را در گوشی وارد کنید یا همین بارکد را با گوشی اسکن کنید تا خودکار وارد شود.")}</small>
+      </div>}
+
+      {status.phone && paired && <div className="hint-box phone-scan-ok">
+        <CircleCheck size={17}/>
+        <small>{t("گوشی جفت شده است — کد اسکن‌شده همان لحظه به صندوق می‌رسد.")}</small>
+      </div>}
 
       <div className="phone-scan-urls">
         {allUrls.map((url) => <button type="button" key={url} className="text-button" dir="ltr" onClick={() => { void copy(url); }}>
@@ -207,9 +243,9 @@ export function PhoneScanPanel() {
 
       <div className="phone-scan-steps">
         <span>{t("راهنمای اتصال:")}</span>
-        <small>۱. {t("در ویندوز اگر هشدار فایروال ظاهر شد، اجازهٔ دسترسی Node.js در «شبکه‌های خصوصی» را بدهید.")}</small>
-        {status.tls && <small>۲. {t("مرورگر گوشی هشدار امنیتی نشان می‌دهد؛ «پیشرفته» و سپس «ادامه به نشانی» را بزنید. فقط یک‌بار لازم است.")}</small>}
-        <small>{status.tls ? "۳." : "۲."} {t("اگر دوربین زنده باز نشد، در همان صفحه از حالت «اسکن با عکس» استفاده کنید که روی هر گوشی کار می‌کند.")}</small>
+        <small>۱. {t("بارکد را با دوربین گوشی اسکن کنید — صفحهٔ اسکن خودکار باز و جفت می‌شود و «اسکن با عکس» همان‌جا کار می‌کند.")}</small>
+        {status.tls && <small>۲. {t("در همان صفحهٔ گوشی، دکمهٔ «فعال‌سازی اسکن زندهٔ دوربین» را یک‌بار بزنید و هشدار امنیتی مرورگر را تأیید کنید («پیشرفته» ← «ادامه») تا اسکن زنده هم برای همیشه فعال شود.")}</small>}
+        <small>{status.tls ? "۳." : "۲."} {t("در ویندوز اگر هشدار فایروال ظاهر شد، اجازهٔ دسترسی Node.js در «شبکه‌های خصوصی» را بدهید.")}</small>
       </div>
 
       <div className="phone-scan-last">

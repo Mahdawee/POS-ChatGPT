@@ -243,6 +243,48 @@ describe("PhoneScanBridge (پل موقت اسکن گوشی)", () => {
     expect(idle.status().reason).toBe("not-started");
   });
 
+  it("با TLS، همدم HTTP ساده روی پورت بعدی باز می‌شود و صفحه پورت امن را می‌داند", async () => {
+    const bridge = new PhoneScanBridge();
+    const logs: string[] = [];
+    await bridge.start({ tls: true, port: 0, dataDir: mkdtempSync(join(tmpdir(), "phone-scan-plain-")), log: (message) => { logs.push(message); } });
+    try {
+      const info = bridge.status();
+      expect(info.running).toBe(true);
+      expect(info.tls).toBe(true);
+      expect(info.httpPort).toBe((info.port ?? 0) + 1);
+      // صفحهٔ ساده بدون هیچ هشدار گواهی باز می‌شود و همان برنامه را دارد
+      const page = await fetch(`http://127.0.0.1:${info.httpPort}/`);
+      expect(page.status).toBe(200);
+      const html = await page.text();
+      expect(html).toContain("api/pair");
+      // پورت نشانی امن در صفحه جایگذاری شده تا دکمهٔ «اسکن زنده» بداند کجا برود
+      expect(html).toContain(`parseInt("${info.port}"`);
+      // جفت‌کردن روی نشانی ساده هم کامل کار می‌کند
+      const pair = await fetch(`http://127.0.0.1:${info.httpPort}/api/pair`, { method: "POST", body: JSON.stringify({ pin: bridge.currentPin }) });
+      expect(pair.status).toBe(200);
+      // خودتشخیص: صفحه باز شده، گوشی دیده شده و جفت شده
+      const after = bridge.status();
+      expect(after.phone?.lastSeen).toBeTruthy();
+      expect((after.phone?.requests ?? 0)).toBeGreaterThan(0);
+      expect(after.phone?.pairedAt).toBeTruthy();
+    } finally {
+      await bridge.stop();
+      // هر دو سرور بسته شده‌اند — پورت ساده هم دیگر پاسخ نمی‌دهد
+      const closed = await fetch(`http://127.0.0.1:${bridge.status().httpPort ?? 1}/`, { signal: AbortSignal.timeout(800) }).then(() => false).catch(() => true);
+      expect(closed).toBe(true);
+    }
+  });
+
+  it("صفحهٔ ساده، PIN را از انتهای نشانی (#۱۲۳۴) می‌خواند تا خودکار جفت شود", async () => {
+    // نشانی‌ای که QR دسکتاپ می‌سازد: http://IP:PORT/#1234 — صفحه باید عبارت
+    // را در JS خود داشته باشد (خواندن hash و کلیک خودکار دکمهٔ اتصال)
+    const page = await fetch(`${base}/`);
+    const html = await page.text();
+    expect(html).toContain('location.hash || ""');
+    expect(html).toContain('replace(/[^0-9]/g, "")');
+    expect(html).toContain('pairBtn").click()');
+  });
+
   it("پورت پیش‌فرض اشغال باشد، پورت بعدی خودکار امتحان می‌شود", async () => {
     // یک پورت آزاد را با یک سرور ساده اشغال می‌کنیم و PHONE_SCAN_PORT را
     // همان می‌گذاریم؛ پل باید روی پورتِ بعدی (busy+1) بالا بیاید.

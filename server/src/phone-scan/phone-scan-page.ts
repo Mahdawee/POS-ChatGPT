@@ -61,6 +61,10 @@ export const PHONE_SCAN_HTML = `<!doctype html>
   </section>
 
   <div id="main" hidden style="display:flex;flex-direction:column;gap:12px">
+    <div class="notice" id="httpBanner" hidden>
+      <b>فعال‌سازی اسکن زندهٔ دوربین (فقط یک‌بار):</b> این نشانی ساده است و مرورگر در آن دوربینِ زنده را باز نمی‌کند؛ اما «اسکن با عکس» همین‌جا کامل کار می‌کند. برای اسکن زنده، یک‌بار با دکمهٔ زیر به نشانی امن بروید و هشدار امنیتی مرورگر را تأیید کنید (گزینهٔ «پیشرفته» و سپس «ادامه») — گواهی محلی برنامه است و بعد از این دیگر این هشدار را نمی‌بینید.
+      <button class="primary" id="goHttps" style="margin-top:10px">فعال‌سازی اسکن زندهٔ دوربین</button>
+    </div>
     <div class="modes">
       <button class="mode on" id="mLive"><span class="ico">📷</span>اسکن زنده</button>
       <button class="mode" id="mPhoto"><span class="ico">🖼️</span>اسکن با عکس</button>
@@ -287,12 +291,31 @@ $("manualInput").addEventListener("keydown", function (e) { if (e.key === "Enter
 
 /* ---------- شروع ---------- */
 setHead(false, "در انتظار PIN");
-if (token) {
+// پورت نشانی امن توسط سرور در همین صفحه جایگذاری شده است (۰ یعنی TLS نیست)
+var httpsPort = parseInt("__HTTPS_PORT__", 10) || 0;
+// QR دسکتاپ، PIN را در انتهای نشانی (#۱۲۳۴) می‌آورد — مستقیم جفت می‌شویم
+var startPin = (location.hash || "").replace(/[^0-9]/g, "");
+var securePage = location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
+if (location.protocol === "http:" && httpsPort) {
+  $("httpBanner").hidden = false;
+  $("goHttps").addEventListener("click", function () {
+    location.href = "https://" + location.hostname + ":" + httpsPort + "/" + (startPin ? "#" + startPin : "");
+  });
+}
+if (startPin) {
+  token = "";
+  try { localStorage.removeItem("darpos-scan-token"); } catch (e) {}
+  $("pinInput").value = startPin;
+  $("pairBtn").click();
+  try { history.replaceState(null, "", location.pathname); } catch (e) {}
+} else if (token) {
   fetch("/api/pair", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: token }) })
     .then(function (res) { if (res.ok) return res.json(); throw new Error("x"); })
     .then(function (data) { if (data && data.token) { token = data.token; localStorage.setItem("darpos-scan-token", token); showMain(); } })
     .catch(function () { token = ""; localStorage.removeItem("darpos-scan-token"); showPair(); });
 } else showPair();
+// حالت پیش‌فرض: روی نشانی امن «اسکن زنده»، روی نشانی ساده «اسکن با عکس»
+setMode(securePage ? "live" : "photo");
 document.addEventListener("visibilitychange", function () {
   // بازگشت به صفحه: اگر حالت زنده بود ولی استریم مرده، دوباره روشن کن
   if (!document.hidden && mode === "live" && !stream) startLive();

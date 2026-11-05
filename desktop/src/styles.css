@@ -405,7 +405,8 @@ tr.voided-row td.strong, tr.voided-row td b { text-decoration: line-through; tex
 .phone-scan-pin{display:flex;flex-direction:column;gap:4px;background:var(--surface-3);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:10px;color:var(--muted)}
 .phone-scan-pin b{font-size:30px;letter-spacing:10px;color:var(--ink-2);font-weight:700}
 .phone-scan-qr{display:flex;flex-direction:column;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px}
-.phone-scan-qr img{display:block;width:118px;height:118px}
+.phone-scan-qr-svg svg{display:block;width:118px;height:118px}
+.phone-scan-ok{border-color:var(--accent-soft)}
 .phone-scan-qr small{font-size:9px;color:var(--ink-3);font-family:ui-monospace,monospace}
 .phone-scan-urls{display:flex;flex-wrap:wrap;gap:4px}
 .phone-scan-steps{display:flex;flex-direction:column;gap:5px;font-size:10px;color:var(--muted);line-height:1.9}
