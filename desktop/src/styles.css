@@ -393,3 +393,26 @@ tr.voided-row td.strong, tr.voided-row td b { text-decoration: line-through; tex
 .qty-stepper input:focus { border-color: var(--accent-border); background: var(--surface); }
 .qty-stepper input::-webkit-outer-spin-button, .qty-stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .qty-stepper input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+
+/* ── پل موقت اسکن با دوربین گوشی (دور ۵۳) — قابل حذف کامل ── */
+.phone-scan-panel{display:flex;flex-direction:column;gap:13px;border:1px dashed var(--line-2);border-radius:12px;padding:15px;margin-top:15px}
+.phone-scan-head{display:flex;align-items:flex-start;gap:10px;color:var(--accent-ink)}
+.phone-scan-head b{font-size:12px;display:block}
+.phone-scan-head small{display:block;font-size:10px;color:var(--muted);margin-top:3px;line-height:1.8}
+.phone-scan-badge{flex:none;border-radius:20px;padding:4px 9px;font-size:9px;font-weight:700;background:var(--amber-soft);color:var(--amber-ink)}
+.phone-scan-badge.ok{background:var(--accent-soft);color:var(--accent-ink)}
+.phone-scan-grid{display:grid;grid-template-columns:1fr auto;gap:13px;align-items:stretch}
+.phone-scan-pin{display:flex;flex-direction:column;gap:4px;background:var(--surface-3);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:10px;color:var(--muted)}
+.phone-scan-pin b{font-size:30px;letter-spacing:10px;color:var(--ink-2);font-weight:700}
+.phone-scan-qr{display:flex;flex-direction:column;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px}
+.phone-scan-qr img{display:block;width:118px;height:118px}
+.phone-scan-qr small{font-size:9px;color:var(--ink-3);font-family:ui-monospace,monospace}
+.phone-scan-urls{display:flex;flex-wrap:wrap;gap:4px}
+.phone-scan-steps{display:flex;flex-direction:column;gap:5px;font-size:10px;color:var(--muted);line-height:1.9}
+.phone-scan-steps>span{color:var(--ink-3);font-weight:600}
+.phone-scan-last{display:flex;flex-direction:column;gap:7px;font-size:10px;color:var(--ink-3);font-weight:600}
+.phone-scan-codes{display:flex;flex-direction:column;gap:4px}
+.phone-scan-codes>div{display:flex;justify-content:space-between;align-items:center;background:var(--surface-3);border-radius:7px;padding:6px 10px}
+.phone-scan-codes code{font-family:ui-monospace,monospace;font-size:11px;color:var(--ink-2)}
+.phone-scan-codes small{color:var(--muted);font-size:9px}
+.phone-scan-warn{border-color:var(--amber-soft)}

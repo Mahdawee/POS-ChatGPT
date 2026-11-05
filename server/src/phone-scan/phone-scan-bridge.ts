@@ -1,0 +1,299 @@
+/**
+ * ── پل اسکن موقت با دوربین گوشی (دور ۵۳) ──────────────────────────────────
+ * گوشی روی WiFi همان شبکه، مستقیم به همین پروسهٔ سرور وصل می‌شود — بدون هیچ
+ * تغییری در رفتار بارکدخوان‌های USB یا منطق بارکدهای برنامه:
+ *
+ *   گوشی ──(HTTP/HTTPS خودامضا روی 0.0.0.0:4318)── سرور
+ *     GET  /            صفحهٔ اسکن (خودکفا، RTL دری)
+ *     GET  /zxing.js    کتابخانهٔ اسکن بارکد ZXing
+ *     POST /api/pair    {pin} یا {token} → {token}
+ *     POST /api/scan    {token, code} → ثبت در بافر حافظه
+ *
+ *   دسکتاپ ──(API اصلی، زیر JWT مثل همهٔ مسیرها)── سرور
+ *     GET /api/phone-scan/status   وضعیت پل (running/tls/port/lan)
+ *     GET /api/phone-scan/pin      PIN جاری برای جفت‌کردن گوشی
+ *     GET /api/phone-scan/pull     {scans, now} — دسکتاپ هر ~۷۰۰ms می‌گیرد
+ *
+ * امنیت: PIN تصادفیِ هر راه‌اندازی فقط روی صفحهٔ تنظیماتِ کاربرِ واردشده
+ * دیده می‌شود؛ گوشی بعد از تأیید PIN یک token تصادفی می‌گیرد. TLS با
+ * گواهی خودامضای ثابت (کش در dataDir) تا کاربر فقط یک‌بار در مرورگر گوشی
+ * آن را بپذیرد. این پل کاملاً «موقت/آزمایشی» است؛ با PHONE_SCAN_DISABLE=1
+ * یا حذف PhoneScanModule از app.module.ts به‌کل خاموش می‌شود.
+ */
+import { Controller, Get, Injectable, Module, OnModuleDestroy, OnModuleInit, Query } from "@nestjs/common";
+import * as http from "node:http";
+import * as https from "node:https";
+import { randomBytes, randomInt } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { generate as generateSelfSigned } from "selfsigned";
+import { configureLocalStorage } from "../storage";
+import { SettingsController } from "../modules/settings.module";
+import { PHONE_SCAN_HTML } from "./phone-scan-page";
+import { ZXING_UMD_JS } from "./zxing-umd";
+
+/** پیش‌فرض‌های پل — با متغیرهای محیطی قابل تغییر. */
+const DEFAULT_PORT = Number(process.env.PHONE_SCAN_PORT || 4318);
+/** یک کد تکراری در این بازه به‌عنوان «همان اسکن قبلی» نادیده گرفته می‌شود. */
+const DEDUPE_MS = 1500;
+/** بافر حلقوی کدهای دریافتی — دسکتاپ با pull آخرین‌ها را می‌خواند. */
+const MAX_SCANS = 100;
+/** سقف بدنهٔ JSON درخواست‌های گوشی (کد بارکد هرچه باشد زیر این می‌ماند). */
+const MAX_BODY_BYTES = 10 * 1024;
+
+export interface PhoneScanStartOptions {
+  /** پورت گوش؛ 0 یعنی پورت تصادفی آزاد (در تست‌ها). */
+  port?: number;
+  /** HTTPS با گواهی خودامضا (پیش‌فرض) یا HTTP ساده برای تست. */
+  tls?: boolean;
+  /** پوشهٔ داده برای کش گواهی — پیش‌فرض dataDir برنامه. */
+  dataDir?: string;
+  /** لاگ؛ پیش‌فرض console.log، در تست‌ها خاموش. */
+  log?: (message: string) => void;
+}
+
+export interface PhoneScanStatus {
+  running: boolean;
+  tls: boolean;
+  port: number | null;
+  /** نشانی‌های IPv4 این دستگاه در شبکهٔ محلی — دسکتاپ از آن‌ها URL گوشی می‌سازد. */
+  lan: string[];
+}
+
+export interface PhoneScanEntry {
+  code: string;
+  at: number;
+}
+
+@Injectable()
+export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
+  private server: http.Server | https.Server | null = null;
+  private tlsEnabled = true;
+  private actualPort: number | null = null;
+  private pin = "";
+  private token = "";
+  private scans: PhoneScanEntry[] = [];
+  private lastAtByCode = new Map<string, number>();
+
+  /** در تست‌ها (NODE_ENV=test) و با PHONE_SCAN_DISABLE=1 پل خودکار روشن نمی‌شود. */
+  async onModuleInit(): Promise<void> {
+    if (process.env.PHONE_SCAN_DISABLE === "1" || process.env.NODE_ENV === "test") return;
+    try {
+      await this.start();
+    } catch (error) {
+      // پل اختیاری است؛ خرابی آن (مثلاً پورت اشغال) نباید سرور اصلی را زمین بزند.
+      console.warn(`[phone-scan] موقت: پل گوشی روشن نشد — ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.stop();
+  }
+
+  /** PIN جاری — فقط از طریق /api/phone-scan/pin برای کاربر واردشده. */
+  get currentPin(): string {
+    return this.pin;
+  }
+
+  status(): PhoneScanStatus {
+    return { running: Boolean(this.server), tls: this.tlsEnabled, port: this.actualPort, lan: SettingsController.lanAddresses() };
+  }
+
+  /** کدهای جدیدتر از `after` — دسکتاپ مهر زمانیِ پاسخ قبلی را پاس می‌کند. */
+  pull(after: number): { scans: PhoneScanEntry[]; now: number } {
+    const from = Number.isFinite(after) ? after : 0;
+    return { scans: this.scans.filter((entry) => entry.at > from), now: Date.now() };
+  }
+
+  async start(options: PhoneScanStartOptions = {}): Promise<void> {
+    if (this.server) return;
+    this.tlsEnabled = options.tls ?? true;
+    const wantedPort = options.port ?? DEFAULT_PORT;
+    this.pin = String(randomInt(1000, 10000));
+    this.token = randomBytes(16).toString("hex");
+    this.scans = [];
+    this.lastAtByCode.clear();
+    const log = options.log ?? ((message: string) => console.log(`[phone-scan] ${message}`));
+    const server = this.tlsEnabled
+      ? https.createServer(await this.certificate(options.dataDir), (req, res) => this.handleRequest(req, res))
+      : http.createServer((req, res) => this.handleRequest(req, res));
+    // خطای listen (مثل پورت اشغال) به caller برمی‌گردد؛ خطاهای بعدیِ سوکت
+    // فقط لاگ می‌شوند تا یک اتصال خرابِ گوشی سرور را نیندازد.
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error): void => reject(error);
+      server.once("error", onError);
+      server.listen(wantedPort, "0.0.0.0", () => {
+        server.removeListener("error", onError);
+        server.on("error", (error) => log(`خطای اتصال گوشی: ${error.message}`));
+        resolve();
+      });
+    });
+    const address = server.address();
+    this.actualPort = typeof address === "object" && address ? address.port : wantedPort;
+    this.server = server;
+    log(`پل موقت اسکن گوشی فعال شد روی ${this.tlsEnabled ? "https" : "http"}://0.0.0.0:${this.actualPort} (PIN: ${this.pin})`);
+  }
+
+  async stop(): Promise<void> {
+    const server = this.server;
+    this.server = null;
+    this.actualPort = null;
+    if (!server) return;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 2000);
+      timer.unref?.();
+      // اتصال‌های بازِ نگه‌داشته‌شده (keep-alive گوشی) بسته می‌شوند تا close برگردد.
+      (server as http.Server).closeAllConnections?.();
+      server.close(() => resolve());
+    });
+  }
+
+  /** گواهی خودامضا با SAN شامل localhost و IPهای فعلی شبکه؛ در dataDir
+   *  کش می‌شود تا پذیرشِ یک‌بارهٔ کاربر در مرورگر گوشی با ری‌استارت‌ها باطل نشود. */
+  private async certificate(dataDir?: string): Promise<{ key: string; cert: string }> {
+    const file = join(dataDir ?? configureLocalStorage(), "phone-scan-cert.json");
+    try {
+      const cached = JSON.parse(readFileSync(file, "utf8")) as { cert?: string; private?: string };
+      if (cached.cert && cached.private) return { key: cached.private, cert: cached.cert };
+    } catch { /* هنوز کشی نیست — در ادامه ساخته می‌شود */ }
+    const altNames: Array<{ type: 2; value: string } | { type: 7; ip: string }> = [{ type: 2, value: "localhost" }];
+    for (const ip of SettingsController.lanAddresses()) altNames.push({ type: 7, ip });
+    const generated = await generateSelfSigned([{ name: "commonName", value: "Dar POS Phone Scan" }], {
+      // ده سال اعتبار تا پذیرش یک‌بارهٔ کاربر در گوشی ماندگار بماند
+      notAfterDate: new Date(Date.now() + 3650 * 24 * 60 * 60 * 1000),
+      keySize: 2048,
+      algorithm: "sha256",
+      extensions: [{ name: "subjectAltName", altNames }],
+    });
+    try {
+      writeFileSync(file, JSON.stringify({ cert: generated.cert, private: generated.private }), { mode: 0o600 });
+    } catch { /* اگر نوشتن نشد، فقط بدون کش ادامه می‌دهیم */ }
+    return { key: generated.private, cert: generated.cert };
+  }
+
+  private handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const path = (req.url || "/").split("?")[0];
+    if (req.method === "GET" && (path === "/" || path === "/index.html")) {
+      this.send(res, 200, PHONE_SCAN_HTML, "text/html; charset=utf-8");
+      return;
+    }
+    if (req.method === "GET" && path === "/zxing.js") {
+      this.send(res, 200, ZXING_UMD_JS, "application/javascript; charset=utf-8", "public, max-age=86400");
+      return;
+    }
+    if (req.method === "POST" && path === "/api/pair") {
+      this.readJson(req, res, (body) => {
+        const { pin, token } = body as { pin?: unknown; token?: unknown };
+        // ادامهٔ جفت‌شدن با token قبلی (بعد از ری‌استارت سرور یا بازگشت به صفحه).
+        if (typeof token === "string" && token === this.token) {
+          this.send(res, 200, JSON.stringify({ token: this.token }), "application/json");
+          return;
+        }
+        if (typeof pin === "string" && pin === this.pin) {
+          this.token = randomBytes(16).toString("hex");
+          this.send(res, 200, JSON.stringify({ token: this.token }), "application/json");
+          return;
+        }
+        this.send(res, 403, JSON.stringify({ error: "PIN درست نیست." }), "application/json");
+      });
+      return;
+    }
+    if (req.method === "POST" && path === "/api/scan") {
+      this.readJson(req, res, (body) => {
+        const { token, code } = body as { token?: unknown; code?: unknown };
+        if (typeof token !== "string" || token !== this.token) {
+          this.send(res, 401, JSON.stringify({ error: "unauthorized" }), "application/json");
+          return;
+        }
+        if (typeof code !== "string" || !code.trim() || code.trim().length > 256) {
+          this.send(res, 400, JSON.stringify({ error: "bad code" }), "application/json");
+          return;
+        }
+        const value = code.trim();
+        const now = Date.now();
+        const last = this.lastAtByCode.get(value) || 0;
+        if (now - last <= DEDUPE_MS) {
+          this.send(res, 200, JSON.stringify({ ok: true, duplicate: true }), "application/json");
+          return;
+        }
+        this.lastAtByCode.set(value, now);
+        if (this.lastAtByCode.size > 500) {
+          for (const [cached, at] of this.lastAtByCode) if (now - at > DEDUPE_MS) this.lastAtByCode.delete(cached);
+        }
+        this.scans.push({ code: value, at: now });
+        if (this.scans.length > MAX_SCANS) this.scans.splice(0, this.scans.length - MAX_SCANS);
+        this.send(res, 200, JSON.stringify({ ok: true }), "application/json");
+      });
+      return;
+    }
+    this.send(res, 404, "not found", "text/plain; charset=utf-8");
+  }
+
+  private send(res: http.ServerResponse, status: number, body: string, contentType: string, cacheControl = "no-store"): void {
+    res.writeHead(status, { "Content-Type": contentType, "Cache-Control": cacheControl });
+    res.end(body);
+  }
+
+  /** JSON دستی با سقف حجم — بدون وابستگی به express این پل سبک می‌ماند. */
+  private readJson(req: http.IncomingMessage, res: http.ServerResponse, next: (body: unknown) => void): void {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let answered = false;
+    req.on("data", (chunk: Buffer) => {
+      if (answered) return;
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        // پاسخ ۴۱۳ بلافاصله می‌رود و بقیهٔ بدنه دور ریخته می‌شود (سوکت
+        // نابود نمی‌شود تا گوشی/کلاینت پاسخ را واقعاً دریافت کند).
+        answered = true;
+        this.send(res, 413, JSON.stringify({ error: "payload too large" }), "application/json");
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      if (answered) return;
+      try {
+        next(JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"));
+      } catch {
+        this.send(res, 400, JSON.stringify({ error: "bad json" }), "application/json");
+      }
+    });
+    req.on("error", () => { /* اتصال نیمه‌کاره — چیزی برای پاسخ دادن نیست */ });
+  }
+}
+
+/** مسیرهای دسکتاپ — زیر پیشوند /api سرور اصلی؛ LocalAuthGuard جهانی مثل
+ *  بقیهٔ مسیرها JWT می‌خواهد، پس PIN فقط برای کاربرِ واردشده فاش می‌شود. */
+@Controller("phone-scan")
+export class PhoneScanController {
+  constructor(private readonly bridge: PhoneScanBridge) {}
+
+  @Get("status")
+  status(): PhoneScanStatus & { urls: string[] } {
+    const info = this.bridge.status();
+    const scheme = info.tls ? "https" : "http";
+    return {
+      ...info,
+      urls: [`127.0.0.1`, ...info.lan].map((host) => `${scheme}://${host}:${info.port}`),
+    };
+  }
+
+  @Get("pin")
+  pin(): { pin: string } {
+    return { pin: this.bridge.currentPin };
+  }
+
+  @Get("pull")
+  pull(@Query("after") after?: string): { scans: PhoneScanEntry[]; now: number } {
+    const parsed = Number(after);
+    return this.bridge.pull(Number.isFinite(parsed) ? parsed : 0);
+  }
+}
+
+@Module({
+  controllers: [PhoneScanController],
+  providers: [PhoneScanBridge],
+  exports: [PhoneScanBridge],
+})
+export class PhoneScanModule {}

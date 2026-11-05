@@ -20,10 +20,12 @@ import { QuotesModule } from "./modules/quotes.module";
 import { LicenseModule } from "./license/license.module";
 import { InstallmentsModule } from "./modules/installments.module";
 import { OrdersModule } from "./modules/orders.module";
+// پل موقت اسکن با دوربین گوشی (دور ۵۳) — با حذف همین دو سطر کاملاً جداست.
+import { PhoneScanModule } from "./phone-scan/phone-scan-bridge";
 import { OwnerConfigModule } from "./owner-config";
 
 @Module({
-  imports: [PrismaModule, LicenseModule, AuthModule, OwnerConfigModule, CatalogModule, ContactsModule, InventoryModule, SalesModule, PurchasesModule, CashModule, UsersModule, SettingsModule, DashboardModule, ReportsModule, ExpensesModule, AuditModule, StocktakeModule, QuotesModule, InstallmentsModule, OrdersModule],
+  imports: [PrismaModule, LicenseModule, AuthModule, OwnerConfigModule, CatalogModule, ContactsModule, InventoryModule, SalesModule, PurchasesModule, CashModule, UsersModule, SettingsModule, DashboardModule, ReportsModule, ExpensesModule, AuditModule, StocktakeModule, QuotesModule, InstallmentsModule, OrdersModule, PhoneScanModule],
   providers: [{ provide: APP_GUARD, useClass: LocalAuthGuard }],
 })
 export class AppModule {}

@@ -6,6 +6,8 @@ import { applyBrandWindowTitle, loadBrand, useBrand } from "./lib/brand";
 import { applyCurrencyList, applyLocaleSettings, LANGS, licensePlanLabel, t, useLanguage } from "./i18n";
 import { LicenseExpiryBanner, type PageId, Shell, TrialBanner } from "./components/Shell";
 import { CustomerDisplay } from "./components/CustomerDisplay";
+// پل موقت اسکن با گوشی (دور ۵۳) — listener بدون رابط؛ با حذف همین تغییرات به‌کل جداست.
+import { PhoneScanListener } from "./components/PhoneScan";
 import { SectionHead } from "./components/SectionHead";
 
 // Rarely-opened screens load on demand: the main bundle stays lean, which
@@ -121,6 +123,15 @@ export default function App() {
   }, []);
 
   useEffect(() => { if (page === "pos") setPosMounted(true); }, [page]);
+  // اسکنِ گوشی وقتی صفحهٔ صندوق باز نیست → فقط پیام (دور ۵۳، موقت)
+  useEffect(() => {
+    const fromPhone = (event: Event): void => {
+      const detail = (event as CustomEvent<{ code?: string }>).detail;
+      if (detail?.code) notify(t("بارکد از گوشی: {code}", { code: detail.code }));
+    };
+    window.addEventListener("darpos:phone-scan-notify", fromPhone);
+    return () => window.removeEventListener("darpos:phone-scan-notify", fromPhone);
+  }, []);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -250,7 +261,7 @@ export default function App() {
           صفحه را از دید خارج می‌کند. */}
       {posMounted && <div className="pos-keepalive" hidden={page !== "pos"}><PosPage notify={notify} user={user} active={page === "pos" && !locked}/></div>}
     </Suspense>;
-  return <><div ref={appRef}><Shell page={page} onNavigate={setPage} user={user} onLogout={logout} shopName={shopName} onLock={() => setLocked(true)} onHelp={() => setShowHelp(true)} dark={dark} onToggleDark={() => setDark((value) => !value)} banner={banner}>{content}</Shell></div>{locked && <LockScreen username={user.username} onUnlock={() => setLocked(false)}/>}{showActivation && <Suspense fallback={<Loading/>}><ActivationModal onClose={() => setShowActivation(false)} onActivated={() => { setShowActivation(false); refreshLicense(); }} notify={notify}/></Suspense>}{notice && <div className={`toast ${notice.kind}`}>{notice.kind === "success" ? <CircleCheck size={18}/> : <CircleAlert size={18}/>}<span>{t(notice.text)}</span></div>}{showHelp && <ShortcutsHelp onClose={() => setShowHelp(false)}/>}<div className="page-reader" aria-live="polite" lang={lang}>{labels[page]}</div></>;
+  return <><div ref={appRef}><Shell page={page} onNavigate={setPage} user={user} onLogout={logout} shopName={shopName} onLock={() => setLocked(true)} onHelp={() => setShowHelp(true)} dark={dark} onToggleDark={() => setDark((value) => !value)} banner={banner}>{content}</Shell></div>{locked && <LockScreen username={user.username} onUnlock={() => setLocked(false)}/>}{showActivation && <Suspense fallback={<Loading/>}><ActivationModal onClose={() => setShowActivation(false)} onActivated={() => { setShowActivation(false); refreshLicense(); }} notify={notify}/></Suspense>}{notice && <div className={`toast ${notice.kind}`}>{notice.kind === "success" ? <CircleCheck size={18}/> : <CircleAlert size={18}/>}<span>{t(notice.text)}</span></div>}{showHelp && <ShortcutsHelp onClose={() => setShowHelp(false)}/>}<div className="page-reader" aria-live="polite" lang={lang}>{labels[page]}</div><PhoneScanListener active={Boolean(user) && !locked}/></>;
 }
 
 /** True when running inside the Tauri desktop shell (not a plain browser). */

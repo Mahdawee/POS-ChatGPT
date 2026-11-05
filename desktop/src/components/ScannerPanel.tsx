@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Check, CircleAlert, Keyboard, ScanBarcode } from "lucide-react";
 import { t, dateTime } from "../i18n";
 import { beep, classifyBarcode, lastScannerTest, rememberScannerTest, saveScannerSettings, scannerSettings, SCANNER_DEVICES, type ScannerTest } from "../lib/scanner";
+// پل موقت اسکن با گوشی (دور ۵۳) — با حذف همین دو سطر به‌کل جداست.
+import { PhoneScanPanel } from "./PhoneScan";
 
 /**
  * Live connection test for USB barcode/QR readers. Scanners type their code
@@ -71,6 +73,8 @@ export function ScannerPanel() {
       <label className="check-line"><input type="checkbox" checked={settings.beep} onChange={(e) => { const next = { ...settings, beep: e.target.checked }; setSettings(next); saveScannerSettings(next); }}/>{t("صدای بوق پس از اسکن موفق")}</label>
       <label className="compact-field"><span>{t("پایان اسکن با")}</span><select value={settings.endKey} onChange={(e) => { const next = { ...settings, endKey: e.target.value as typeof settings.endKey }; setSettings(next); saveScannerSettings(next); }}><option value="both">{t("Enter یا Tab (پیشنهادی)")}</option><option value="enter">Enter</option><option value="tab">Tab</option></select></label>
     </div>
+
+    <PhoneScanPanel/>
 
     <div className="hint-box"><Keyboard size={17}/>{t("بارکدخوان‌های رایج (Honeywell، Zebra، Sunlux، Netum، Tera و…) به‌صورت «صفحه‌کلید USB» کار می‌کنند و درایور لازم ندارند؛ به درگاه USB وصل کنید و همین آزمون را اجرا کنید. اگر اسکن نشد، کابل را در درگاه پشتی سیستم بزنید و مطمئن شوید چراغ وسیله روشن است.")}</div>
     <div className="table-wrap"><table><thead><tr><th>{t("وسیله")}</th><th>{t("نوع خواندن")}</th><th>{t("نکته")}</th></tr></thead><tbody>{SCANNER_DEVICES.map((device) => <tr key={device.name}><td><b dir="ltr">{device.name}</b></td><td>{t(device.kind)}</td><td className="muted">{t(device.note)}</td></tr>)}</tbody></table></div>
