@@ -237,12 +237,17 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
       // پورت ساده را گزارش کند؛ سقف ۳ ثانیه فقط بیمهٔ حالت‌های غیرعادی است.
       await new Promise<void>((resolvePlain) => {
         let listening = false;
+        // شمارهٔ نسل تلاش: callback دیرهنگامِ listen ناموفق قبلی می‌تواند
+        // بعد از موفقیت تلاش بعدی اجرا شود — فقط آخرین نسل حق ثبت دارد.
+        let attempt = 0;
         const timer = setTimeout(resolvePlain, 3000);
         timer.unref?.();
         const done = (): void => { clearTimeout(timer); resolvePlain(); };
         const tryPlain = (onPort: number, left: number): void => {
+          attempt += 1;
+          const mine = attempt;
           plain.once("error", (error: Error) => {
-            if (listening) return; // خطای دیرهنگام بعد از موفقیت — نادیده
+            if (listening || mine !== attempt) return; // خطای دیرهنگام — نادیده
             const code = (error as NodeJS.ErrnoException).code;
             if (code === "EADDRINUSE" && left > 0) {
               log(`پورت سادهٔ ${onPort} اشغال است؛ پورت بعدی امتحان می‌شود…`);
@@ -254,6 +259,7 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
             }
           });
           plain.listen(onPort, "0.0.0.0", () => {
+            if (mine !== attempt) return; // callback تلاش قدیمی — دیرهنگام
             if (this.plainServer !== plain) { done(); return; } // همین حالا stop شده است
             listening = true;
             this.plainPort = onPort;

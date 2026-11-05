@@ -275,6 +275,40 @@ describe("PhoneScanBridge (پل موقت اسکن گوشی)", () => {
     }
   });
 
+  it("پورت همدم ساده اشغال باشد، پورت بعدی خودکار امتحان می‌شود و لاگ تقلبی نمی‌شود", async () => {
+    // PHONE_SCAN_HTTP_PORT را روی یک پورت اشغال می‌گذاریم؛ همدم باید روی
+    // پورت بعدی (busy+1) بنشیند و فقط همان را در لاگ و status گزارش کند
+    // (باگ کشف‌شده در بازرسی زنده: callback ناموفقِ listen هم لاگ می‌زد).
+    const blocker = http.createServer();
+    await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", () => resolve()));
+    const busyPort = (blocker.address() as { port: number }).port;
+    const previousHttp = process.env.PHONE_SCAN_HTTP_PORT;
+    process.env.PHONE_SCAN_HTTP_PORT = String(busyPort);
+    const logs: string[] = [];
+    let BridgeCtor: typeof PhoneScanBridge | null = null;
+    jest.isolateModules(() => {
+      const fresh = require("./phone-scan-bridge") as typeof import("./phone-scan-bridge");
+      BridgeCtor = fresh.PhoneScanBridge;
+    });
+    const bridge = new (BridgeCtor as unknown as typeof PhoneScanBridge)();
+    try {
+      await bridge.start({ tls: true, port: 0, dataDir: mkdtempSync(join(tmpdir(), "phone-scan-plainbump-")), log: (message) => { logs.push(message); } });
+      const info = bridge.status();
+      expect(info.httpPort).toBe(busyPort + 1);
+      // لاگِ «اشغال» هست؛ ولی «نشانی ساده» فقط برای پورت نهایی، نه پورت اشغال
+      expect(logs.some((line) => line.includes(`پورت سادهٔ ${busyPort} اشغال است`))).toBe(true);
+      expect(logs.some((line) => line.includes(`نشانی سادهٔ گوشی (بدون هشدار گواهی): http://0.0.0.0:${busyPort}`))).toBe(false);
+      expect(logs.some((line) => line.includes(`نشانی سادهٔ گوشی (بدون هشدار گواهی): http://0.0.0.0:${busyPort + 1}`))).toBe(true);
+      const page = await fetch(`http://127.0.0.1:${busyPort + 1}/`);
+      expect(page.status).toBe(200);
+    } finally {
+      await bridge.stop();
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
+      if (previousHttp === undefined) delete process.env.PHONE_SCAN_HTTP_PORT;
+      else process.env.PHONE_SCAN_HTTP_PORT = previousHttp;
+    }
+  });
+
   it("صفحهٔ ساده، PIN را از انتهای نشانی (#۱۲۳۴) می‌خواند تا خودکار جفت شود", async () => {
     // نشانی‌ای که QR دسکتاپ می‌سازد: http://IP:PORT/#1234 — صفحه باید عبارت
     // را در JS خود داشته باشد (خواندن hash و کلیک خودکار دکمهٔ اتصال)
