@@ -428,7 +428,7 @@ export function SerialsPanel({ products }: { products: Product[] }) {
     </div>
     {productId && rows && (rows.length ? <div className="table-wrap"><table>
       <thead><tr><th>{t("شماره")}</th><th>{t("سریال")}</th><th>{t("وضعیت")}</th><th>{t("یادداشت")}</th><th>{t("زمان ثبت")}</th></tr></thead>
-      <tbody>{rows.map((unit, idx) => <tr key={unit.id}><td dir="ltr" className="text-right"><b>{unit.serial}</b></td><td className="muted mono">{idx + 1}</td><td>{statusLabel(unit.status)}</td><td className="muted">{unit.note || "—"}</td><td className="muted">{dateTime(unit.createdAt)}</td></tr>)}</tbody>
+      <tbody>{rows.map((unit, idx) => <tr key={unit.id}><td className="muted mono">{idx + 1}</td><td dir="ltr" className="text-right"><b>{unit.serial}</b></td><td>{statusLabel(unit.status)}</td><td className="muted">{unit.note || "—"}</td><td className="muted">{dateTime(unit.createdAt)}</td></tr>)}</tbody>
     </table></div> : <div className="empty"><b>{t("سریالی نیست")}</b><span>{t("سریال‌ها هنگام ثبت خرید وارد می‌شوند.")}</span></div>)}
     {!serialized.length && <div className="empty"><b>{t("کالای سریال‌دار ندارید")}</b><span>{t("در صفحهٔ کالاها، گزینهٔ «سریال‌دار» را فعال کنید.")}</span></div>}
   </section>;

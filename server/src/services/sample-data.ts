@@ -10,7 +10,7 @@ import { OrdersController } from "../modules/orders.module";
 import { InstallmentsController } from "../modules/installments.module";
 import { ExpensesController } from "../modules/expenses.module";
 import { CashController } from "../modules/cash.module";
-import { SaleDto, PurchaseDto, QuoteDto, CreateOrderDto, DeliverOrderDto, CreateInstallmentPlanDto, ExpenseDto, CashMovementDto, OpenCashDto, SaleReturnDto, PurchaseReturnDto, PayInstallmentDto } from "../dto";
+import { SaleDto, PurchaseDto, QuoteDto, CreateOrderDto, DeliverOrderDto, CreateInstallmentPlanDto, ExpenseDto, CashMovementDto, OpenCashDto, SaleReturnDto, PurchaseReturnDto, PayInstallmentDto, VoidDto } from "../dto";
 
 /**
  * بازنشانی کامل داده‌های فروشگاه + ساخت دیتای نمونهٔ همه‌جانبه.
@@ -243,9 +243,14 @@ export class SampleDataService {
     // فاکتوری که برگشت جزئی می‌شود (نوشابه) و فاکتور اقساطی (گوشی برای حسین)
     const returnedSale = await sale({ items: [{ productId: soda.id, quantity: 5 }, { productId: soap.id, quantity: 3 }], paymentMethod: "CASH" }, cashierUser, 2);
     const installmentSale = await sale({ customerId: hussein.id, items: [{ productId: phone.id, quantity: 1, serials: ["SM-A15-002"] }], paymentMethod: "CREDIT", amountPaid: 0 }, admin, 1);
-    // فاکتوری که ابطال می‌شود (ثبت اشتباه)
+    // فاکتوری که ابطال می‌شود (ثبت اشتباه) — از همان مسیر واقعی ابطال، تا
+    // کالای آن (۳ بسته چای) مثل ابطال عادی به انبار برگردد و گردش موجودی
+    // با فاکتورِ باطل‌شده سازگار بماند.
     const voidedSale = await sale({ items: [{ productId: tea.id, quantity: 3 }], paymentMethod: "CASH" }, cashierUser, 1);
-    await this.prisma.sale.update({ where: { id: voidedSale.id }, data: { voidedAt: this.daysAgo(1, 12), voidReason: "ثبت اشتباه شمارهٔ کالا — بازخواست مشتری", voidedBy: user.id } });
+    const voidDto = new VoidDto();
+    voidDto.reason = "ثبت اشتباه شمارهٔ کالا — بازخواست مشتری";
+    await this.sales.voidSale(voidedSale.id, voidDto, admin);
+    await this.prisma.sale.update({ where: { id: voidedSale.id }, data: { voidedAt: this.daysAgo(1, 12) } });
     // برگشت جزئی: ۲ قوطی نوشابه از فاکتور برگشتی (موجودی برمی‌گردد، صندوق تنظیم می‌شود)
     const saleReturnDto = new SaleReturnDto();
     saleReturnDto.items = [{ productId: soda.id, quantity: 2 }];
