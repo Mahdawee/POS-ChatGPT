@@ -503,10 +503,10 @@ export function PosPage({ notify, user, active = true }: { notify: Notify; user:
       const plu = code.slice(1, 6);
       const weight = Number(code.slice(6, 11)) / 1000;
       const scaled = products.find((p) => p.sku === plu);
-      if (scaled && weight > 0) { scannerBeep((cart[scaled.id] || 0) + weight <= scaled.stock); add(scaled, Math.round(weight * 1000) / 1000); setQuery(""); return; }
+      if (scaled && weight > 0) { scannerBeep((cart[scaled.id] || 0) + weight <= freeStock(scaled)); add(scaled, Math.round(weight * 1000) / 1000); setQuery(""); return; }
     }
     const exact = products.find((p) => p.barcode === code || p.sku.toLowerCase() === code.toLowerCase());
-    if (exact) { scannerBeep((cart[exact.id] || 0) + 1 <= exact.stock); add(exact); setQuery(""); }
+    if (exact) { scannerBeep((cart[exact.id] || 0) + 1 <= freeStock(exact)); add(exact); setQuery(""); }
     else if (code) { scannerBeep(false); setError(t("کالایی با این بارکد یا کد پیدا نشد.")); }
   };
   const quantity = (id: string, change: number) => setCart((previous) => { const next = (previous[id] || 0) + change; if (next <= 0) { const copy = { ...previous }; delete copy[id]; return copy; } const product = products.find((p) => p.id === id); if (product && next > freeStock(product)) { setError(t("موجودی {name} کافی نیست.", { name: product.name })); return previous; } return { ...previous, [id]: next }; });
@@ -527,15 +527,24 @@ export function PosPage({ notify, user, active = true }: { notify: Notify; user:
   const resumeOrder = (order: HeldOrder) => {
     const restored: Record<string, number> = {};
     let missing = 0;
+    let reduced = 0;
     for (const item of order.items) {
       const product = products.find((p) => p.id === item.productId);
       if (!product) { missing += 1; continue; }
-      restored[item.productId] = (restored[item.productId] || 0) + item.quantity;
+      // Stock may have moved since the order was parked (another sale, a
+      // delivery, an adjustment) — cap each line at what is free right now,
+      // or drop it entirely, instead of restoring an unsellable basket.
+      const room = freeStock(product) - (restored[item.productId] || 0);
+      if (room <= 0) { reduced += 1; continue; }
+      const take = Math.min(room, item.quantity);
+      if (take < item.quantity) reduced += 1;
+      restored[item.productId] = (restored[item.productId] || 0) + take;
     }
     setCart(restored); setCustomerId(order.customerId || ""); setPaid(0);
     const next = held.filter((entry) => entry.id !== order.id);
     setHeld(next); writeHeldOrders(next); setShowHeld(false);
     if (missing) notify(t("{count} قلم از این فاکتور دیگر موجود نیست و اضافه نشد.", { count: missing }), "error");
+    if (reduced) notify(t("{count} قلم به‌دلیل کمبود موجودی با تعداد کمتر یا حذف شد.", { count: reduced }), "error");
   };
   const dropHeld = (order: HeldOrder) => {
     const next = held.filter((entry) => entry.id !== order.id);

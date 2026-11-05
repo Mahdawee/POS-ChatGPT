@@ -1297,7 +1297,14 @@ export const pashto: Record<string, string> = {
   "حالت تک‌کامپیوتر ذخیره شد. {hint}": "یوکمپیوټر حالت خوندي شو. {hint}",
   "در حالت توسعه: فرمان npm run dev را کاملاً ببندید (Ctrl+C) و دوباره اجرا کنید تا حالت شبکه اعمال شود.": "د پراختیا په حالت کې: د npm run dev فرمان بشپړ بنده کړئ (Ctrl+C) او بیا یې چلولو ته ورشئ چې د شبکې حالت پلي شي.",
   "برنامه را کاملاً ببندید و دوباره باز کنید.": "برنامه بشپړ بنده کړئ او بیا یې پرانیستئ.",
-  "وضعیت فعلی این دستگاه: تک‌کامپیوتر. تا برنامه را باز و بسته نکنید، حالت سرور اعمال نمی‌شود و دستگاه‌های دیگر نمی‌توانند وصل شوند.": "د همدې کمپیوټر اوسنی حالت: یوکمپیوټر. تر څو برنامه نه بنده او نه پرانیستل شوې، د سرور حالت پلی نه کیږي او نور کمپیوټر نه شي وصل کیدای."
+  "وضعیت فعلی این دستگاه: تک‌کامپیوتر. تا برنامه را باز و بسته نکنید، حالت سرور اعمال نمی‌شود و دستگاه‌های دیگر نمی‌توانند وصل شوند.": "د همدې کمپیوټر اوسنی حالت: یوکمپیوټر. تر څو برنامه نه بنده او نه پرانیستل شوې، د سرور حالت پلی نه کیږي او نور کمپیوټر نه شي وصل کیدای.",
+  "بسته — تعداد قابل‌ساخت از اجزا": "بنډل — د اجزاوو له مخې د جوړېدو وړ شمېر",
+  "این بسته هنوز اجزایی ندارد؛ از کالاها ← اجزای بسته، اجزای آن را تعریف کنید.": "دا بنډل لا برخې نلري؛ له کالاوو ← د بنډل برخو څخه یې برخې وټاکئ.",
+  "تخفیف:": "کمښت:",
+  "کاهش تعداد": "د شمېر کمول",
+  "افزایش تعداد": "د شمېر زیاتول",
+  "بسته موجودی مستقل ندارد؛ موجودی آن از اجزا ساخته می‌شود.": "بنډل جلا موجودي نه لري؛ موجودي یې د برخو څخه جوړېږي.",
+  "{count} قلم به‌دلیل کمبود موجودی با تعداد کمتر یا حذف شد.": "{count} قلمونه د کمښت موجودي له امله د کم شمېر سره یا لرې شول."
 };
 
 export const english: Record<string, string> = {
@@ -2593,5 +2600,12 @@ export const english: Record<string, string> = {
   "حالت تک‌کامپیوتر ذخیره شد. {hint}": "Single-computer mode saved. {hint}",
   "در حالت توسعه: فرمان npm run dev را کاملاً ببندید (Ctrl+C) و دوباره اجرا کنید تا حالت شبکه اعمال شود.": "In development: stop the npm run dev command entirely (Ctrl+C) and run it again so the network mode takes effect.",
   "برنامه را کاملاً ببندید و دوباره باز کنید.": "Close the app completely and open it again.",
-  "وضعیت فعلی این دستگاه: تک‌کامپیوتر. تا برنامه را باز و بسته نکنید، حالت سرور اعمال نمی‌شود و دستگاه‌های دیگر نمی‌توانند وصل شوند.": "This machine is currently in single-computer mode. Until you restart the app, server mode is not in effect and other registers cannot connect."
+  "وضعیت فعلی این دستگاه: تک‌کامپیوتر. تا برنامه را باز و بسته نکنید، حالت سرور اعمال نمی‌شود و دستگاه‌های دیگر نمی‌توانند وصل شوند.": "This machine is currently in single-computer mode. Until you restart the app, server mode is not in effect and other registers cannot connect.",
+  "بسته — تعداد قابل‌ساخت از اجزا": "Bundle — buildable count from components",
+  "این بسته هنوز اجزایی ندارد؛ از کالاها ← اجزای بسته، اجزای آن را تعریف کنید.": "This bundle has no components yet; define them under Products → Bundle components.",
+  "تخفیف:": "Discount:",
+  "کاهش تعداد": "Decrease quantity",
+  "افزایش تعداد": "Increase quantity",
+  "بسته موجودی مستقل ندارد؛ موجودی آن از اجزا ساخته می‌شود.": "A bundle has no stock of its own; its availability is built from its components.",
+  "{count} قلم به‌دلیل کمبود موجودی با تعداد کمتر یا حذف شد.": "{count} item(s) came back with a lower quantity or were dropped due to low stock."
 };
