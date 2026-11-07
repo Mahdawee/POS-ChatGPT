@@ -1777,6 +1777,11 @@ export function SettingsPage({ notify }: { notify: Notify }) {
         window.setTimeout(() => window.location.reload(), 900);
       } else if (networkMode === "server") {
         notify(t("حالت سرور شبکه ذخیره شد. {hint}", { hint: devRestartHint }));
+      } else if (!inTauri) {
+        // در مرورگر پاک‌کردن نشانی سرور با یک بارگذاری دوباره اعمال می‌شود؛
+        // «بستن برنامه» فقط برای برنامهٔ دسکتاپ معنا دارد.
+        notify(t("حالت تک‌کامپیوتر ذخیره شد؛ برنامه دوباره بارگذاری می‌شود…"));
+        window.setTimeout(() => window.location.reload(), 900);
       } else {
         notify(t("حالت تک‌کامپیوتر ذخیره شد. {hint}", { hint: devRestartHint }));
       }
@@ -1893,7 +1898,7 @@ export function SettingsPage({ notify }: { notify: Notify }) {
       <button type="button" className={tab === "store" ? "active" : ""} onClick={() => setTab("store")}>{t("فروشگاه")}</button>
       <button type="button" className={tab === "print" ? "active" : ""} onClick={() => setTab("print")}>{t("رسید و چاپ")}</button>
       <button type="button" className={tab === "scanner" ? "active" : ""} onClick={() => setTab("scanner")}>{t("بارکدخوان / QR")}</button>
-      {inTauri && <button type="button" className={tab === "network" ? "active" : ""} onClick={() => setTab("network")}>{t("شبکه")}</button>}
+      <button type="button" className={tab === "network" ? "active" : ""} onClick={() => setTab("network")}>{t("شبکه")}</button>
       <button type="button" className={tab === "system" ? "active" : ""} onClick={() => setTab("system")}>{t("سیستم")}</button>
       <button type="button" className={tab === "license" ? "active" : ""} onClick={() => setTab("license")}>{t("لایسنس")}</button>
     </div>
@@ -1920,7 +1925,8 @@ export function SettingsPage({ notify }: { notify: Notify }) {
     {tab === "scanner" && <section className="surface"><SectionHead title={t("بارکدخوان و اسکنر QR")} subtitle={t("آزمون اتصال و تنظیم رفتار اسکن")}/><ScannerPanel/></section>}
     {tab === "network" && <><section className="surface"><SectionHead title={t("شبکهٔ محلی")} subtitle={t("چند کامپیوتر در فروشگاه؛ یک دستگاه سرور و بقیه مشتری")}/>
       <div className="form-grid single">
-        <Field label={t("حالت اجرا")}><select value={networkMode} onChange={(e) => { setNetworkMode(e.target.value as typeof networkMode); setConnTest({ state: "idle" }); }}><option value="local">{t("تک‌کامپیوتر (پیش‌فرض)")}</option><option value="server">{t("سرور شبکه (میزبان دیتابیس)")}</option><option value="client">{t("مشتری شبکه (اتصال به سرور)")}</option></select></Field>
+        <Field label={t("حالت اجرا")}><select value={networkMode} onChange={(e) => { setNetworkMode(e.target.value as typeof networkMode); setConnTest({ state: "idle" }); }}><option value="local">{t("تک‌کامپیوتر (پیش‌فرض)")}</option>{inTauri && <option value="server">{t("سرور شبکه (میزبان دیتابیس)")}</option>}<option value="client">{t("مشتری شبکه (اتصال به سرور)")}</option></select></Field>
+        {!inTauri && <div className="hint-box">{t("در مرورگر می‌توانید این دستگاه را به «مشتری شبکه» تبدیل کنید و به سرور فروشگاه وصل شوید. برای تبدیل یک دستگاه به «سرور شبکه» (میزبان دیتابیس)، برنامهٔ دسکتاپ نصب‌شده را روی همان دستگاه باز کنید و از همین صفحه حالت سرور را فعال کنید.")}</div>}
         {networkMode === "server" && <div className="hint-box"><b className="block" style={{ marginBottom: 4 }}>{t("این دستگاه میزبان دیتابیس فروشگاه می‌شود.")}</b>{t("برنامه را کاملاً ببندید و دوباره باز کنید؛ سپس در ویندوز اجازهٔ دسترسی فایروال برای برنامه بدهید (پورت ۴۳۱۷). راهنمای کامل در فایل network-guide.md همراه برنامه است.")}{import.meta.env.DEV && <b className="block" style={{ marginTop: 6 }}>{t("در حالت توسعه: فرمان npm run dev را کاملاً ببندید (Ctrl+C) و دوباره اجرا کنید تا حالت شبکه اعمال شود.")}</b>}</div>}
         {networkMode === "server" && (netInfo?.mode === "server"
           ? <div className="hint-box green"><b className="block">{t("سرور شبکه فعال است — دستگاه‌های دیگر می‌توانند وصل شوند:")}</b><span className="network-urls">{netInfo.lan.length ? netInfo.lan.map((ip) => <code key={ip} dir="ltr">{`http://${ip}:4317`}</code>) : <span>{t("نشانی شبکه پیدا نشد؛ اتصال شبکهٔ دستگاه را بررسی کنید.")}</span>}</span></div>

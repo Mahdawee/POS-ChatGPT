@@ -15,7 +15,7 @@
 //   E2E_EXECUTABLE_PATH=…             مسیر کرومیوم جایگزین (اگر مرورگر
 //                                     پیش‌فرض playwright در دسترس نیست)
 //
-// سناریوها (۳۰ چک): ورود، گارد تغییر اجباری گذرواژهٔ پیش‌فرض در نصب تازه،
+// سناریوها (۳۳ چک در اجرای سالم؛ چک ۳۴م فقط در صورت خطای غیرمنتظره): ورود، گارد تغییر اجباری گذرواژهٔ پیش‌فرض در نصب تازه،
 // ثبت سریع کالا با کد خودکار، اسکن بارکد با گوشیِ شبیه‌سازی‌شده (پل PIN)
 // داخل فرم کالا، «ذخیره و کالای بعدی»، Enter، لیست سبک صندوق
 // (/products/pos)، کد خودکار مشتری، اسکن خارج از صندوق (نباید بی‌سروصدا
@@ -308,6 +308,21 @@ try {
     await page.getByRole("button", { name: navName, exact: true }).first().click().catch(() => {});
     await page.waitForTimeout(450);
   }
+
+  // ── ۱۴) رگرسیون بخش شبکه: تب شبکه باید در مرورگر هم دیده شود (تنها حالت
+  // «سرور شبکه» که به برنامهٔ دسکتاپ وابسته است، در مرورگر پنهان می‌شود).
+  await page.getByRole("button", { name: "تنظیمات", exact: true }).first().click();
+  await page.waitForTimeout(800);
+  const netTab = page.getByRole("button", { name: "شبکه", exact: true });
+  check("تنظیمات: تب شبکه در مرورگر دیده می‌شود", (await netTab.count()) === 1);
+  await netTab.click();
+  await page.waitForTimeout(600);
+  const optLocal = await page.locator('select option[value="local"]').count();
+  const optClient = await page.locator('select option[value="client"]').count();
+  const optServer = await page.locator('select option[value="server"]').count();
+  const netHint = (await page.locator("section.surface .hint-box").allTextContents()).join(" ");
+  check("تنظیمات: شبکه در مرورگر — تک‌کامپیوتر/مشتری موجود، سرور (مخصوص دسکتاپ) پنهان با راهنما", optLocal === 1 && optClient === 1 && optServer === 0 && netHint.includes("مشتری شبکه"), `local=${optLocal} client=${optClient} server=${optServer}`);
+
   check("ممیزی انتشار: بدون خطای کنسول/کرش/5xx در کل اجرا", consoleErrors.length === 0, consoleErrors.slice(0, 3).join(" | "));
 } catch (e) {
   check("اجرای کامل سناریو (خطای غیرمنتظره: " + e.message.split("\n").slice(0, 4).join(" | ").slice(0, 160) + ")", false);
