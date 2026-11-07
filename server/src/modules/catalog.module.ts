@@ -1,7 +1,8 @@
-import { BadRequestException, Body, Controller, Get, Module, NotFoundException, Param, Patch, Post, Put, Query } from "@nestjs/common";
-import { AdminOnly, CurrentUser, SessionUser } from "../auth";
+import { BadRequestException, Body, Controller, Delete, Get, Module, NotFoundException, Param, Patch, Post, Put, Query, Res } from "@nestjs/common";
+import type { Response } from "express";
+import { AdminOnly, CurrentUser, Public, SessionUser } from "../auth";
 import { AUTO_CODE_ATTEMPTS, autoCodeRetryDelay, isAutoCodeRace, serialized } from "../auto-code";
-import { BundleDto, CategoryDto, ProductDto, ProductImportDto } from "../dto";
+import { BundleDto, CategoryDto, ProductDto, ProductImageDto, ProductImportDto } from "../dto";
 import { PrismaService } from "../prisma.service";
 
 /**
@@ -34,6 +35,29 @@ function mapProductConflict(error: unknown): unknown {
   return error;
 }
 
+/** سقف بایت‌های عکس کالا (۲۵۶ کیلوبایت) — کلاینت خودش به ~۲۵۶ پیکسل کوچک
+ *  می‌کند، پس این فقط شبکهٔ اطمینان در برابر درخواست دستی است. */
+export const PRODUCT_IMAGE_MAX_BYTES = 256 * 1024;
+
+type DecodedProductImage = { mime: "image/webp" | "image/jpeg" | "image/png"; bytes: Buffer };
+
+/** dataURL عکس کالا را اعتبارسنجی و decode می‌کند: نوع باید WebP/JPEG/PNG
+ *  باشد، حجم زیر سقف، و magic-byteهای واقعیِ فایل با ادعای هدر بخواند —
+ *  تا فایل غیرتصویری که خود را jpeg جا زده رد شود. */
+export function decodeProductImage(data: string): DecodedProductImage {
+  const trimmed = data.trim();
+  if (trimmed.length > 420000) throw new BadRequestException("عکس کالا بیش از حد بزرگ است.");
+  const match = /^data:(image\/(?:webp|jpeg|png));base64,([A-Za-z0-9+/=\r\n]+)$/.exec(trimmed);
+  if (!match) throw new BadRequestException("فقط تصویر WebP، JPEG یا PNG برای عکس کالا پذیرفته می‌شود.");
+  const bytes = Buffer.from(match[2], "base64");
+  if (!bytes.length || bytes.length > PRODUCT_IMAGE_MAX_BYTES) throw new BadRequestException("حجم عکس کالا باید حداکثر ۲۵۶ کیلوبایت باشد.");
+  const isWebp = bytes.length > 12 && bytes.subarray(0, 4).toString("latin1") === "RIFF" && bytes.subarray(8, 12).toString("latin1") === "WEBP";
+  const isJpeg = bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  const isPng = bytes.length > 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
+  if (!isWebp && !isJpeg && !isPng) throw new BadRequestException("محتوای فایل عکس معتبر نیست.");
+  return { mime: isWebp ? "image/webp" : isJpeg ? "image/jpeg" : "image/png", bytes };
+}
+
 @Controller("categories")
 class CategoriesController {
   constructor(private readonly prisma: PrismaService) {}
@@ -59,7 +83,7 @@ export class ProductsController {
     const search = q?.trim();
     const where: { isActive: boolean; OR?: Array<{ name: { contains: string } } | { sku: { contains: string } } | { barcode: { contains: string } }> } = { isActive: archived !== "1" };
     if (search) where.OR = [{ name: { contains: search } }, { sku: { contains: search } }, { barcode: { contains: search } }];
-    return this.prisma.product.findMany({ where, include: { category: true, bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true, stock: true, reserved: true, isSerialized: true } } } }, serialUnits: { where: { status: "IN_STOCK" }, select: { id: true } } }, orderBy: { name: "asc" } });
+    return this.prisma.product.findMany({ where, include: { category: true, image: { select: { version: true } }, bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true, stock: true, reserved: true, isSerialized: true } } } }, serialUnits: { where: { status: "IN_STOCK" }, select: { id: true } } }, orderBy: { name: "asc" } });
   }
   /** لیست سبک برای صفحهٔ صندوق — فقط فیلدهایی که فروشِ سریع لازم دارد:
    *  جست‌وجو (نام/بارکد/کد)، قیمت (شامل عمده)، موجودیِ آزاد (رزرو/بسته) و
@@ -78,6 +102,7 @@ export class ProductsController {
         expiryDate: true, price: true, wholesalePrice: true, wholesaleMinQty: true,
         cost: true, stock: true, minStock: true, categoryId: true,
         category: { select: { id: true, name: true, color: true } },
+        image: { select: { version: true } },
         bundleComponents: { select: { id: true, componentId: true, quantity: true, component: { select: { id: true, name: true, sku: true, unit: true, stock: true, reserved: true, isSerialized: true } } } },
       },
     });
@@ -104,7 +129,7 @@ export class ProductsController {
     const orderBy = column === "stock" ? { stock: direction } : column === "price" ? { price: direction } : column === "cost" ? { cost: direction } : column === "sku" ? { sku: direction } : column === "expiry" ? { expiryDate: { sort: direction, nulls: "last" as const } } : { name: direction };
     const take = 100;
     const offset = Math.max(0, Number(skip) || 0);
-    const include = { category: true, bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true, stock: true, reserved: true, isSerialized: true } } } }, serialUnits: { where: { status: "IN_STOCK" }, select: { id: true } } } as const;
+    const include = { category: true, image: { select: { version: true } }, bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true, stock: true, reserved: true, isSerialized: true } } } }, serialUnits: { where: { status: "IN_STOCK" }, select: { id: true } } } as const;
     // Effective on-hand stock as a SQL expression: plain products are their
     // own stock, bundles are how many kits their components can build —
     // floor(min(component.free / qty)) — matching the client's buildableKits.
@@ -195,6 +220,45 @@ export class ProductsController {
     });
     await this.prisma.auditLog.create({ data: { action: "UPDATE", entity: "Product", entityId: id, detail: item.sku } });
     return item;
+  }
+  // ── عکس کالا ──────────────────────────────────────────────────────────
+  /** سقف حجم بایت‌های عکس — کلاینت به ~۲۵۶px کوچک می‌کند، پس معمولاً
+   *  ۱۵ تا ۶۰ کیلوبایت است؛ سقف فقط شبکهٔ اطمینان است. */
+  @Post(":id/image")
+  async uploadImage(@Param("id") id: string, @Body() dto: ProductImageDto) {
+    const product = await this.prisma.product.findUnique({ where: { id }, select: { id: true, image: { select: { version: true } } } });
+    if (!product) throw new NotFoundException("کالا پیدا نشد.");
+    const image = decodeProductImage(dto.data);
+    // نسخه یک واحد جلو می‌رود و در URL عکس (?v=) می‌نشیند — کش قدیمی
+    // هرگز عکس تازه را پنهان نمی‌کند و کشِ immutable بی‌خطر می‌ماند.
+    const version = (product.image?.version || 0) + 1;
+    await this.prisma.productImage.upsert({
+      where: { productId: id },
+      create: { productId: id, version, mime: image.mime, bytes: image.bytes },
+      update: { version, mime: image.mime, bytes: image.bytes },
+    });
+    await this.prisma.auditLog.create({ data: { action: "UPDATE", entity: "Product", entityId: id, detail: "عکس کالا" } });
+    return { version };
+  }
+  @Delete(":id/image")
+  async removeImage(@Param("id") id: string) {
+    const removed = await this.prisma.productImage.deleteMany({ where: { productId: id } });
+    if (!removed.count) throw new NotFoundException("این کالا عکس ندارد.");
+    await this.prisma.auditLog.create({ data: { action: "UPDATE", entity: "Product", entityId: id, detail: "حذف عکس کالا" } });
+    return { ok: true };
+  }
+  /** عکس عمومی است تا خود تگ <img> — که هدر Authorization ندارد — بتواند آن
+   *  را بخواند (صرفاً بندانگشتی کالاست، نه دادهٔ مالی). URL نسخه‌دار است،
+   *  پس پاسخ با کش یک‌سالهٔ immutable می‌رود و عکسِ جایگزین‌شده دیده می‌شود. */
+  @Public()
+  @Get(":id/image")
+  async getImage(@Param("id") id: string, @Res() response: Response) {
+    const image = await this.prisma.productImage.findUnique({ where: { productId: id } });
+    if (!image) throw new NotFoundException("عکس پیدا نشد.");
+    response.status(200);
+    response.setHeader("Content-Type", image.mime);
+    response.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    response.end(image.bytes);
   }
   /** اجزای یک بسته/BOM را جایگزین می‌کند (اقلام قبلی پاک می‌شوند). */
   @AdminOnly()

@@ -80,10 +80,26 @@ model Product {
   componentOf         BundleComponent[] @relation("ComponentIn")
   serialUnits         SerialUnit[]
   orderLines          CustomerOrderLine[]
+  image               ProductImage?
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
   @@index([name])
   @@index([categoryId])
+}
+
+/// Thumbnail photo of a product (POS tile / product table). Stored as a small
+/// ~256px WebP/JPEG blob INSIDE the database so every existing safety net —
+/// VACUUM INTO backups, restore, multi-device copies — carries images along
+/// with zero extra plumbing. Lists never include the blob: they join only
+/// `image: { select: { version: true } }`, so a 5000-item catalog still ships
+/// a few bytes per row and the browser lazily fetches each thumbnail only
+/// when its tile scrolls into view (`loading="lazy"` + immutable cache).
+model ProductImage {
+  productId String  @id
+  version   Int     @default(1)
+  mime      String
+  bytes     Bytes
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 }
 
 model Customer {

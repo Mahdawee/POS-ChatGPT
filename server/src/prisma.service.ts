@@ -180,6 +180,7 @@ const REQUIRED_MODELS = [
   "inventoryMovement", "cashSession", "cashMovement",
   "expense", "auditLog",
   "stocktake", "stocktakeLine", "quote", "quoteItem", "productBatch",
+  "productImage",
   "customerWalletTxn", "bundleComponent", "serialUnit",
   "installmentPlan", "installment",
   "customerOrder", "customerOrderLine", "licenseState",

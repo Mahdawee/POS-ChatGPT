@@ -255,6 +255,12 @@ export class BundleDto {
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => BundleComponentDto) components!: BundleComponentDto[];
 }
 
+export class ProductImageDto {
+  /** dataURL عکس بندانگشتی (WebP/JPEG/PNG) — کلاینت قبل از ارسال به ~۲۵۶px
+   *  کوچک می‌کند؛ سقف کاراکتر جلوی رشته‌های غول‌آسا را می‌گیرد. */
+  @IsString() @MinLength(16) @MaxLength(420000) data!: string;
+}
+
 export class CreateInstallmentPlanDto {
   @IsString() customerId!: string;
   @Type(() => Number) @IsInt() @Min(1) @Max(999999999) total!: number;

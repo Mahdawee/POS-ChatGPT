@@ -15,13 +15,15 @@
 //   E2E_EXECUTABLE_PATH=…             مسیر کرومیوم جایگزین (اگر مرورگر
 //                                     پیش‌فرض playwright در دسترس نیست)
 //
-// سناریوها (۲۶ چک): ورود، گارد تغییر اجباری گذرواژهٔ پیش‌فرض در نصب تازه،
+// سناریوها (۳۰ چک): ورود، گارد تغییر اجباری گذرواژهٔ پیش‌فرض در نصب تازه،
 // ثبت سریع کالا با کد خودکار، اسکن بارکد با گوشیِ شبیه‌سازی‌شده (پل PIN)
 // داخل فرم کالا، «ذخیره و کالای بعدی»، Enter، لیست سبک صندوق
 // (/products/pos)، کد خودکار مشتری، اسکن خارج از صندوق (نباید بی‌سروصدا
 // به سبد اضافه شود)، payload قدیمی تأمین‌کننده، PWA (manifest، sw.js،
-// ثبت سرویس‌ورکر)، ممیزی انتشار (فروش کامل تا بستن صندوق + کاهش موجودی
-// + فاکتور در فروش‌ها + بدون خطای کنسول/کرش/5xx در همهٔ صفحه‌ها).
+// ثبت سرویس‌ورکر)، عکس کالا (کوچک‌سازی کلاینت + آپلود + کش immutable +
+// بندانگشتی جدول و کاشی صندوق)، ممیزی انتشار (فروش کامل تا بستن صندوق +
+// کاهش موجودی + فاکتور در فروش‌ها + بدون خطای کنسول/کرش/5xx در همهٔ
+// صفحه‌ها).
 // ─────────────────────────────────────────────────────────────────────────────
 
 let chromium;
@@ -109,7 +111,7 @@ try {
   await page.waitForTimeout(800);
   await page.getByRole("button", { name: "کالای جدید" }).click();
   const modal = page.locator("section.modal").first();
-  const nameInput = modal.locator("input").first();
+  const nameInput = modal.locator("input:visible").first();
   const prodName = `شیر تازه ${String(Date.now()).slice(-4)}`;
   await nameInput.fill(prodName);
   await modal.locator('input[type="number"]').first().fill("65");
@@ -142,12 +144,12 @@ try {
   check(`پیامِ ثبت شامل کد خودکار ${nextP1}`, resp1.status() === 201 && toast1.includes(nextP1), toast1.slice(0, 70));
   const stillOpen = await modal.locator('input[data-scan-target="product-barcode"]').count();
   check("فرم برای کالای بعدی باز ماند", stillOpen === 1);
-  const nameAfter = await modal.locator("input").first().inputValue();
+  const nameAfter = await modal.locator("input:visible").first().inputValue();
   const barcodeAfter = await barcodeInput.inputValue();
   check("فرم برای کالای بعدی پاک شد (نام و بارکد خالی)", nameAfter === "" && barcodeAfter === "", `name="${nameAfter}" barcode="${barcodeAfter}"`);
 
   // ── ۶) کالای دوم با Enter (بدون کد و بارکد)
-  await modal.locator("input").first().fill("ماست کلاسیک");
+  await modal.locator("input:visible").first().fill("ماست کلاسیک");
   await modal.locator('input[type="number"]').first().fill("45");
   const saved2 = page.waitForResponse((r) => r.url().includes("/api/products") && r.request().method() === "POST", { timeout: 12000 });
   await page.keyboard.press("Enter");
@@ -158,7 +160,7 @@ try {
   check(`Enter هم «کالای بعدی» را می‌زند و کد ${nextP2} ساخت`, resp2.status() === 201 && toast2.includes(nextP2), toast2.slice(0, 70));
 
   // ── ۷) ذخیره و بستن → در جدول کد و بارکد دیده شود
-  await modal.locator("input").first().fill("پنیر سفید");
+  await modal.locator("input:visible").first().fill("پنیر سفید");
   await modal.locator('input[type="number"]').first().fill("120");
   const saved3 = page.waitForResponse((r) => r.url().includes("/api/products") && r.request().method() === "POST", { timeout: 12000 });
   await page.getByRole("button", { name: "ذخیره و بستن" }).click();
@@ -169,6 +171,39 @@ try {
   await row.first().waitFor({ state: "visible", timeout: 8000 });
   check("ردیف کالا در جدول با بارکد", (await row.locator("text=" + scanCode).count()) === 1);
 
+  // ── ۷.۵) عکس کالا: انتخاب فایل در فرم → کوچک‌سازی سمت کلاینت (canvas) →
+  // آپلود بعد از ذخیره → سرو بندانگشتی با کش immutable → نمایش در جدول و
+  // کاشی صندوق (lazy). جریان کامل همان چیزی است که کاربر تجربه می‌کند.
+  await page.getByRole("button", { name: "کالای جدید" }).click();
+  const pmodal = page.locator("section.modal").first();
+  await pmodal.locator("input:visible").first().fill("رب گوجه فرنگی");
+  await pmodal.locator('input[type="number"]').first().fill("85");
+  // فایل تصویر معتبر روی دیسک (PNG 1×1 — canvas خود فرم آن را به بندانگشتی
+  // ۲۵۶×۲۵۶ WebP می‌کشد؛ encode تصویر خارج از مرورگر لازم نیست)
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync("/tmp/e2e-product.png", Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64"));
+  await pmodal.locator('.product-image-field input[type="file"]').setInputFiles("/tmp/e2e-product.png");
+  await pmodal.locator(".image-thumb img").waitFor({ state: "visible", timeout: 8000 });
+  check("عکس کالا: پیش‌نمایش محلی بعد از کوچک‌سازی canvas دیده می‌شود", true);
+  const productPosted5 = page.waitForResponse((r) => r.url().includes("/api/products") && !r.url().includes("/image") && r.request().method() === "POST", { timeout: 12000 });
+  const imagePosted = page.waitForResponse((r) => r.url().includes("/image") && r.request().method() === "POST", { timeout: 12000 });
+  await page.getByRole("button", { name: "ذخیره و بستن" }).click();
+  const savedProduct5 = await (await productPosted5).json();
+  const imageResp = await imagePosted;
+  const imageBody = await imageResp.json().catch(() => ({}));
+  check("عکس کالا: بعد از ذخیره، آپلود با نسخهٔ ۱", imageResp.status() === 201 && imageBody.version === 1, `HTTP ${imageResp.status()}، version=${imageBody.version}`);
+  await page.locator("section.modal").first().waitFor({ state: "detached", timeout: 10000 });
+  await page.waitForTimeout(800);
+  const tomatoRow = page.locator("tr", { hasText: "رب گوجه فرنگی" }).first();
+  await tomatoRow.waitFor({ state: "visible", timeout: 8000 });
+  const rowThumbSrc = await tomatoRow.locator(".product-initial img").getAttribute("src").catch(() => null);
+  check("عکس کالا: بندانگشتی در جدول کالاها با URL نسخه‌دار", Boolean(rowThumbSrc && rowThumbSrc.includes(`/products/${savedProduct5.id}/image?v=1`)), rowThumbSrc || "بدون img");
+  const imgGet = await fetch(`${API}/products/${savedProduct5.id}/image`);
+  const imgCache = imgGet.headers.get("cache-control") || "";
+  check("عکس کالا: GET عمومی با کش immutable و content-type تصویر", imgGet.ok && (imgGet.headers.get("content-type") || "").startsWith("image/") && imgCache.includes("immutable"), `HTTP ${imgGet.status}، ${imgGet.headers.get("content-type")}، ${imgCache.slice(0, 45)}`);
+  await imgGet.arrayBuffer();
+
+
   // ── ۸) مشتری بدون کد → کد خودکار C-…
   await page.getByRole("button", { name: "مشتریان", exact: true }).click();
   await page.waitForTimeout(800);
@@ -176,7 +211,7 @@ try {
   await page.waitForTimeout(400);
   const cmodal = page.locator("section.modal").first();
   const custName = `نجیب ${String(Date.now()).slice(-4)}`;
-  await cmodal.locator("input").first().fill(custName);
+  await cmodal.locator("input:visible").first().fill(custName);
   await cmodal.locator("button.primary-button").last().click();
   await page.locator("section.modal").first().waitFor({ state: "detached", timeout: 10000 });
   await page.waitForTimeout(800);
@@ -189,6 +224,10 @@ try {
   await page.waitForTimeout(800);
   const gridCount = await page.locator(".pos-product").count();
   check("صفحهٔ صندوق با لیست سبک کالاها را نشان می‌دهد", gridCount > 0, `${gridCount} کالا در گرید`);
+  const posTileImg = page.locator(".pos-product", { hasText: "رب گوجه فرنگی" }).locator("img").first();
+  await posTileImg.waitFor({ state: "visible", timeout: 8000 });
+  const tileLoaded = await posTileImg.evaluate((img) => img.complete && img.naturalWidth > 0 && img.getAttribute("loading") === "lazy");
+  check("عکس کالا: کاشی صندوق بندانگشتی را lazy بار می‌کند", tileLoaded, `naturalWidth=${await posTileImg.evaluate((img) => img.naturalWidth)}`);
   await page.getByRole("button", { name: "کالاها", exact: true }).click();
   await page.waitForTimeout(800);
   await fetch(`${BRIDGE}/api/scan`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: pair.token, code: scanCode }) });

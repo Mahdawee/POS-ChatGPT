@@ -34,6 +34,15 @@ CREATE TABLE IF NOT EXISTS "Product" (
 );
 
 -- CreateTable
+CREATE TABLE IF NOT EXISTS "ProductImage" (
+    "productId" TEXT NOT NULL PRIMARY KEY,
+    "version" INTEGER NOT NULL DEFAULT 1,
+    "mime" TEXT NOT NULL,
+    "bytes" BLOB NOT NULL,
+    CONSTRAINT "ProductImage_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
 CREATE TABLE IF NOT EXISTS "Customer" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "code" TEXT,

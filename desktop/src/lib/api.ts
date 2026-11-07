@@ -23,6 +23,17 @@ export function apiBase(): string {
   return defaultApiBase();
 }
 
+/**
+ * آدرس بندانگشتی عکس کالا — عمومی و immutable-cache (نسخهٔ عکس در خود URL
+ * است، پس عکس تازه هیچ‌وقت کش قدیمی را نمی‌بیند). فقط یک «عدد نسخه» به
+ * دادهٔ کالا اضافه می‌شود؛ خود عکس جدا و فقط برای کاشی‌های دیده‌شده
+ * (lazy) بارگذاری می‌شود تا کاتالوگ چند-هزارتایی سبز بماند.
+ */
+export function productImageUrl(product: { id: string; image?: { version: number } | null }): string | null {
+  if (!product.image) return null;
+  return `${apiBase()}/products/${product.id}/image?v=${product.image.version}`;
+}
+
 /** Points this machine at a LAN server (empty string restores local mode). */
 export function setServerOrigin(origin: string): void {
   try {
@@ -85,7 +96,7 @@ export const del = <T,>(path: string) => request<T>(path, { method: "DELETE" });
 
 export type User = { id: string; username: string; displayName: string; role: "ADMIN" | "CASHIER"; mustChangePassword?: boolean };
 export type Category = { id: string; name: string; color: string; _count?: { products: number } };
-export type Product = { id: string; sku: string; barcode: string | null; name: string; unit: string; isWeighted?: boolean; isBundle?: boolean; isSerialized?: boolean; reserved?: number; expiryDate?: string | null; price: number; wholesalePrice?: number | null; wholesaleMinQty?: number | null; cost: number; stock: number; backstock?: number; minStock: number; categoryId: string | null; category?: Category | null; isActive?: boolean; bundleComponents?: Array<{ id: string; componentId: string; quantity: number; component?: { id: string; name: string; sku: string; unit: string; stock?: number; reserved?: number; isSerialized?: boolean } }>; serialUnits?: Array<{ id: string }> };
+export type Product = { id: string; sku: string; barcode: string | null; name: string; unit: string; isWeighted?: boolean; isBundle?: boolean; isSerialized?: boolean; reserved?: number; expiryDate?: string | null; price: number; wholesalePrice?: number | null; wholesaleMinQty?: number | null; cost: number; stock: number; backstock?: number; minStock: number; categoryId: string | null; category?: Category | null; isActive?: boolean; image?: { version: number } | null; bundleComponents?: Array<{ id: string; componentId: string; quantity: number; component?: { id: string; name: string; sku: string; unit: string; stock?: number; reserved?: number; isSerialized?: boolean } }>; serialUnits?: Array<{ id: string }> };
 export type Contact = { id: string; name: string; code?: string | null; phone: string | null; address: string | null; note: string | null; balance?: number; creditLimit?: number; walletBalance?: number; tier?: "RETAIL" | "WHOLESALE" };
 export type SaleItem = { id: string; name: string; sku: string; quantity: number; unitPrice: number; lineTotal: number; productId: string; discount?: number };
 export type SaleReturnItem = { id: string; productId: string; name: string; sku: string; quantity: number; unitPrice: number; lineTotal: number };
