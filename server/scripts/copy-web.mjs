@@ -25,5 +25,5 @@ if (existsSync(webDist)) {
   }
   console.log("⚠  no desktop/dist found — server built WITHOUT the web UI.");
   console.log("   Phones/browsers opening the server address will see a setup page instead of the app.");
-  console.log("   Fix: run the build from the project root (npm run build) so the frontend is built before the server, then restart.");
+  console.log("   Fix: run the build from the project root (npm run build) so the frontend is built before the server; the running server picks it up on the next page refresh — no restart needed.");
 }

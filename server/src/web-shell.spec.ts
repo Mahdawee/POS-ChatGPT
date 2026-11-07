@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, mkdtempSync } from "node:fs";
+import { readFileSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isSpaFallbackRequest, serveWebApp } from "./main";
@@ -69,6 +69,29 @@ describe("missing web build (serveWebApp without dist/web)", () => {
       middlewares[0](makeReq("GET", "/api/products"), makeRes(recorded), () => { recorded.nexted = true; });
       expect(recorded.nexted).toBe(true);
       expect(recorded.status).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.POS_WEB_DIR; else process.env.POS_WEB_DIR = previous;
+    }
+  });
+
+  it("activates the web build without a server restart (per-request check)", () => {
+    const previous = process.env.POS_WEB_DIR;
+    const dir = mkdtempSync(join(tmpdir(), "pos-late-web-")); // empty at "boot"
+    process.env.POS_WEB_DIR = dir;
+    const middlewares: Array<(req: import("express").Request, res: import("express").Response, next: () => void) => void> = [];
+    try {
+      serveWebApp({ use: (m: typeof middlewares[number]) => { middlewares.push(m); } });
+      // قبل از بیلد: صفحهٔ راهنما
+      const before: Recorded = {};
+      middlewares[0](makeReq("GET", "/"), makeRes(before), () => { before.nexted = true; });
+      expect(before.status).toBe(503);
+      expect(before.nexted).toBeUndefined();
+      // وب وسط کار سرور بیلد می‌شود (مثل npm run build در حین اجرا)
+      writeFileSync(join(dir, "index.html"), "<!doctype html><html><body>app shell</body></html>");
+      const after: Recorded = {};
+      middlewares[0](makeReq("GET", "/"), makeRes(after), () => { after.nexted = true; });
+      expect(after.nexted).toBe(true); // به استاتیک/SPA fallback واگذار می‌شود
+      expect(after.status).toBeUndefined(); // دیگر 503 نیست
     } finally {
       if (previous === undefined) delete process.env.POS_WEB_DIR; else process.env.POS_WEB_DIR = previous;
     }

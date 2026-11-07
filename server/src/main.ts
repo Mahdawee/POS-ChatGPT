@@ -107,23 +107,38 @@ type MiddlewareApp = { use(middleware: (req: Request, res: Response, next: NextF
  *   1. POS_WEB_DIR environment variable
  *   2. dist/web — copied next to the compiled API by scripts/copy-web.mjs,
  *      and bundled into the packaged desktop app's server the same way.
- * A pure API deployment (no web files present) serves nothing — behaviour
- * is exactly as before. /api requests are never intercepted: unknown API
- * routes keep returning the JSON 402/404 they return today.
+ * A pure API deployment (no web files present) answers browser page loads
+ * with a Persian setup page (503) instead of the old bare JSON 404. /api
+ * requests are never intercepted: unknown API routes keep returning the
+ * JSON 402/404 they return today. Presence of the web build is checked per
+ * request, not only at boot — so building the web while the server is
+ * already running activates it on the very next page load; no restart.
  */
 export function serveWebApp(app: MiddlewareApp): void {
   const root = process.env.POS_WEB_DIR || join(__dirname, "web");
-  if (!existsSync(join(root, "index.html"))) {
+  const indexFile = join(root, "index.html");
+  const missingAtBoot = !existsSync(indexFile);
+  if (missingAtBoot) {
     // بیلد وب کنار سرور نیست (مثلاً فقط سرور بیلد شده یا کلون تازه). تا قبل
     // از این، مرورگر JSON 404 بی‌توضیح می‌دید؛ حالا یک صفحهٔ راهنما می‌گیرد
     // که مشکل و راه‌حلش را صریح می‌گوید. مسیرهای /api دست‌نخورده می‌مانند.
-    console.warn(`[web] فایل‌های نسخهٔ وب کنار سرور پیدا نشد (${join(root, "index.html")}). نسخهٔ مرورگر (گوشی/کامپیوترهای دیگر) تا بیلد وب فعال نمی‌شود — از ریشهٔ پروژه: npm run build (اول دسکتاپ، بعد سرور) و سپس ری‌استارت سرور.`);
-    app.use((req: Request, res: Response, next: NextFunction) => {
-      if (!isSpaFallbackRequest(req.method, req.path)) return next();
-      res.status(503).type("html").send(missingWebPageHtml());
-    });
-    return;
+    console.warn(`[web] فایل‌های نسخهٔ وب کنار سرور پیدا نشد (${indexFile}). نسخهٔ مرورگر (گوشی/کامپیوترهای دیگر) فعال نیست — از ریشهٔ پروژه: npm run build . پس از پایان بیلد کافی است صفحهٔ مرورگر را رفرش کنید؛ ری‌استارت سرور لازم نیست.`);
   }
+  let announcedAvailable = !missingAtBoot;
+  // گارد «وب نیست» در هر درخواست بررسی می‌شود، نه فقط هنگام بوت: اگر وب
+  // وسط کار سرور بیلد/کپی شود، همان درخواست بعدی بدون ری‌استارت سرو می‌شود.
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (!isSpaFallbackRequest(req.method, req.path)) return next();
+    if (!existsSync(indexFile)) {
+      res.status(503).type("html").send(missingWebPageHtml());
+      return;
+    }
+    if (!announcedAvailable) {
+      announcedAvailable = true;
+      console.log("[web] نسخهٔ وب پیدا شد — بدون ری‌استارت، از همین لحظه سرو می‌شود.");
+    }
+    next();
+  });
   app.use(
     serveStatic(root, {
       index: false,
@@ -136,11 +151,13 @@ export function serveWebApp(app: MiddlewareApp): void {
   );
   app.use((req: Request, res: Response, next: NextFunction) => {
     if (!isSpaFallbackRequest(req.method, req.path)) return next();
-    res.sendFile(join(root, "index.html"));
+    res.sendFile(indexFile);
   });
 }
 
-/** صفحهٔ راهنمای «وب بیلد نشده» — فقط HTML درون‌خطی، بدون فایل جانبی. */
+/** صفحهٔ راهنمای «وب بیلد نشده» — فقط HTML درون‌خطی، بدون فایل جانبی. هر چند
+ *  ثانیه خودش آدرس را چک می‌کند و به‌محض آماده‌شدن بیلد وب، بدون دخالت کاربر
+ *  تازه می‌شود (بدون ری‌استارت سرور). */
 export function missingWebPageHtml(): string {
-  return `<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>نسخهٔ وب هنوز نصب نیست</title><style>body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}div{max-width:34rem;padding:2rem}h1{font-size:1.25rem}code{direction:ltr;display:inline-block;background:#1e293b;padding:.15rem .5rem;border-radius:.4rem;font-size:.9rem}li{margin:.5rem 0}</style></head><body><div><h1>سرور در حال اجراست، اما نسخهٔ وب برنامه کنار آن نصب نشده است</h1><p>به همین دلیل آدرس در مرورگر، خطای <code>Cannot GET /</code> می‌داد. خود برنامهٔ API سالم است؛ فقط فایل‌های وب (برای گوشی و کامپیوترهای دیگر) در این بیلد کنار سرور کپی نشده‌اند.</p><p>برای فعال‌کردن نسخهٔ مرورگر:</p><ol><li>در ریشهٔ پروژه اجرا کنید: <code>npm run build</code> (اول رابط کاربری، بعد سرور — ترتیب مهم است)</li><li>سرور را ری‌استارت کنید و همین آدرس را دوباره باز کنید</li></ol><p style="opacity:.7;font-size:.85rem">نصب پیشرفته: با متغیر محیطی <code>POS_WEB_DIR</code> می‌توانید مسیر دیگری برای فایل‌های وب مشخص کنید.</p></div></body></html>`;
+  return `<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>نسخهٔ وب هنوز نصب نیست</title><style>body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}div{max-width:34rem;padding:2rem}h1{font-size:1.25rem}code{direction:ltr;display:inline-block;background:#1e293b;padding:.15rem .5rem;border-radius:.4rem;font-size:.9rem}li{margin:.5rem 0}</style></head><body><div><h1>سرور در حال اجراست، اما نسخهٔ وب برنامه کنار آن نصب نشده است</h1><p>به همین دلیل آدرس در مرورگر، خطای <code>Cannot GET /</code> می‌داد. خود برنامهٔ API سالم است؛ فقط فایل‌های وب (برای گوشی و کامپیوترهای دیگر) در این بیلد کنار سرور کپی نشده‌اند.</p><p>برای فعال‌کردن نسخهٔ مرورگر:</p><ol><li>در ریشهٔ پروژه اجرا کنید: <code>npm run build</code> (اول رابط کاربری، بعد سرور — ترتیب مهم است) و صبر کنید تا تمام شود</li><li>همین صفحه هر چند ثانیه خودش را چک می‌کند و پس از پایان بیلد خودبه‌خود برنامه را باز می‌کند؛ اگر نشد F5 بزنید. <b>ری‌استارت سرور لازم نیست.</b></li></ol><p style="opacity:.7;font-size:.85rem">اگر چند دقیقه هم همین صفحه ماند، یعنی بیلد کامل نشده — خروجی <code>npm run build</code> باید در پایان «web UI copied» را چاپ کند. نصب پیشرفته: با متغیر محیطی <code>POS_WEB_DIR</code> می‌توانید مسیر دیگری برای فایل‌های وب مشخص کنید.</p></div><script>setInterval(function(){fetch(location.href,{cache:"no-store"}).then(function(r){if(r.ok){location.reload()}}).catch(function(){})},4000)</script></body></html>`;
 }
