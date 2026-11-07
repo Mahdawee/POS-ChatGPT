@@ -282,6 +282,100 @@ html.dark .live-status i{background:#4fa576}
 html.dark .scan-status:not(.ok) .scan-status-icon{color:#e8a49f}
 html.dark .metric-icon.amber{background:#372b16;color:#dcae5e}
 
+/* ── Themes (Round 73): one palette block per theme — exactly like the dark
+   block above, only the role tokens swap, so every component follows along.
+   «غروب» is dark-based and therefore also carries the .dark class; the few
+   gradients dark mode hardcodes are re-tinted here.
+   «آفتاب» additionally enlarges the working surfaces (tables, POS tiles,
+   cart, buttons, forms) and darkens the lines: readable in weak daylight. */
+html[data-theme="ocean"]{
+--ink:#182b3d;--ink-2:#3d5166;--ink-3:#556a7f;--muted:#7a8fa3;--faint:#90a4b5;
+--canvas:#eef4f9;--surface:#ffffff;--surface-2:#f4f9fc;--surface-3:#e9f1f7;
+--line:#dbe6ee;--line-2:#c7d6e2;--line-strong:#b1c5d4;--field:#ffffff;--field-line:#d6e2ec;--field-disabled:#eef3f7;
+--green:#0f6b93;--green-dark:#0b5878;--green-pale:#e3f1f8;
+--accent:#0f6b93;--accent-soft:#e2f0f8;--accent-ink:#0d5f83;--accent-ink-strong:#0a4f6e;--accent-border:#bcd8e8;
+--danger:#b34a4d;--danger-soft:#fdf0f0;--danger-ink:#99393c;--danger-border:#efd3d3;
+--amber:#96690f;--amber-soft:#fbf3e2;--amber-ink:#82580c;--amber-border:#eee1c2;
+--blue-soft:#e7f0fa;--blue-ink:#3f6f9e;--violet-soft:#efeafa;--violet-ink:#6f5ba8;
+--paper:#fff;--red:#b34a4d;--overlay:#16232e66;
+background:var(--canvas);color-scheme:light}
+html[data-theme="ocean"] .store-dot,html[data-theme="ocean"] .offline>span,html[data-theme="ocean"] .lock-dot{background:#1792bd;box-shadow:0 0 0 3px #1792bd1c}
+html[data-theme="ocean"] .live-status i{background:#0f6b93}
+html[data-theme="ocean"] .brand-mark{box-shadow:0 5px 14px #0f6b9329}
+
+html[data-theme="sunset"]{
+--ink:#f1e7d8;--ink-2:#d3c3ab;--ink-3:#b2a189;--muted:#96836c;--faint:#877761;
+--canvas:#191410;--surface:#211b15;--surface-2:#282019;--surface-3:#2f261d;
+--line:#302720;--line-2:#3e3327;--line-strong:#4c3f30;--field:#171210;--field-line:#3e3327;--field-disabled:#1d1712;
+--green:#bd7526;--green-dark:#d08a38;--green-pale:#2f2517;
+--accent:#bd7526;--accent-soft:#2e2314;--accent-ink:#e3ac5f;--accent-ink-strong:#efc07a;--accent-border:#57431f;
+--danger:#d97873;--danger-soft:#38211d;--danger-ink:#e8a08f;--danger-border:#543029;
+--amber:#cf9a4e;--amber-soft:#322712;--amber-ink:#dcae5e;--amber-border:#57431f;
+--blue-soft:#1f2833;--blue-ink:#8fb3d9;--violet-soft:#2a2433;--violet-ink:#b39ddb;
+--paper:#211b15;--red:#d97873;--overlay:#000000b3;
+background:var(--canvas);color-scheme:dark}
+html[data-theme="sunset"] .chart-bar-fill{background:linear-gradient(180deg,#d08a38,#a8631f)}
+html[data-theme="sunset"] .chart-bar:hover .chart-bar-fill{background:linear-gradient(180deg,#e0a04c,#bd7526)}
+html[data-theme="sunset"] .login-screen,html[data-theme="sunset"] .lock-screen{background:radial-gradient(ellipse at 75% 23%,#332615 0,transparent 37%),#191410}
+html[data-theme="sunset"] .login-decor{border-color:#302720}
+html[data-theme="sunset"] .license-screen{background:linear-gradient(160deg,#241c12,#161009)}
+html[data-theme="sunset"] .pos-product-art{color:#f5ead8}
+html[data-theme="sunset"] .checkout-button:disabled{background:#3a3128;color:#b2a189}
+html[data-theme="sunset"] .live-status i{background:#bd7526}
+
+html[data-theme="sun"]{
+--ink:#000000;--ink-2:#1c231c;--ink-3:#2b352b;--muted:#454f45;--faint:#525c52;
+--canvas:#ffffff;--surface:#ffffff;--surface-2:#f5f7f5;--surface-3:#ebefeb;
+--line:#b9c4bb;--line-2:#98a69b;--line-strong:#6d7d72;--field:#ffffff;--field-line:#9fb0a4;--field-disabled:#f0f3f0;
+--green:#085d38;--green-dark:#064a2c;--green-pale:#e2f2e8;
+--accent:#085d38;--accent-soft:#e2f2e8;--accent-ink:#074d30;--accent-ink-strong:#053d25;--accent-border:#8db8a1;
+--danger:#9c2623;--danger-soft:#fdecea;--danger-ink:#8a1f1c;--danger-border:#e5b6b3;
+--amber:#7c5410;--amber-soft:#fcf3dd;--amber-ink:#6b470c;--amber-border:#e3cd96;
+--blue-soft:#e8f1fa;--blue-ink:#2f6392;--violet-soft:#efe9fa;--violet-ink:#5d4b95;
+--paper:#fff;--red:#9c2623;--overlay:#1a2b2066;
+background:var(--canvas);color-scheme:light}
+/* آفتاب: متن‌های اصلی کار بزرگ‌تر و پررنگ‌تر می‌شوند تا زیر نور کمِ آفتاب
+   هم راحت خوانده شوند؛ چیدمان و شبکه‌ها دست‌نخورده می‌مانند. */
+html[data-theme="sun"] body{font-size:15px}
+html[data-theme="sun"] .primary-button,html[data-theme="sun"] .secondary-button,html[data-theme="sun"] .danger-button{font-size:13px;min-height:42px}
+html[data-theme="sun"] .text-button{font-size:13px}
+html[data-theme="sun"] .search-box input,html[data-theme="sun"] .date-filter input{font-size:13px}
+html[data-theme="sun"] .toolbar-count,html[data-theme="sun"] kbd{font-size:11.5px}
+html[data-theme="sun"] thead th{font-size:12px}
+html[data-theme="sun"] tbody td{font-size:13px}
+html[data-theme="sun"] td small{font-size:12px}
+html[data-theme="sun"] .metric-label{font-size:12px}
+html[data-theme="sun"] .metric-card strong{font-size:23px}
+html[data-theme="sun"] .metric-card small{font-size:12px}
+html[data-theme="sun"] .section-head h2{font-size:17px}
+html[data-theme="sun"] .section-head p{font-size:12.5px}
+html[data-theme="sun"] .topbar h1{font-size:21px}
+html[data-theme="sun"] .nav-label{font-size:11.5px}
+html[data-theme="sun"] .field{font-size:12px}
+html[data-theme="sun"] .field input,html[data-theme="sun"] .field select,html[data-theme="sun"] .field textarea,html[data-theme="sun"] .compact-field select{font-size:13px}
+html[data-theme="sun"] .dp-field{font-size:13px}
+html[data-theme="sun"] .modal-head h2{font-size:17px}
+html[data-theme="sun"] .status-pill{font-size:11px}
+html[data-theme="sun"] .category-label{font-size:11.5px}
+html[data-theme="sun"] .quick-actions button span b{font-size:12px}
+html[data-theme="sun"] .quick-actions button span small{font-size:11px}
+html[data-theme="sun"] .pos-search input{font-size:14px}
+html[data-theme="sun"] .pos-product-name{font-size:12.5px}
+html[data-theme="sun"] .pos-product-bottom b{font-size:12.5px}
+html[data-theme="sun"] .pos-product-bottom small{font-size:11px}
+html[data-theme="sun"] .pos-favorite-name{font-size:12px}
+html[data-theme="sun"] .cart-line-title b{font-size:12px}
+html[data-theme="sun"] .cart-line-title small{font-size:11px}
+html[data-theme="sun"] .cart-line>strong{font-size:12px}
+html[data-theme="sun"] .compact-field span,html[data-theme="sun"] .discount-line span{font-size:12px}
+html[data-theme="sun"] .discount-line input,html[data-theme="sun"] .line-discount-input{font-size:12px}
+html[data-theme="sun"] .cart-totals>div{font-size:12px}
+html[data-theme="sun"] .grand-total span{font-size:14px}
+html[data-theme="sun"] .grand-total strong{font-size:20px}
+html[data-theme="sun"] .checkout-button{font-size:14px}
+html[data-theme="sun"] .checkout-button span{font-size:12px}
+html[data-theme="sun"] input:focus,html[data-theme="sun"] select:focus,html[data-theme="sun"] textarea:focus{box-shadow:0 0 0 3px #085d3833}
+
 /* ── Round 23: shop-calendar date picker (DateField) ───────────────────── */
 .dp-root{position:relative;display:inline-flex;min-width:0}
 .dp-field{display:inline-flex;align-items:center;gap:7px;height:37px;padding:0 10px;border:1px solid var(--field-line);border-radius:7px;background:var(--field);color:var(--ink);font-size:11px;min-width:138px;justify-content:flex-start;transition:.15s}
@@ -345,6 +439,18 @@ html.dark .metric-icon.amber{background:#372b16;color:#dcae5e}
 .export-button{gap:6px}
 .export-button .flip{transform:rotate(180deg)}
 .export-backdrop{position:fixed;inset:0;z-index:39}
+/* theme picker (topbar palette button) — same popover pattern as export */
+.theme-menu{position:relative;display:inline-flex}
+.theme-popover{position:absolute;top:calc(100% + 8px);inset-inline-end:0;z-index:40;background:var(--surface);border:1px solid var(--line-2);border-radius:11px;box-shadow:0 14px 38px rgba(16,32,22,.18);padding:6px;display:flex;flex-direction:column;min-width:242px}
+.theme-popover button{display:flex;align-items:center;gap:10px;border:0;background:transparent;padding:8px 10px;border-radius:8px;font-size:11px;font-weight:600;color:var(--ink-2);text-align:start}
+.theme-popover button:hover{background:var(--surface-3);color:var(--accent-ink)}
+.theme-popover button.active{background:var(--accent-soft);color:var(--accent-ink-strong)}
+.theme-popover button.active svg{color:var(--accent-ink)}
+.theme-swatch{display:flex;width:34px;height:24px;border-radius:6px;overflow:hidden;border:1px solid var(--line-2);flex:0 0 34px}
+.theme-swatch i{flex:1}
+.theme-names{flex:1;min-width:0}
+.theme-names b,.theme-names small{display:block}
+.theme-names small{font-size:9px;color:var(--muted);font-weight:400;margin-top:2px}
 .export-popover{position:absolute;top:calc(100% + 6px);inset-inline-end:0;z-index:40;background:var(--surface);border:1px solid var(--line-2);border-radius:10px;box-shadow:0 14px 38px rgba(16,32,22,.18);padding:5px;display:flex;flex-direction:column;min-width:196px}
 .export-popover button{display:flex;align-items:center;gap:9px;border:0;background:transparent;padding:9px 11px;border-radius:7px;font-size:11px;font-weight:600;color:var(--ink-2);text-align:start}
 .export-popover button:hover{background:var(--surface-3);color:var(--accent-ink)}

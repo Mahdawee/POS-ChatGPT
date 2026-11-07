@@ -4,7 +4,7 @@ import { CircleAlert, CircleCheck, Globe, LoaderCircle, LockKeyhole, RefreshCw, 
 import { get, post, serverOrigin, setServerOrigin, type LicenseStatus, type ShopSettings, type User } from "./lib/api";
 import { applyBrandWindowTitle, loadBrand, useBrand } from "./lib/brand";
 import { applyCurrencyList, applyLocaleSettings, LANGS, licensePlanLabel, t, useLanguage } from "./i18n";
-import { LicenseExpiryBanner, type PageId, Shell, TrialBanner } from "./components/Shell";
+import { LicenseExpiryBanner, type PageId, Shell, type ThemeId, TrialBanner } from "./components/Shell";
 import { CustomerDisplay } from "./components/CustomerDisplay";
 // پل اسکن با گوشی (دور ۵۳؛ همیشگی) — listener بدون رابط؛ با حذف همین تغییرات به‌کل جداست.
 import { PhoneScanListener } from "./components/PhoneScan";
@@ -55,7 +55,9 @@ export default function App() {
   // licensed shop, so nothing is shown until the license actually expires).
   const [license, setLicense] = useState<LicenseStatus | null>(null);
   const [showActivation, setShowActivation] = useState(false);
-  const [dark, setDark] = useState(() => { try { return localStorage.getItem("darpos-theme") === "dark"; } catch { return false; } });
+  // تم نمایش: در localStorage همان کلید قبلی (darpos-theme) می‌ماند؛ مقدارهای
+  // قدیمی «dark/light» و تم‌های تازه (ocean/sunset/sun) همه خوانده می‌شوند.
+  const [theme, setTheme] = useState<ThemeId>(() => { try { const saved = localStorage.getItem("darpos-theme"); return saved === "dark" || saved === "ocean" || saved === "sunset" || saved === "sun" ? saved : "light"; } catch { return "light"; } });
   const noticeTimer = useRef<number | undefined>(undefined);
   // هنگام قفل (Ctrl+L) برنامه زیر پردهٔ قفل «inert» می‌شود: نه دیده می‌شود،
   // نه با Tab به آن رسیدنی است — ولی unmount هم نمی‌شود تا وضعیت همهٔ صفحه‌ها
@@ -134,9 +136,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-    try { localStorage.setItem("darpos-theme", dark ? "dark" : "light"); } catch { /* storage unavailable */ }
-  }, [dark]);
+    // تم‌های تیره‌مبنا (تیره و غروب) کلاس dark می‌گیرند تا همهٔ قواعد مکملش
+    // (select بومی، رسید سفید، گرادیان‌ها) هم‌زمان فعال شوند؛ تمِ فعال همیشه
+    // در data-theme می‌نشیند تا بلوک رنگی خودش را بگیرد.
+    document.documentElement.classList.toggle("dark", theme === "dark" || theme === "sunset");
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem("darpos-theme", theme); } catch { /* storage unavailable */ }
+  }, [theme]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -273,7 +279,7 @@ export default function App() {
           صفحه را از دید خارج می‌کند. */}
       {posMounted && <div className="pos-keepalive" hidden={page !== "pos"}><PosPage notify={notify} user={user} active={page === "pos" && !locked}/></div>}
     </Suspense>;
-  return <><div ref={appRef}><Shell page={page} onNavigate={setPage} user={user} onLogout={logout} shopName={shopName} onLock={() => setLocked(true)} onHelp={() => setShowHelp(true)} dark={dark} onToggleDark={() => setDark((value) => !value)} banner={banner}>{content}</Shell></div>{locked && <LockScreen username={user.username} onUnlock={() => setLocked(false)}/>}{showActivation && <Suspense fallback={<Loading/>}><ActivationModal onClose={() => setShowActivation(false)} onActivated={() => { setShowActivation(false); refreshLicense(); }} notify={notify}/></Suspense>}{notice && <div className={`toast ${notice.kind}`}>{notice.kind === "success" ? <CircleCheck size={18}/> : <CircleAlert size={18}/>}<span>{t(notice.text)}</span></div>}{showHelp && <ShortcutsHelp onClose={() => setShowHelp(false)}/>}<div className="page-reader" aria-live="polite" lang={lang}>{labels[page]}</div><PhoneScanListener active={Boolean(user) && !locked}/></>;
+  return <><div ref={appRef}><Shell page={page} onNavigate={setPage} user={user} onLogout={logout} shopName={shopName} onLock={() => setLocked(true)} onHelp={() => setShowHelp(true)} theme={theme} onTheme={setTheme} banner={banner}>{content}</Shell></div>{locked && <LockScreen username={user.username} onUnlock={() => setLocked(false)}/>}{showActivation && <Suspense fallback={<Loading/>}><ActivationModal onClose={() => setShowActivation(false)} onActivated={() => { setShowActivation(false); refreshLicense(); }} notify={notify}/></Suspense>}{notice && <div className={`toast ${notice.kind}`}>{notice.kind === "success" ? <CircleCheck size={18}/> : <CircleAlert size={18}/>}<span>{t(notice.text)}</span></div>}{showHelp && <ShortcutsHelp onClose={() => setShowHelp(false)}/>}<div className="page-reader" aria-live="polite" lang={lang}>{labels[page]}</div><PhoneScanListener active={Boolean(user) && !locked}/></>;
 }
 
 /** True when running inside the Tauri desktop shell (not a plain browser). */
