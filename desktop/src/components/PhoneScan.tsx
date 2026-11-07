@@ -76,13 +76,18 @@ function deliverScan(code: string): void {
   }
   if (phoneScanInjectEnabled()) {
     const form = document.querySelector<HTMLFormElement>("form.pos-search");
-    const input = form?.querySelector<HTMLInputElement>("input");
-    if (form && input) {
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
-      setter?.call(input, code);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      window.setTimeout(() => form.requestSubmit(), 60);
-      return;
+    // صندوقِ «نصب‌مانده» در DOM مخفی می‌ماند وقتی کاربر روی صفحهٔ دیگری
+    // است؛ تزریق به جعبهٔ جست‌وجوی پنهان یعنی افزودنِ بی‌سروصدا به سبد —
+    // فقط وقتی صندوق واقعاً دیدنی است تزریق می‌کنیم.
+    if (form && !form.closest("[hidden]")) {
+      const input = form.querySelector<HTMLInputElement>("input");
+      if (input) {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+        setter?.call(input, code);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        window.setTimeout(() => form.requestSubmit(), 60);
+        return;
+      }
     }
   }
   // صفحهٔ صندوق باز نیست (یا تزریق خاموش است) → فقط اطلاع می‌دهیم

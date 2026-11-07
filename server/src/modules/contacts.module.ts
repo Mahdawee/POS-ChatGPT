@@ -107,9 +107,15 @@ export class SuppliersController {
     ]);
     return suppliers.map((supplier) => ({ ...supplier, balance: balance.get(supplier.id) || 0 }));
   }
-  // DTO با مشتری مشترک است؛ تأمین‌کننده ستون «کد» ندارد → قبل از نوشتن کنار گذاشته می‌شود.
-  @Post() create(@Body() dto: ContactDto) { const { code: _code, ...rest } = dto; return this.prisma.supplier.create({ data: { ...rest, name: dto.name.trim() } }); }
-  @Patch(":id") update(@Param("id") id: string, @Body() dto: ContactDto) { const { code: _code, ...rest } = dto; return this.prisma.supplier.update({ where: { id }, data: { ...rest, name: dto.name.trim() } }); }
+  // DTO با مشتری مشترک است؛ تأمین‌کننده ستون‌های code/creditLimit/tier ندارد →
+  // فقط فیلدهای معتبرش را می‌نویسیم تا نسخه‌های قدیمی کلاینت (که این فیلدها
+  // را می‌فرستادند) هرگز به خطای پرایسما نخورند.
+  @Post() create(@Body() dto: ContactDto) {
+    return this.prisma.supplier.create({ data: { name: dto.name.trim(), phone: dto.phone, address: dto.address, note: dto.note } });
+  }
+  @Patch(":id") update(@Param("id") id: string, @Body() dto: ContactDto) {
+    return this.prisma.supplier.update({ where: { id }, data: { name: dto.name.trim(), phone: dto.phone, address: dto.address, note: dto.note } });
+  }
 
   /** حساب تأمین‌کننده: مانده = جمع خرید − پرداخت هنگام خرید − پرداخت‌های بعدی */
   @Get(":id") async detail(@Param("id") id: string) {
