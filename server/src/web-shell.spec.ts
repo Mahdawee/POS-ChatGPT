@@ -1,6 +1,7 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isSpaFallbackRequest } from "./main";
+import { isSpaFallbackRequest, serveWebApp } from "./main";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // قرارداد پوستهٔ وب (PWA): این تست‌ها تضمین می‌کنند فایل‌های نصب برنامهٔ وب
@@ -30,6 +31,47 @@ describe("SPA fallback routing (serveWebApp)", () => {
     expect(isSpaFallbackRequest("PUT", "/")).toBe(false);
     expect(isSpaFallbackRequest("HEAD", "/")).toBe(false);
     expect(isSpaFallbackRequest(undefined, "/")).toBe(false);
+  });
+});
+
+describe("missing web build (serveWebApp without dist/web)", () => {
+  type Recorded = { status?: number; type?: string; body?: string; nexted?: boolean };
+  const makeRes = (recorded: Recorded) =>
+    ({ status: (code: number) => { recorded.status = code; return makeRes(recorded); }, type: (t: string) => { recorded.type = t; return makeRes(recorded); }, send: (b: string) => { recorded.body = b; return makeRes(recorded); } }) as unknown as import("express").Response;
+  const makeReq = (method: string, path: string) => ({ method, path }) as import("express").Request;
+
+  it("answers non-API browser loads with a Persian setup page instead of JSON 404", () => {
+    const previous = process.env.POS_WEB_DIR;
+    process.env.POS_WEB_DIR = mkdtempSync(join(tmpdir(), "pos-empty-web-")); // exists but has no index.html
+    const middlewares: Array<(req: import("express").Request, res: import("express").Response, next: () => void) => void> = [];
+    try {
+      serveWebApp({ use: (m: typeof middlewares[number]) => { middlewares.push(m); } });
+      expect(middlewares.length).toBeGreaterThan(0);
+      const recorded: Recorded = {};
+      middlewares[0](makeReq("GET", "/"), makeRes(recorded), () => { recorded.nexted = true; });
+      expect(recorded.status).toBe(503);
+      expect(recorded.type).toBe("html");
+      expect(recorded.body).toContain("نسخهٔ وب");
+      expect(recorded.body).toContain("npm run build");
+      expect(recorded.nexted).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.POS_WEB_DIR; else process.env.POS_WEB_DIR = previous;
+    }
+  });
+
+  it("keeps API routes untouched (middleware falls through)", () => {
+    const previous = process.env.POS_WEB_DIR;
+    process.env.POS_WEB_DIR = mkdtempSync(join(tmpdir(), "pos-empty-web-"));
+    const middlewares: Array<(req: import("express").Request, res: import("express").Response, next: () => void) => void> = [];
+    try {
+      serveWebApp({ use: (m: typeof middlewares[number]) => { middlewares.push(m); } });
+      const recorded: Recorded = {};
+      middlewares[0](makeReq("GET", "/api/products"), makeRes(recorded), () => { recorded.nexted = true; });
+      expect(recorded.nexted).toBe(true);
+      expect(recorded.status).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.POS_WEB_DIR; else process.env.POS_WEB_DIR = previous;
+    }
   });
 });
 

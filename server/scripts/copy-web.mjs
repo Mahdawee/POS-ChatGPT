@@ -17,5 +17,13 @@ if (existsSync(webDist)) {
   cpSync(webDist, target, { recursive: true });
   console.log(`web UI copied to ${target}`);
 } else {
-  console.log("no desktop/dist found — server built without the web UI");
+  // بیلد فقط-سرور: رفتار عمدی است (استقرار API خالی)، اما وبِ کهنه را هم
+  // پاک می‌کنیم تا سرور نسخهٔ قدیمی UI را سرو نکند و هشدار روشن می‌دهیم.
+  if (existsSync(target)) {
+    rmSync(target, { recursive: true, force: true });
+    console.log("removed stale dist/web (it would have served an outdated web UI)");
+  }
+  console.log("⚠  no desktop/dist found — server built WITHOUT the web UI.");
+  console.log("   Phones/browsers opening the server address will see a setup page instead of the app.");
+  console.log("   Fix: run the build from the project root (npm run build) so the frontend is built before the server, then restart.");
 }
