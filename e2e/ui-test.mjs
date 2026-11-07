@@ -15,11 +15,11 @@
 //   E2E_EXECUTABLE_PATH=…             مسیر کرومیوم جایگزین (اگر مرورگر
 //                                     پیش‌فرض playwright در دسترس نیست)
 //
-// سناریوها (۱۵ چک): ورود، شروع دورهٔ آزمایشی، ثبت سریع کالا با کد خودکار،
+// سناریوها (۱۸ چک): ورود، شروع دورهٔ آزمایشی، ثبت سریع کالا با کد خودکار،
 // اسکن بارکد با گوشیِ شبیه‌سازی‌شده (پل PIN) داخل فرم کالا، «ذخیره و کالای
 // بعدی»، Enter، لیست سبک صندوق (/products/pos)، کد خودکار مشتری،
-// اسکن خارج از صندوق (نباید بی‌سروصدا به سبد اضافه شود) و payload قدیمی
-// تأمین‌کننده.
+// اسکن خارج از صندوق (نباید بی‌سروصدا به سبد اضافه شود)، payload قدیمی
+// تأمین‌کننده، و PWA (manifest، sw.js، ثبت سرویس‌ورکر).
 // ─────────────────────────────────────────────────────────────────────────────
 
 let chromium;
@@ -180,6 +180,20 @@ try {
     const upd = await fetch(`${API}/suppliers/${sj.id}`, { method: "PATCH", headers: { "Content-Type": "application/json", ...authHeaders }, body: JSON.stringify({ name: "تست تأمین‌کننده ویرایش", phone: "07001112233", creditLimit: 900, tier: "WHOLESALE", code: "X-9" }) });
     check("ویرایش تأمین‌کننده با payload قدیمی بدون خطا", upd.status === 200, `HTTP ${upd.status}`);
   }
+
+  // ── ۱۱) PWA: فایل‌های نصب از مبدأ UI سرو می‌شوند و سرویس‌ورکر ثبت می‌شود
+  const manifestRes = await fetch(`${UI}/manifest.webmanifest`);
+  let manifestOk = manifestRes.status === 200;
+  if (manifestOk) {
+    const manifest = await manifestRes.json().catch(() => null);
+    manifestOk = !!manifest && String(manifest.name || "").includes("روشن");
+  }
+  check("PWA: manifest.webmanifest از مبدأ UI سرو می‌شود", manifestOk, `HTTP ${manifestRes.status}`);
+  const swRes = await fetch(`${UI}/sw.js`);
+  const swText = swRes.status === 200 ? await swRes.text() : "";
+  check("PWA: sw.js از مبدأ UI سرو می‌شود", swRes.status === 200 && swText.includes("install"), `HTTP ${swRes.status}`);
+  const swScope = await page.evaluate(() => navigator.serviceWorker.getRegistration().then((r) => (r ? r.scope : ""))).catch(() => "");
+  check("PWA: سرویس‌ورکر روی صفحه ثبت شده است", !!swScope, swScope ? `scope: ${swScope}` : "بدون ثبت");
 } catch (e) {
   check("اجرای کامل سناریو (خطای غیرمنتظره: " + e.message.split("\n").slice(0, 4).join(" | ").slice(0, 160) + ")", false);
 } finally {

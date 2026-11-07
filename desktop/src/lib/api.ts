@@ -1,5 +1,17 @@
-const DEFAULT_API = "http://127.0.0.1:4317/api";
+const BUNDLED_API = "http://127.0.0.1:4317/api";
 const SERVER_KEY = "darpos-server-origin";
+
+/**
+ * Default API base for this context:
+ *  • inside the Tauri desktop app → the bundled local server (127.0.0.1:4317);
+ *  • in a normal browser (PWA on a phone or another computer) → the UI is
+ *    served BY the API server, so the same origin is always correct and keeps
+ *    working when the app is later hosted on a real server with HTTPS.
+ */
+function defaultApiBase(): string {
+  if (typeof window === "undefined" || "__TAURI_INTERNALS__" in window) return BUNDLED_API;
+  return `${window.location.origin}/api`;
+}
 
 /** Base URL of the POS API — the bundled local server by default, or a LAN
  *  server when this machine runs as a network client (Settings → Network). */
@@ -8,7 +20,7 @@ export function apiBase(): string {
     const origin = localStorage.getItem(SERVER_KEY);
     if (origin) return `${origin.replace(/\/+$/, "")}/api`;
   } catch { /* storage unavailable */ }
-  return DEFAULT_API;
+  return defaultApiBase();
 }
 
 /** Points this machine at a LAN server (empty string restores local mode). */

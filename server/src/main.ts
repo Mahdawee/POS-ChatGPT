@@ -1,7 +1,10 @@
 import "reflect-metadata";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
-import { json } from "express";
+import { json, static as serveStatic } from "express";
+import type { NextFunction, Request, Response } from "express";
 import { AppModule } from "./app.module";
 import { AllExceptionsFilter } from "./all-exceptions.filter";
 import { configureLocalStorage } from "./storage";
@@ -29,6 +32,9 @@ async function bootstrap() {
     next();
   });
   applyLicenseGate(app, app.get(LicenseService));
+  // PWA: serve the built web UI from the API origin so phones and other
+  // computers can open the app at this address without installing anything.
+  serveWebApp(app);
   const port = Number(process.env.API_PORT || 4317);
   // The desktop app pins API_HOST=127.0.0.1; a machine shared as the LAN
   // server is started with API_HOST=0.0.0.0 so other registers can connect.
@@ -82,3 +88,44 @@ export function applyLicenseGate(app: { use(middleware: (req: { method?: string;
 // Run only when executed directly (node dist/main.js), not when a test
 // imports applyLicenseGate from this module.
 if (require.main === module) void bootstrap();
+
+/** True when a request is a browser page load that should get the SPA shell
+ *  (any non-API GET that no static file matched). Exported for unit tests. */
+export function isSpaFallbackRequest(method: string | undefined, path: string): boolean {
+  return method === "GET" && !path.startsWith("/api");
+}
+
+type MiddlewareApp = { use(middleware: (req: Request, res: Response, next: NextFunction) => void): unknown };
+
+/**
+ * ── Web UI / PWA serving ─────────────────────────────────────────────────
+ * When a built frontend sits next to the compiled API, it is served from the
+ * API origin: a phone or another computer on the network opens the server
+ * address and gets the app (installable PWA), and the browser build talks to
+ * the same-origin /api (see desktop/src/lib/api.ts). The web root is
+ * resolved as:
+ *   1. POS_WEB_DIR environment variable
+ *   2. dist/web — copied next to the compiled API by scripts/copy-web.mjs,
+ *      and bundled into the packaged desktop app's server the same way.
+ * A pure API deployment (no web files present) serves nothing — behaviour
+ * is exactly as before. /api requests are never intercepted: unknown API
+ * routes keep returning the JSON 402/404 they return today.
+ */
+export function serveWebApp(app: MiddlewareApp): void {
+  const root = process.env.POS_WEB_DIR || join(__dirname, "web");
+  if (!existsSync(join(root, "index.html"))) return;
+  app.use(
+    serveStatic(root, {
+      index: false,
+      setHeaders: (res, filePath) => {
+        // Hashed bundles are immutable; everything else (sw.js, manifest,
+        // icons) must always revalidate so updates reach the browsers.
+        res.setHeader("Cache-Control", filePath.startsWith(join(root, "assets")) ? "public, max-age=31536000, immutable" : "no-cache");
+      },
+    }),
+  );
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (!isSpaFallbackRequest(req.method, req.path)) return next();
+    res.sendFile(join(root, "index.html"));
+  });
+}

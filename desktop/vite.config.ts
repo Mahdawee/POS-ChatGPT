@@ -4,7 +4,20 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
-  server: { host: "127.0.0.1", port: 1420, strictPort: true },
+  // In dev/preview the UI runs on :1420 while the API listens on :4317. The
+  // browser build defaults to a same-origin API base (PWA-friendly), so the
+  // dev server proxies /api to the local API.
+  server: {
+    host: "127.0.0.1",
+    port: 1420,
+    strictPort: true,
+    proxy: { "/api": "http://127.0.0.1:4317" },
+  },
+  preview: {
+    port: 1420,
+    strictPort: true,
+    proxy: { "/api": "http://127.0.0.1:4317" },
+  },
   envPrefix: ["VITE_", "TAURI_ENV_*"],
   build: {
     target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari13",

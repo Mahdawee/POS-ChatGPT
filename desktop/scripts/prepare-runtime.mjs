@@ -23,6 +23,14 @@ mkdirSync(join(runtimeDir, "server"), { recursive: true });
 cpSync(process.execPath, join(runtimeDir, "node.exe"));
 cpSync(join(serverDir, "dist"), join(runtimeDir, "server", "dist"), { recursive: true, filter: runtimeCopyFilter });
 cpSync(join(serverDir, "prisma"), join(runtimeDir, "server", "prisma"), { recursive: true, filter: runtimeCopyFilter });
+// Refresh the bundled web UI from the freshly built desktop bundle: the LAN
+// server inside the package serves it to phones/other computers (PWA), and
+// the server may have been compiled before the frontend was rebuilt.
+{
+  const webDist = join(desktopDir, "dist");
+  rmSync(join(runtimeDir, "server", "dist", "web"), { recursive: true, force: true });
+  if (existsSync(webDist)) cpSync(webDist, join(runtimeDir, "server", "dist", "web"), { recursive: true });
+}
 cpSync(join(serverDir, "package.json"), join(runtimeDir, "server", "package.json"));
 
 const listCommand = process.platform === "win32" ? process.env.ComSpec || "cmd.exe" : "npm";
