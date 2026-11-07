@@ -152,6 +152,71 @@ describe("PhoneScanBridge (پل اسکن گوشی)", () => {
     expect(res.status).toBe(404);
   });
 
+  it("هر دستگاه (صندوق) PIN و بافر خودش را دارد — اسکن فقط به همان دستگاه می‌رسد", async () => {
+    const pinA = bridge.sessionPin("client-A");
+    const pinB = bridge.sessionPin("client-B");
+    expect(pinA).toMatch(/^\d{4}$/);
+    expect(pinB).toMatch(/^\d{4}$/);
+    expect(pinA).not.toBe(pinB); // دو صندوق نباید PIN یکسان ببینند
+    // PIN تکراری بین نشست‌های زنده هرگز ساخته نمی‌شود
+    const pins = new Set<string>([pinA, pinB]);
+    for (let i = 0; i < 20; i++) pins.add(bridge.sessionPin(`extra-${i}`));
+    expect(pins.size).toBe(22);
+
+    // گوشیِ صندوق A با PIN همان دستگاه جفت می‌شود
+    const { token: tokenA } = await fetch(`${base}/api/pair`, { method: "POST", body: JSON.stringify({ pin: pinA }) })
+      .then((r) => r.json() as Promise<{ token: string }>);
+    await fetch(`${base}/api/scan`, { method: "POST", body: JSON.stringify({ token: tokenA, code: "ONLY-FOR-A" }) });
+
+    const forA = bridge.pull(0, "client-A").scans.map((entry) => entry.code);
+    const forB = bridge.pull(0, "client-B").scans.map((entry) => entry.code);
+    expect(forA).toContain("ONLY-FOR-A");
+    expect(forB).not.toContain("ONLY-FOR-A"); // به دستگاه دیگر پخش نمی‌شود
+
+    // توکن نشست A برای اسکنِ بیشتر معتبر است ولی باز هم فقط به A می‌رسد
+    await fetch(`${base}/api/scan`, { method: "POST", body: JSON.stringify({ token: tokenA, code: "SECOND-FOR-A" }) });
+    expect(bridge.pull(0, "client-A").scans.map((entry) => entry.code)).toContain("SECOND-FOR-A");
+    expect(bridge.pull(0, "client-B").scans.map((entry) => entry.code)).not.toContain("SECOND-FOR-A");
+  });
+
+  it("جفت‌شدن با PIN دستگاه دیگر، اسکن را به همان دستگاه می‌برد؛ جفت‌شدن دوباره فقط توکن همان دستگاه را می‌چرخاند", async () => {
+    const pinA = bridge.sessionPin("client-A2");
+    const pinB = bridge.sessionPin("client-B2");
+    // گوشی من (B) اشتباهی PIN دستگاه A را می‌زند → جفت می‌شود با A نه B
+    const { token: tokenForA } = await fetch(`${base}/api/pair`, { method: "POST", body: JSON.stringify({ pin: pinA }) })
+      .then((r) => r.json() as Promise<{ token: string }>);
+    await fetch(`${base}/api/scan`, { method: "POST", body: JSON.stringify({ token: tokenForA, code: "ROUTED-TO-A" }) });
+    expect(bridge.pull(0, "client-A2").scans.map((entry) => entry.code)).toContain("ROUTED-TO-A");
+    expect(bridge.pull(0, "client-B2").scans.map((entry) => entry.code)).not.toContain("ROUTED-TO-A");
+
+    // جفت‌شدن درست با PIN خودم (B) → توکن گوشیِ A همچنان معتبر می‌ماند؛
+    // جفت‌شدن دوبارهٔ یک دستگاه نباید گوشی دستگاه دیگر را از کار بیندازد.
+    const { token: tokenB1 } = await fetch(`${base}/api/pair`, { method: "POST", body: JSON.stringify({ pin: pinB }) })
+      .then((r) => r.json() as Promise<{ token: string }>);
+    await fetch(`${base}/api/scan`, { method: "POST", body: JSON.stringify({ token: tokenForA, code: "A-STILL-OK" }) });
+    expect(bridge.pull(0, "client-A2").scans.map((entry) => entry.code)).toContain("A-STILL-OK");
+
+    // جفت‌شدن دوباره با PIN خودم → توکن قبلیِ خودم بی‌اعتبار می‌شود (چرخش)
+    const { token: tokenB2 } = await fetch(`${base}/api/pair`, { method: "POST", body: JSON.stringify({ pin: pinB }) })
+      .then((r) => r.json() as Promise<{ token: string }>);
+    expect(tokenB2).not.toBe(tokenB1);
+    const stale = await fetch(`${base}/api/scan`, { method: "POST", body: JSON.stringify({ token: tokenB1, code: "STALE-TOKEN" }) });
+    expect(stale.status).toBe(401);
+    await fetch(`${base}/api/scan`, { method: "POST", body: JSON.stringify({ token: tokenB2, code: "B-OK" }) });
+    expect(bridge.pull(0, "client-B2").scans.map((entry) => entry.code)).toContain("B-OK");
+  });
+
+  it("pull بدون client (حالت قدیمی/تک‌دستگاه) همچنان کار می‌کند", async () => {
+    const pin = bridge.currentPin;
+    const { token } = await fetch(`${base}/api/pair`, { method: "POST", body: JSON.stringify({ pin }) })
+      .then((r) => r.json() as Promise<{ token: string }>);
+    await fetch(`${base}/api/scan`, { method: "POST", body: JSON.stringify({ token, code: "LEGACY-CODE" }) });
+    const pulled = bridge.pull(0).scans.map((entry) => entry.code);
+    expect(pulled).toContain("LEGACY-CODE");
+    // و به نشست دستگاه‌های named نمی‌رود
+    expect(bridge.pull(0, "client-A").scans.map((entry) => entry.code)).not.toContain("LEGACY-CODE");
+  });
+
   it("خاموشی پل را می‌بندد", async () => {
     const second = new PhoneScanBridge();
     await second.start({ tls: false, port: 0, log: () => undefined });

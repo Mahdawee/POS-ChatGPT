@@ -66,7 +66,7 @@ export const PHONE_SCAN_HTML = `<!doctype html>
 <main>
   <section class="card" id="pairCard">
     <h1>📱 اتصال به صندوق</h1>
-    <div class="sub">کد PIN را از صفحهٔ «بارکدخوان / QR» در تنظیمات برنامهٔ کامپیوتر بردارید و همین‌جا وارد کنید.</div>
+    <div class="sub">کد PIN را از صفحهٔ «بارکدخوان / QR» در تنظیمات برنامهٔ کامپیوترِ همان صندوق بردارید و همین‌جا وارد کنید — هر دستگاه (صندوق) کد خودش را دارد و اسکن‌ها فقط به همان دستگاه می‌رسند.</div>
     <div class="pin-box"><input id="pinInput" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="••••" autocomplete="off"><button class="primary" style="width:auto" id="pairBtn">اتصال</button></div>
     <div id="pairErr" style="color:#ffb4b9;font-size:12px;margin-top:8px"></div>
   </section>

@@ -88,8 +88,11 @@ try {
   await nameInput.fill(prodName);
   await modal.locator('input[type="number"]').first().fill("65");
 
-  // ── ۴) شبیه‌سازی اسکن گوشی: جفت‌شدن با PIN و فرستادن بارکد
-  const pin = await fetch(`${API}/phone-scan/pin`, { headers: authHeaders }).then((r) => r.json());
+  // ── ۴) شبیه‌سازی اسکن گوشی: جفت‌شدن با PIN همین دستگاه و فرستادن بارکد
+  // (نشست per-دستگاه: PIN باید با شناسهٔ همین صفحه گرفته شود تا اسکن به همین
+  // دستگاه برسد، نه دستگاه‌های دیگر)
+  const scanClient = await page.evaluate(() => localStorage.getItem("darpos:scan-client-id") || "");
+  const pin = await fetch(`${API}/phone-scan/pin${scanClient ? `?client=${encodeURIComponent(scanClient)}` : ""}`, { headers: authHeaders }).then((r) => r.json());
   const pair = await fetch(`${BRIDGE}/api/pair`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pin: pin.pin }) }).then((r) => r.json());
   check("جفت‌شدن شبیه‌سازی‌شدهٔ گوشی با پل (PIN)", Boolean(pair.token));
 

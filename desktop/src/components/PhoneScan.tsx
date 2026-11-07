@@ -6,7 +6,24 @@ import { qrCreate } from "../lib/vendor/qr-core";
 
 /** نسخهٔ بصری پنل — اگر این متن را در تنظیمات نمی‌بینید، برنامهٔ در حال
  *  اجرا قدیمی است و باید دوباره ساخته شود (تشخیص قطعی build کهنه). */
-const PHONE_SCAN_PANEL_VERSION = "9"; // همیشگی + بارکد از گوشی به فرم ثبت کالا
+const PHONE_SCAN_PANEL_VERSION = "10"; // نشست per-دستگاه: هر صندوق PIN خودش را دارد
+/** کلید localStorage برای شناسهٔ پایدار این دستگاه — سرور با همین شناسه
+ *  نشست اسکن مستقل (PIN + بافر) برای هر صندوق می‌سازد تا در فروشگاه
+ *  چندصندوقی اسکنِ گوشی هر صندوق‌دار فقط به همان دستگاه برسد. */
+const CLIENT_KEY = "darpos:scan-client-id";
+
+/** شناسهٔ پایدار دستگاه — یک‌بار ساخته و برای همیشه در localStorage می‌ماند. */
+function scanClientId(): string {
+  try {
+    const existing = localStorage.getItem(CLIENT_KEY);
+    if (existing) return existing;
+    const fresh = (typeof crypto !== "undefined" && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `c-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+    localStorage.setItem(CLIENT_KEY, fresh);
+    return fresh;
+  } catch { return ""; }
+}
 /** رندر QR روی canvas — مطمئن‌ترین راه نمایش در هر WebView: بدون <img>،
  *  بدون data-URI و بدون SVG؛ پیکسل‌ها مستقیم با جاوااسکریپت نقش می‌شوند
  *  و ماتریسِ همان موتور QR رسیدهای چاپی (تأییدشده در عمل) است. */
@@ -102,10 +119,12 @@ export function PhoneScanListener({ active }: { active: boolean }): null {
     const poll = async (): Promise<void> => {
       // فقط اسکن‌های بعد از باز شدن برنامه — گذشتهٔ بافر دوباره پخش نشود
       let after = Date.now();
+      // نشست per-دستگاه: فقط اسکن‌های گوشیِ جفت‌شده با همین دستگاه
+      const client = scanClientId();
       while (!stopped) {
         try {
           const token = localStorage.getItem("darpos-token");
-          const response = await fetch(`${apiBase()}/phone-scan/pull?after=${after}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+          const response = await fetch(`${apiBase()}/phone-scan/pull?after=${after}&client=${encodeURIComponent(client)}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
           // 401/404/402: بدون ورود، سرور قدیمی (بدون این مسیر) یا بدون لایسنس —
           // بی‌سروصدا و کم‌تر تکرار می‌کنیم تا خواستهٔ جانبی برنامه پیش نرود
           if (response.status === 401 || response.status === 402 || response.status === 404) { await wait(3000); continue; }
@@ -147,14 +166,16 @@ export function PhoneScanPanel() {
   // وضعیت پل و PIN تازه بمانند (PIN با هر ری‌استارت سرور عوض می‌شود)
   useEffect(() => {
     let stopped = false;
+    // نشست این دستگاه — PIN و وضعیت جفت‌شدنِ همین صندوق
+    const client = encodeURIComponent(scanClientId());
     const load = async (): Promise<void> => {
       try {
-        const info = await get<PhoneScanStatusInfo>("/phone-scan/status");
+        const info = await get<PhoneScanStatusInfo>(`/phone-scan/status?client=${client}`);
         if (stopped) return;
         setStatus(info);
         setUnreachable(false);
         if (info.running) {
-          const pinData = await get<{ pin: string }>("/phone-scan/pin");
+          const pinData = await get<{ pin: string }>(`/phone-scan/pin?client=${client}`);
           if (!stopped) setPin(pinData.pin);
         } else {
           setPin("");
@@ -176,9 +197,10 @@ export function PhoneScanPanel() {
   useEffect(() => {
     let stopped = false;
     let after = Date.now();
+    const client = encodeURIComponent(scanClientId());
     const poll = async (): Promise<void> => {
       try {
-        const data = await get<{ scans: Array<{ code: string; at: number }>; now: number }>(`/phone-scan/pull?after=${after}`);
+        const data = await get<{ scans: Array<{ code: string; at: number }>; now: number }>(`/phone-scan/pull?after=${after}&client=${client}`);
         if (stopped) return;
         after = data.now;
         if (data.scans.length) setCodes((previous) => [...data.scans.slice().reverse(), ...previous].slice(0, 8));
@@ -243,9 +265,9 @@ export function PhoneScanPanel() {
     {status && status.running && <>
       <div className="phone-scan-grid">
         <div className="phone-scan-pin">
-          <span>{t("کد PIN")}</span>
+          <span>{t("کد PIN این دستگاه")}</span>
           <b dir="ltr">{pin || "…"}</b>
-          <small>{t("در صفحهٔ گوشی وارد کنید.")}</small>
+          <small>{t("هر دستگاه (صندوق) کد خودش را دارد — گوشی هر صندوق‌دار با کد همان دستگاه جفت می‌شود.")}</small>
         </div>
         {phoneUrl
           ? <div className="phone-scan-qr" title={t("بارکد را با دوربین گوشی بخوانید")}>

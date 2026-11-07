@@ -215,6 +215,11 @@ export default function App() {
   // back to standalone mode right from the login screen (no settings access
   // before signing in) — otherwise a wrong server URL locks the register out.
   const exitClientMode = async () => {
+    // این برگشت خطرناک است: دستگاه بی‌صدا به دیتابیس محلی خودش برمی‌گردد و
+    // فروش‌هایش دیگر روی سرور دیده نمی‌شود (دو دیتابیس جدا). پس قبل از
+    // انجام، یک‌بار شفاف تأیید گرفته می‌شود.
+    const warning = t("بازگشت به حالت تک‌کامپیوتر؟\n\nاز این پس فروش‌های این دستگاه فقط در دیتابیس محلیِ همین دستگاه ذخیره می‌شود و روی دستگاه سرور دیده نمی‌شود. برای اتصال دوباره، بعداً از تنظیمات ← شبکه نشانی سرور را وارد کنید.\n\nاگر می‌خواهید فقط سرور موقتاً خاموش است، «تلاش دوباره» را بزنید.");
+    if (!window.confirm(warning)) return;
     setServerOrigin("");
     try { if (inTauri()) await invoke("set_network_mode", { mode: "local" }); } catch { /* not running inside Tauri */ }
     window.location.reload();

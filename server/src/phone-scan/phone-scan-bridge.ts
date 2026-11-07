@@ -59,6 +59,12 @@ const DEDUPE_MS = 1500;
 const MAX_SCANS = 100;
 /** سقف بدنهٔ JSON درخواست‌های گوشی (کد بارکد هرچه باشد زیر این می‌ماند). */
 const MAX_BODY_BYTES = 10 * 1024;
+/** هر دستگاه (صندوق) یک نشست اسکن مستقل دارد — نشست‌های بی‌کار بعد از این
+ *  مدت حذف می‌شوند (دسکتاپِ روشن هر ~۰٫۷ ثانیه pull می‌زند و زنده می‌ماند). */
+const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
+/** سقف نشست‌های هم‌زمان — بیشتر از این تعداد صندوق در یک فروشگاه بعید است؛
+ *  قدیمی‌ترین لمس‌شده کنار می‌رود تا حافظهٔ بی‌پایان رشد نکند. */
+const MAX_SESSIONS = 30;
 
 export interface PhoneScanStartOptions {
   /** پورت گوش؛ 0 یعنی پورت تصادفی آزاد (در تست‌ها). */
@@ -101,6 +107,20 @@ export interface PhoneScanEntry {
   at: number;
 }
 
+/** نشست اسکنِ یک دستگاه (صندوق) — هر دستگاه PIN، توکن و بافر خودش را
+ *  دارد تا در فروشگاه چندصندوقی، اسکنِ گوشیِ هر صندوق‌دار فقط به همان
+ *  دستگاه برسد و به دستگاه‌های دیگر پخش نشود. کلید نشست، شناسهٔ پایدار
+ *  دستگاه است که UI در localStorage نگه می‌دارد (خالی = حالت قدیمی). */
+interface ScanSession {
+  pin: string;
+  token: string;
+  scans: PhoneScanEntry[];
+  lastAtByCode: Map<string, number>;
+  /** آخرین جفت‌شدن موفق گوشی با همین نشست — برای «جفت شده» در پنل همان دستگاه. */
+  pairedAt: number | null;
+  lastTouch: number;
+}
+
 @Injectable()
 export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
   private server: http.Server | https.Server | null = null;
@@ -111,10 +131,7 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
   private actualPort: number | null = null;
   /** PEM گواهی CA محلی — گوشی با دانلود و نصب /ca.crt دیگر هیچ هشداری نمی‌بیند. */
   private caCert = "";
-  private pin = "";
-  private token = "";
-  private scans: PhoneScanEntry[] = [];
-  private lastAtByCode = new Map<string, number>();
+  private sessions = new Map<string, ScanSession>();
   private disposed = false;
   private lastError = "";
   private stats: PhoneScanStats = { lastSeen: null, requests: 0, lastRequestAt: null, pairedAt: null };
@@ -150,10 +167,18 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
 
   /** PIN جاری — فقط از طریق /api/phone-scan/pin برای کاربر واردشده. */
   get currentPin(): string {
-    return this.pin;
+    return this.sessionFor("").pin;
   }
 
-  status(): PhoneScanStatus {
+  /** PIN نشستِ یک دستگاه مشخص (شناسهٔ پایدار UI؛ خالی = حالت قدیمی). */
+  sessionPin(clientId: string): string {
+    return this.sessionFor(clientId).pin;
+  }
+
+  status(clientId?: string): PhoneScanStatus {
+    const phone = clientId !== undefined
+      ? { ...this.stats, pairedAt: this.sessionFor(clientId).pairedAt }
+      : { ...this.stats };
     return {
       running: Boolean(this.server),
       tls: this.tlsEnabled,
@@ -161,24 +186,22 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
       httpPort: this.plainPort,
       lan: SettingsController.lanAddresses(),
       reason: this.server ? undefined : this.lastError || "not-started",
-      phone: { ...this.stats },
+      phone,
     };
   }
 
   /** کدهای جدیدتر از `after` — دسکتاپ مهر زمانیِ پاسخ قبلی را پاس می‌کند. */
-  pull(after: number): { scans: PhoneScanEntry[]; now: number } {
+  pull(after: number, clientId = ""): { scans: PhoneScanEntry[]; now: number } {
+    const session = this.sessionFor(clientId);
     const from = Number.isFinite(after) ? after : 0;
-    return { scans: this.scans.filter((entry) => entry.at > from), now: Date.now() };
+    return { scans: session.scans.filter((entry) => entry.at > from), now: Date.now() };
   }
 
   async start(options: PhoneScanStartOptions = {}): Promise<void> {
     if (this.server) return;
     this.tlsEnabled = options.tls ?? true;
     const wantedPort = options.port ?? DEFAULT_PORT;
-    this.pin = String(randomInt(1000, 10000));
-    this.token = randomBytes(16).toString("hex");
-    this.scans = [];
-    this.lastAtByCode.clear();
+    this.sessions.clear();
     const log = options.log ?? ((message: string) => console.log(`[phone-scan] ${message}`));
     const handler = (req: http.IncomingMessage, res: http.ServerResponse): void => this.handleRequest(req, res);
     let server: http.Server | https.Server;
@@ -228,7 +251,7 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
     // هر اتصال TCP (حتی نیمه‌کاره/ردشده به‌خاطر گواهی) برای خودتشخیص ثبت
     // می‌شود تا پنل بگوید گوشی اصلاً به سرور رسیده یا نه (فایروال/WiFi).
     server.on("connection", () => { this.stats.lastSeen = Date.now(); });
-    log(`پل اسکن گوشی فعال شد روی ${this.tlsEnabled ? "https" : "http"}://0.0.0.0:${this.actualPort} (PIN: ${this.pin})`);
+    log(`پل اسکن گوشی فعال شد روی ${this.tlsEnabled ? "https" : "http"}://0.0.0.0:${this.actualPort} (PIN هر دستگاه در تنظیمات همان دستگاه نمایش داده می‌شود)`);
     // همدم HTTP ساده: نشانی‌ای که همیشه بدون هشدار گواهی مرورگر باز می‌شود.
     // جفت‌کردن و «اسکن با عکس» آنجا کامل کار می‌کند و خودِ صفحه راهنمای
     // فعال‌سازی یک‌بارهٔ دوربین زنده (نشانی امن) را نشان می‌دهد. شکستن این
@@ -415,16 +438,26 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
       this.readJson(req, res, (body) => {
         const { pin, token } = body as { pin?: unknown; token?: unknown };
         // ادامهٔ جفت‌شدن با token قبلی (بعد از ری‌استارت سرور یا بازگشت به صفحه).
-        if (typeof token === "string" && token === this.token) {
-          this.stats.pairedAt = Date.now();
-          this.send(res, 200, JSON.stringify({ token: this.token }), "application/json");
-          return;
+        if (typeof token === "string") {
+          const session = this.sessionByToken(token);
+          if (session) {
+            session.pairedAt = Date.now();
+            this.stats.pairedAt = Date.now();
+            this.send(res, 200, JSON.stringify({ token: session.token }), "application/json");
+            return;
+          }
         }
-        if (typeof pin === "string" && pin === this.pin) {
-          this.token = randomBytes(16).toString("hex");
-          this.stats.pairedAt = Date.now();
-          this.send(res, 200, JSON.stringify({ token: this.token }), "application/json");
-          return;
+        // جفت‌شدن با PIN → گوشی به نشست همان دستگاهی وصل می‌شود که این PIN را
+        // نشان می‌دهد (در فروشگاه چندصندوقی هر دستگاه PIN خودش را دارد).
+        if (typeof pin === "string") {
+          const session = this.sessionByPin(pin);
+          if (session) {
+            session.token = randomBytes(16).toString("hex");
+            session.pairedAt = Date.now();
+            this.stats.pairedAt = Date.now();
+            this.send(res, 200, JSON.stringify({ token: session.token }), "application/json");
+            return;
+          }
         }
         this.send(res, 403, JSON.stringify({ error: "PIN درست نیست." }), "application/json");
       });
@@ -433,7 +466,8 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
     if (req.method === "POST" && path === "/api/scan") {
       this.readJson(req, res, (body) => {
         const { token, code } = body as { token?: unknown; code?: unknown };
-        if (typeof token !== "string" || token !== this.token) {
+        const session = typeof token === "string" ? this.sessionByToken(token) : undefined;
+        if (!session) {
           this.send(res, 401, JSON.stringify({ error: "unauthorized" }), "application/json");
           return;
         }
@@ -443,22 +477,80 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
         }
         const value = code.trim();
         const now = Date.now();
-        const last = this.lastAtByCode.get(value) || 0;
+        const last = session.lastAtByCode.get(value) || 0;
         if (now - last <= DEDUPE_MS) {
           this.send(res, 200, JSON.stringify({ ok: true, duplicate: true }), "application/json");
           return;
         }
-        this.lastAtByCode.set(value, now);
-        if (this.lastAtByCode.size > 500) {
-          for (const [cached, at] of this.lastAtByCode) if (now - at > DEDUPE_MS) this.lastAtByCode.delete(cached);
+        session.lastAtByCode.set(value, now);
+        if (session.lastAtByCode.size > 500) {
+          for (const [cached, at] of session.lastAtByCode) if (now - at > DEDUPE_MS) session.lastAtByCode.delete(cached);
         }
-        this.scans.push({ code: value, at: now });
-        if (this.scans.length > MAX_SCANS) this.scans.splice(0, this.scans.length - MAX_SCANS);
+        session.scans.push({ code: value, at: now });
+        if (session.scans.length > MAX_SCANS) session.scans.splice(0, session.scans.length - MAX_SCANS);
         this.send(res, 200, JSON.stringify({ ok: true }), "application/json");
       });
       return;
     }
     this.send(res, 404, "not found", "text/plain; charset=utf-8");
+  }
+
+  /** نشست یک دستگاه را می‌سازد یا برمی‌گرداند — کلید، شناسهٔ پایدار UI است. */
+  private sessionFor(clientId: string): ScanSession {
+    const key = (clientId || "").slice(0, 64);
+    const existing = this.sessions.get(key);
+    if (existing) {
+      existing.lastTouch = Date.now();
+      return existing;
+    }
+    this.pruneSessions();
+    // PIN یکتا بین نشست‌های زنده — دو صندوق نباید PIN یکسان ببینند.
+    let pin = "";
+    for (let attempt = 0; attempt < 40 && !pin; attempt++) {
+      const candidate = String(randomInt(1000, 10000));
+      let clash = false;
+      for (const session of this.sessions.values()) {
+        if (session.pin === candidate) { clash = true; break; }
+      }
+      if (!clash) pin = candidate;
+    }
+    if (!pin) pin = String(randomInt(1000, 10000)); // عملاً رخ نمی‌دهد
+    // سقف نشست‌ها: قدیمی‌ترین لمس‌شده کنار می‌رود.
+    if (this.sessions.size >= MAX_SESSIONS) {
+      let oldestKey: string | null = null;
+      let oldestAt = Infinity;
+      for (const [key2, session] of this.sessions) {
+        if (session.lastTouch < oldestAt) { oldestAt = session.lastTouch; oldestKey = key2; }
+      }
+      if (oldestKey !== null) this.sessions.delete(oldestKey);
+    }
+    const session: ScanSession = { pin, token: randomBytes(16).toString("hex"), scans: [], lastAtByCode: new Map(), pairedAt: null, lastTouch: Date.now() };
+    this.sessions.set(key, session);
+    return session;
+  }
+
+  private sessionByPin(pin: string): ScanSession | undefined {
+    this.pruneSessions();
+    for (const session of this.sessions.values()) {
+      if (session.pin === pin) { session.lastTouch = Date.now(); return session; }
+    }
+    return undefined;
+  }
+
+  private sessionByToken(token: string): ScanSession | undefined {
+    this.pruneSessions();
+    for (const session of this.sessions.values()) {
+      if (session.token === token) { session.lastTouch = Date.now(); return session; }
+    }
+    return undefined;
+  }
+
+  /** نشست‌های بی‌کار را حذف می‌کند — دسکتاپِ روشن با pull منظم زنده می‌ماند. */
+  private pruneSessions(): void {
+    const now = Date.now();
+    for (const [key, session] of this.sessions) {
+      if (now - session.lastTouch > SESSION_TTL_MS) this.sessions.delete(key);
+    }
   }
 
   private send(res: http.ServerResponse, status: number, body: string | Buffer, contentType: string, cacheControl = "no-store"): void {
@@ -496,14 +588,16 @@ export class PhoneScanBridge implements OnModuleInit, OnModuleDestroy {
 }
 
 /** مسیرهای دسکتاپ — زیر پیشوند /api سرور اصلی؛ LocalAuthGuard جهانی مثل
- *  بقیهٔ مسیرها JWT می‌خواهد، پس PIN فقط برای کاربرِ واردشده فاش می‌شود. */
+ *  بقیهٔ مسیرها JWT می‌خواهد، پس PIN فقط برای کاربرِ واردشده فاش می‌شود.
+ *  پارامتر client شناسهٔ پایدار دستگاه است: هر صندوق نشست، PIN و بافر
+ *  اسکنِ خودش را دارد تا اسکنِ گوشی هر صندوق‌دار فقط به همان دستگاه برسد. */
 @Controller("phone-scan")
 export class PhoneScanController {
   constructor(private readonly bridge: PhoneScanBridge) {}
 
   @Get("status")
-  status(): PhoneScanStatus & { urls: string[] } {
-    const info = this.bridge.status();
+  status(@Query("client") client?: string): PhoneScanStatus & { urls: string[] } {
+    const info = this.bridge.status(client || "");
     const scheme = info.tls ? "https" : "http";
     const urls = [`127.0.0.1`, ...info.lan].map((host) => `${scheme}://${host}:${info.port}`);
     // نشانی ساده (HTTP) — فقط برای LAN؛ 127.0.0.1 برای گوشی بی‌معناست
@@ -515,14 +609,14 @@ export class PhoneScanController {
   }
 
   @Get("pin")
-  pin(): { pin: string } {
-    return { pin: this.bridge.currentPin };
+  pin(@Query("client") client?: string): { pin: string } {
+    return { pin: this.bridge.sessionPin(client || "") };
   }
 
   @Get("pull")
-  pull(@Query("after") after?: string): { scans: PhoneScanEntry[]; now: number } {
+  pull(@Query("after") after?: string, @Query("client") client?: string): { scans: PhoneScanEntry[]; now: number } {
     const parsed = Number(after);
-    return this.bridge.pull(Number.isFinite(parsed) ? parsed : 0);
+    return this.bridge.pull(Number.isFinite(parsed) ? parsed : 0, client || "");
   }
 }
 
