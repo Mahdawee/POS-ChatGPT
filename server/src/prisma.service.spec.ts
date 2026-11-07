@@ -21,6 +21,7 @@ function db(tableColumns: Record<string, string[]>) {
 describe("Column migrations for installed databases", () => {
   it("adds every missing column to its existing table", async () => {
     const { client, statements } = db({
+      User: ["id", "username", "displayName", "passwordHash", "role", "isActive"],
       Sale: ["id", "receiptNo", "subtotal", "total", "paymentMethod"],
       SaleItem: ["id", "saleId", "productId", "name", "sku", "quantity", "unitPrice", "lineTotal"],
       SaleReturn: ["id", "returnNo", "total"],
@@ -32,6 +33,7 @@ describe("Column migrations for installed databases", () => {
     });
     await ensureColumnMigrations(client);
     expect(statements).toEqual([
+      `ALTER TABLE "User" ADD COLUMN "mustChangePassword" BOOLEAN NOT NULL DEFAULT false`,
       `ALTER TABLE "SaleItem" ADD COLUMN "unitCost" INTEGER NOT NULL DEFAULT 0`,
       `ALTER TABLE "SaleReturnItem" ADD COLUMN "unitCost" INTEGER NOT NULL DEFAULT 0`,
       `ALTER TABLE "Purchase" ADD COLUMN "paidAmount" INTEGER NOT NULL DEFAULT 0`,
@@ -72,6 +74,7 @@ describe("Column migrations for installed databases", () => {
       Customer: ["creditLimit", "walletBalance", "tier", "code"],
       Sale: ["cashPart", "mobilePart", "creditPart", "invoiceNo", "walletPart", "voidedAt", "voidReason", "voidedBy"],
       SaleReturn: ["creditRelief", "cashAmount", "walletRefund"],
+      User: ["mustChangePassword"],
     });
     await ensureColumnMigrations(client);
     expect(statements).toEqual([]);

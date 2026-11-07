@@ -11,6 +11,7 @@ import { ensureInitialData } from "./bootstrap-data";
  * Never remove an entry: installed databases rely on this list to catch up.
  */
 const COLUMN_MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
+  { table: "User", column: "mustChangePassword", ddl: `ALTER TABLE "User" ADD COLUMN "mustChangePassword" BOOLEAN NOT NULL DEFAULT false` },
   { table: "SaleItem", column: "unitCost", ddl: `ALTER TABLE "SaleItem" ADD COLUMN "unitCost" INTEGER NOT NULL DEFAULT 0` },
   { table: "SaleReturnItem", column: "unitCost", ddl: `ALTER TABLE "SaleReturnItem" ADD COLUMN "unitCost" INTEGER NOT NULL DEFAULT 0` },
   { table: "Purchase", column: "paidAmount", ddl: `ALTER TABLE "Purchase" ADD COLUMN "paidAmount" INTEGER NOT NULL DEFAULT 0` },

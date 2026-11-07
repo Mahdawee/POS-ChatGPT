@@ -4,7 +4,7 @@ import { PrismaClient, UserRole } from "@prisma/client";
 export async function ensureInitialData(prisma: PrismaClient) {
   if (await prisma.user.count() > 0) return;
   const passwordHash = await bcrypt.hash("admin12345", 12);
-  const admin = await prisma.user.create({ data: { username: "admin", displayName: "مدیر فروشگاه", passwordHash, role: UserRole.ADMIN } });
+  const admin = await prisma.user.create({ data: { username: "admin", displayName: "مدیر فروشگاه", passwordHash, role: UserRole.ADMIN, mustChangePassword: true } });
   const foods = await prisma.category.create({ data: { name: "مواد غذایی", color: "#6f9f77" } });
   const house = await prisma.category.create({ data: { name: "لوازم خانه", color: "#c98c5b" } });
   const drinks = await prisma.category.create({ data: { name: "نوشیدنی", color: "#729bc4" } });

@@ -83,7 +83,7 @@ export const put = <T,>(path: string, body: unknown) => request<T>(path, { metho
 export const patch = <T,>(path: string, body: unknown) => request<T>(path, { method: "PATCH", body: JSON.stringify(body) });
 export const del = <T,>(path: string) => request<T>(path, { method: "DELETE" });
 
-export type User = { id: string; username: string; displayName: string; role: "ADMIN" | "CASHIER" };
+export type User = { id: string; username: string; displayName: string; role: "ADMIN" | "CASHIER"; mustChangePassword?: boolean };
 export type Category = { id: string; name: string; color: string; _count?: { products: number } };
 export type Product = { id: string; sku: string; barcode: string | null; name: string; unit: string; isWeighted?: boolean; isBundle?: boolean; isSerialized?: boolean; reserved?: number; expiryDate?: string | null; price: number; wholesalePrice?: number | null; wholesaleMinQty?: number | null; cost: number; stock: number; backstock?: number; minStock: number; categoryId: string | null; category?: Category | null; isActive?: boolean; bundleComponents?: Array<{ id: string; componentId: string; quantity: number; component?: { id: string; name: string; sku: string; unit: string; stock?: number; reserved?: number; isSerialized?: boolean } }>; serialUnits?: Array<{ id: string }> };
 export type Contact = { id: string; name: string; code?: string | null; phone: string | null; address: string | null; note: string | null; balance?: number; creditLimit?: number; walletBalance?: number; tier?: "RETAIL" | "WHOLESALE" };

@@ -234,6 +234,13 @@ export default function App() {
   if (restore) return <div className="startup-screen"><LoaderCircle className="spin" size={22}/> {t("برنامه در حال آماده‌شدن است…")}</div>;
   if (licenseOk === false) return <Suspense fallback={<Loading/>}><LicenseScreen onActivated={() => { setLicenseOk(null); refreshLicense(); }}/></Suspense>;
   if (!user || apiReady === false) return <LoginScreen apiReady={apiReady} apiSlow={apiSlow} onLogin={(session) => { localStorage.setItem("darpos-token", session.accessToken); localStorage.setItem("darpos-session", JSON.stringify(session)); setUser(session.user); setPage("dashboard"); }} notify={notify} onExitClientMode={exitClientMode}/>;
+  // نصب تازه: تا وقتی گذرواژهٔ پیش‌فرض عوض نشده، برنامه قفل می‌شود — محصولِ
+  // فروخته‌شده نباید با رمز شناخته‌شدهٔ admin12345 روی دستگاه مشتری بماند.
+  if (user.mustChangePassword) return <MustChangePasswordGate user={user} onDone={() => {
+    const next = { ...user, mustChangePassword: false };
+    try { localStorage.setItem("darpos-session", JSON.stringify(next)); } catch { /* ذخیره نشد — نشست در حافظه به‌روز است */ }
+    setUser(next);
+  }} onLogout={logout} notify={notify}/>;
 
   const labels: Record<PageId, string> = { dashboard: t("نمای کلی"), pos: t("صندوق فروش"), products: t("کالاها"), categories: t("دسته‌بندی‌ها"), customers: t("مشتریان"), suppliers: t("تأمین‌کنندگان"), purchases: t("خریدها"), orders: t("سفارش‌ها"), inventory: t("موجودی انبار"), sales: t("فروش‌ها"), reports: t("گزارش‌ها"), cash: t("مدیریت صندوق"), expenses: t("دخل و خرج"), users: t("کاربران"), audit: t("لاگ فعالیت"), settings: t("تنظیمات") };
   // The second window (customer display) renders standalone, without the Shell.
@@ -339,4 +346,49 @@ function ShortcutsHelp({ onClose }: { onClose: () => void }) {
       <div className="form-actions"><button className="primary-button" onClick={onClose}>{t("بستن")}</button></div>
     </div>
   </div>;
+}
+
+/** ── گارد گذرواژهٔ پیش‌فرض ───────────────────────────────────────────────────
+ * در نصب تازه، کاربر «admin» با گذرواژهٔ پیش‌فرض ساخته می‌شود؛ برنامه تا وقتی
+ * آن گذرواژه عوض نشود قفل می‌ماند تا دستگاهِ فروخته‌شده با رمز شناخته‌شده
+ * روی دست مشتری نماند. گذرواژهٔ فعلی (پیش‌فرض) و گذرواژهٔ تازه گرفته می‌شود
+ * و همان مسیر /auth/change-password همیشگی اجرا می‌شود. */
+function MustChangePasswordGate({ user, onDone, onLogout, notify }: { user: User; onDone: () => void; onLogout: () => void; notify: (text: string, kind?: "success" | "error") => void }) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setError("");
+    if (newPassword.length < 8) { setError(t("گذرواژهٔ تازه باید دست‌کم ۸ نویسه باشد.")); return; }
+    if (newPassword !== confirmPassword) { setError(t("تکرار گذرواژه با گذرواژهٔ تازه یکسان نیست.")); return; }
+    if (newPassword === currentPassword) { setError(t("گذرواژهٔ تازه باید با گذرواژهٔ فعلی متفاوت باشد.")); return; }
+    setBusy(true);
+    try {
+      await post("/auth/change-password", { currentPassword, newPassword });
+      notify(t("گذرواژه با موفقیت تغییر کرد."));
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <div className="login-screen"><div className="login-decor decor-one"/><div className="login-decor decor-two"/><section className="login-card">
+    <div className="login-logo"><div className="brand-mark">{t("امن")}</div><div><strong>{t("تغییر گذرواژهٔ پیش‌فرض")}</strong><span>{user.displayName}</span></div></div>
+    <div className="login-welcome"><div className="login-icon"><LockKeyhole size={23}/></div>
+      <h1>{t("برای امنیت فروشگاه")}</h1>
+      <p>{t("این نصب تازه است و حساب مدیر هنوز گذرواژهٔ پیش‌فرض دارد. برای شروع کار، یک گذرواژهٔ تازه انتخاب کنید — این گذرواژه فقط خودتان می‌دانید و از این پس برای ورود استفاده می‌شود.")}</p>
+    </div>
+    <form onSubmit={submit} className="login-form must-change-form">
+      <label className="field"><span>{t("گذرواژهٔ فعلی (پیش‌فرض)")}</span><div className="login-input"><LockKeyhole size={16}/><input required type="password" autoComplete="current-password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} dir="ltr" autoFocus/></div></label>
+      <label className="field"><span>{t("گذرواژهٔ تازه (حداقل ۸ نویسه)")}</span><div className="login-input"><LockKeyhole size={16}/><input required type="password" minLength={8} autoComplete="new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} dir="ltr"/></div></label>
+      <label className="field"><span>{t("تکرار گذرواژهٔ تازه")}</span><div className="login-input"><LockKeyhole size={16}/><input required type="password" minLength={8} autoComplete="new-password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} dir="ltr"/></div></label>
+      {error && <div className="form-error">{t(error)}</div>}
+      <button className="primary-button login-submit" disabled={busy}>{busy ? <><LoaderCircle className="spin" size={17}/>{t("در حال ذخیره…")}</> : t("ذخیره و ورود به برنامه")}</button>
+    </form>
+    <div className="login-foot"><button type="button" className="text-button" onClick={onLogout}>{t("خروج از حساب")}</button></div>
+  </section></div>;
 }

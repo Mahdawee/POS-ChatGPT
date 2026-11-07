@@ -140,6 +140,8 @@ model User {
   passwordHash String
   role         UserRole    @default(CASHIER)
   isActive     Boolean     @default(true)
+  /// نصب تازه: کاربر پیش‌فرض باید در اولین ورود گذرواژه‌اش را عوض کند.
+  mustChangePassword Boolean @default(false)
   sales        Sale[]
   cashSessions CashSession[]
   purchases    Purchase[]

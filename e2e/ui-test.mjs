@@ -15,11 +15,13 @@
 //   E2E_EXECUTABLE_PATH=…             مسیر کرومیوم جایگزین (اگر مرورگر
 //                                     پیش‌فرض playwright در دسترس نیست)
 //
-// سناریوها (۱۸ چک): ورود، شروع دورهٔ آزمایشی، ثبت سریع کالا با کد خودکار،
-// اسکن بارکد با گوشیِ شبیه‌سازی‌شده (پل PIN) داخل فرم کالا، «ذخیره و کالای
-// بعدی»، Enter، لیست سبک صندوق (/products/pos)، کد خودکار مشتری،
-// اسکن خارج از صندوق (نباید بی‌سروصدا به سبد اضافه شود)، payload قدیمی
-// تأمین‌کننده، و PWA (manifest، sw.js، ثبت سرویس‌ورکر).
+// سناریوها (۲۶ چک): ورود، گارد تغییر اجباری گذرواژهٔ پیش‌فرض در نصب تازه،
+// ثبت سریع کالا با کد خودکار، اسکن بارکد با گوشیِ شبیه‌سازی‌شده (پل PIN)
+// داخل فرم کالا، «ذخیره و کالای بعدی»، Enter، لیست سبک صندوق
+// (/products/pos)، کد خودکار مشتری، اسکن خارج از صندوق (نباید بی‌سروصدا
+// به سبد اضافه شود)، payload قدیمی تأمین‌کننده، PWA (manifest، sw.js،
+// ثبت سرویس‌ورکر)، ممیزی انتشار (فروش کامل تا بستن صندوق + کاهش موجودی
+// + فاکتور در فروش‌ها + بدون خطای کنسول/کرش/5xx در همهٔ صفحه‌ها).
 // ─────────────────────────────────────────────────────────────────────────────
 
 let chromium;
@@ -49,6 +51,14 @@ if (process.env.E2E_EXECUTABLE_PATH) {
 const browser = await chromium.launch(launchOptions);
 const page = await browser.newPage();
 page.setDefaultTimeout(15000);
+// ممیزی انتشار: هیچ خطای کنسول/کرش صفحه/خطای 5xx در کل اجرا نباید باشد.
+// استثنای عمدی: پاسخ 402 دروازهٔ لایسنس در اولین بارِ پیش از فعال‌سازی —
+// رفتار طراحی‌شدهٔ نصب تازه است و صفحهٔ لایسنس خودش مدیریتش می‌کند.
+const isBenign = (text) => text.includes("402");
+const consoleErrors = [];
+page.on("console", (msg) => { if (msg.type() === "error" && !isBenign(msg.text())) consoleErrors.push(msg.text().slice(0, 120)); });
+page.on("pageerror", (err) => consoleErrors.push(`pageerror: ${String(err.message).slice(0, 120)}`));
+page.on("response", (res) => { if (res.status() >= 500) consoleErrors.push(`HTTP ${res.status()} ${res.url().slice(0, 90)}`); });
 try {
   // ── ۱) ورود (دیتابیس تازه: اول صفحهٔ لایسنس می‌آید)
   await page.goto(UI);
@@ -58,10 +68,26 @@ try {
   await page.locator("form.login-form input").nth(0).fill("admin");
   await page.locator("form.login-form input").nth(1).fill("admin12345");
   await page.locator("button.login-submit").click();
-  await page.waitForSelector("form.login-form", { state: "detached", timeout: 20000 });
+  await page.waitForSelector("form.login-form:not(.must-change-form)", { state: "detached", timeout: 20000 });
   await page.waitForTimeout(1500);
   check("ورود به برنامه", true);
-  const login2 = await fetch(`${API}/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "admin", password: "admin12345" }) }).then((r) => r.json());
+
+  // ── ۱.۵) نصب تازه باید گذرواژهٔ پیش‌فرض را اجباراً عوض کند (گارد امنیتی)
+  const gateForm = page.locator("form.must-change-form");
+  const gateShown = await gateForm.waitFor({ state: "visible", timeout: 8000 }).then(() => true).catch(() => false);
+  check("گارد تغییر گذرواژهٔ پیش‌فرض در نصب تازه ظاهر می‌شود", gateShown);
+  if (gateShown) {
+    await gateForm.locator("input").nth(0).fill("admin12345");
+    await gateForm.locator("input").nth(1).fill("E2ePass12345");
+    await gateForm.locator("input").nth(2).fill("E2ePass12345");
+    await gateForm.locator("button.login-submit").click();
+    const gateDone = await gateForm.waitFor({ state: "detached", timeout: 10000 }).then(() => true).catch(() => false);
+    check("تغییر گذرواژه از گارد انجام و قفل باز می‌شود", gateDone);
+    await page.waitForTimeout(1200);
+  }
+  // رمز پس از گارد عوض شده است؛ هر دو را امتحان می‌کنیم (تکرارپذیری روی دیتابیس‌های مختلف)
+  const tryLogin = (password) => fetch(`${API}/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "admin", password }) }).then((r) => r.json());
+  const login2 = (await tryLogin("E2ePass12345")).accessToken ? await tryLogin("E2ePass12345") : await tryLogin("admin12345");
   const authHeaders = { Authorization: `Bearer ${login2.accessToken}` };
 
   // ── ۲) کد بعدی را از وضعیت فعلی دیتابیس حساب کن (تست را تکرارپذیر می‌کند)
@@ -197,6 +223,53 @@ try {
   check("PWA: sw.js از مبدأ UI سرو می‌شود", swRes.status === 200 && swText.includes("install"), `HTTP ${swRes.status}`);
   const swScope = await page.evaluate(() => navigator.serviceWorker.getRegistration().then((r) => (r ? r.scope : ""))).catch(() => "");
   check("PWA: سرویس‌ورکر روی صفحه ثبت شده است", !!swScope, swScope ? `scope: ${swScope}` : "بدون ثبت");
+
+  // ── ۱۲) ممیزی انتشار: چرخهٔ کامل فروش (صندوقِ باز → فروش → موجودی → بستن صندوق)
+  const riceBefore = (await fetch(`${API}/products/pos`, { headers: authHeaders }).then((r) => r.json())).find((p) => p.barcode === "1001000001");
+  await page.getByRole("button", { name: "صندوق فروش", exact: false }).first().click();
+  await page.waitForTimeout(900);
+  const searchInput = page.locator("form.pos-search input");
+  await searchInput.fill("1001000001");
+  await searchInput.press("Enter");
+  await page.waitForTimeout(700);
+  const saleCartLines = await page.locator("aside.cart-panel .cart-line").count();
+  check("فروش: افزودن کالا به سبد با بارکد", saleCartLines >= 1, `${saleCartLines} ردیف سبد`);
+  // مبلغ دریافتی = سومین فیلد عددی گزینه‌های سبد (تخفیف، تخفیف درصدی، مبلغ دریافتی)
+  await page.locator("aside.cart-panel .cart-options .discount-line input[type=number]").nth(2).fill("200");
+  await page.locator("button.checkout-button").click();
+  await page.waitForTimeout(1800);
+  const saleToast = (await page.locator(".toast").allTextContents().catch(() => [])).join(" | ");
+  check("فروش: ثبت فروش نقدی با موفقیت", saleToast.includes("فروش با موفقیت ثبت شد"), saleToast.trim().slice(0, 60));
+  const riceAfter = (await fetch(`${API}/products/pos`, { headers: authHeaders }).then((r) => r.json())).find((p) => p.barcode === "1001000001");
+  check("فروش: موجودی همان لحظه کاهش یافت", riceAfter && riceBefore && riceAfter.stock === riceBefore.stock - 1, `${riceBefore?.stock} → ${riceAfter?.stock}`);
+  // پیش‌نمایش رسید بعد از ثبت باز می‌شود — برای ادامهٔ ممیزی بسته می‌شود
+  await page.keyboard.press("Escape").catch(() => {});
+  await page.waitForTimeout(600);
+  // بستن صندوق: نقد مورد انتظار = ۰ آغازین + ۱۴۵ فروش نقدی؛ شمارش همان مقدار → اختلاف صفر
+  await page.getByRole("button", { name: "مدیریت صندوق", exact: true }).click();
+  await page.waitForTimeout(900);
+  await page.getByRole("button", { name: "بستن صندوق", exact: true }).click();
+  await page.waitForTimeout(500);
+  await page.locator("section.modal form .form-actions button.danger-button, section.modal form .form-actions button.primary-button").last().click();
+  await page.waitForTimeout(1500);
+  const closeToast = (await page.locator(".toast").allTextContents().catch(() => [])).join(" | ");
+  check("فروش: بستن صندوق با اختلاف صفر", closeToast.includes("صندوق بسته شد") && closeToast.includes("اختلاف: ۰"), closeToast.trim().slice(0, 70));
+  // گزارش Z بعد از بستن در مودال باز می‌شود — برای ادامهٔ ممیزی بسته می‌شود
+  await page.keyboard.press("Escape").catch(() => {});
+  await page.waitForTimeout(600);
+  await page.keyboard.press("Escape").catch(() => {});
+  await page.waitForTimeout(400);
+  const salesBody = await fetch(`${API}/sales`, { headers: authHeaders }).then((r) => r.json());
+  const salesList = Array.isArray(salesBody) ? salesBody : (salesBody.list ?? []);
+  check("فروش: فاکتور در فهرست فروش‌ها ثبت شد", salesList.length >= 1 && salesList.some((s) => Number(s.total) === 145), `${salesList.length} فاکتور`);
+
+  // ── ۱۳) ممیزی انتشار: همهٔ صفحه‌ها بدون خطای کنسول/کرش/5xx باز می‌شوند
+  const navPages = ["نمای کلی", "صندوق فروش", "کالاها", "دسته‌بندی‌ها", "مشتریان", "تأمین‌کنندگان", "خریدها", "سفارش‌ها", "موجودی انبار", "فروش‌ها", "گزارش‌ها", "مدیریت صندوق", "دخل و خرج", "کاربران", "لاگ فعالیت", "تنظیمات"];
+  for (const navName of navPages) {
+    await page.getByRole("button", { name: navName, exact: true }).first().click().catch(() => {});
+    await page.waitForTimeout(450);
+  }
+  check("ممیزی انتشار: بدون خطای کنسول/کرش/5xx در کل اجرا", consoleErrors.length === 0, consoleErrors.slice(0, 3).join(" | "));
 } catch (e) {
   check("اجرای کامل سناریو (خطای غیرمنتظره: " + e.message.split("\n").slice(0, 4).join(" | ").slice(0, 160) + ")", false);
 } finally {
