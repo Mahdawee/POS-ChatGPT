@@ -1,7 +1,7 @@
 import { readFileSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isSpaFallbackRequest, serveWebApp } from "./main";
+import { isSpaFallbackRequest, serveWebApp, resolveWebRoot } from "./main";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // قرارداد پوستهٔ وب (PWA): این تست‌ها تضمین می‌کنند فایل‌های نصب برنامهٔ وب
@@ -34,6 +34,31 @@ describe("SPA fallback routing (serveWebApp)", () => {
   });
 });
 
+describe("web root resolution (resolveWebRoot)", () => {
+  it("honors POS_WEB_DIR when set", () => {
+    const previous = process.env.POS_WEB_DIR;
+    process.env.POS_WEB_DIR = "/custom/web/dir";
+    try {
+      expect(resolveWebRoot()).toBe("/custom/web/dir");
+    } finally {
+      if (previous === undefined) delete process.env.POS_WEB_DIR; else process.env.POS_WEB_DIR = previous;
+    }
+  });
+
+  it("falls back to server/dist/web when running from src (npm run dev / ts-node-dev)", () => {
+    // تست‌ها خودشان از src اجرا می‌شوند؛ پس resolveWebRoot باید (وقتی وبِ
+    // کنار src نباشد) به خروجی بیلد یعنی server/dist/web اشاره کند —
+    // همان باگی که در حالت dev صفحهٔ «وب نصب نیست» را ابدی می‌کرد.
+    const previous = process.env.POS_WEB_DIR;
+    delete process.env.POS_WEB_DIR;
+    try {
+      expect(resolveWebRoot()).toBe(join(__dirname, "..", "dist", "web"));
+    } finally {
+      if (previous !== undefined) process.env.POS_WEB_DIR = previous;
+    }
+  });
+});
+
 describe("missing web build (serveWebApp without dist/web)", () => {
   type Recorded = { status?: number; type?: string; body?: string; nexted?: boolean };
   const makeRes = (recorded: Recorded) =>
@@ -53,6 +78,7 @@ describe("missing web build (serveWebApp without dist/web)", () => {
       expect(recorded.type).toBe("html");
       expect(recorded.body).toContain("نسخهٔ وب");
       expect(recorded.body).toContain("npm run build");
+      expect(recorded.body).toContain(process.env.POS_WEB_DIR!); // مسیر بررسی‌شده در صفحه چاپ می‌شود
       expect(recorded.nexted).toBeUndefined();
     } finally {
       if (previous === undefined) delete process.env.POS_WEB_DIR; else process.env.POS_WEB_DIR = previous;
