@@ -15,7 +15,7 @@ export const PHONE_SCAN_ICON_PNG = Buffer.from(ICON_BASE64, "base64");
 export const PHONE_SCAN_MANIFEST = JSON.stringify({
   name: "اسکنر بارکد — Dar POS",
   short_name: "اسکنر POS",
-  description: "اسکنر موقت بارکد با دوربین گوشی، متصل به صندوق Dar POS",
+  description: "بارکدخوان گوشی، متصل به صندوق Dar POS",
   start_url: "/",
   scope: "/",
   display: "standalone",

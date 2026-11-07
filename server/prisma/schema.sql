@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS "Product" (
 -- CreateTable
 CREATE TABLE IF NOT EXISTS "Customer" (
     "id" TEXT NOT NULL PRIMARY KEY,
+    "code" TEXT,
     "name" TEXT NOT NULL,
     "phone" TEXT,
     "address" TEXT,

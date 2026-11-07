@@ -33,6 +33,7 @@ const COLUMN_MIGRATIONS: Array<{ table: string; column: string; ddl: string }> =
   { table: "Product", column: "reserved", ddl: `ALTER TABLE "Product" ADD COLUMN "reserved" REAL NOT NULL DEFAULT 0` },
   { table: "Customer", column: "walletBalance", ddl: `ALTER TABLE "Customer" ADD COLUMN "walletBalance" INTEGER NOT NULL DEFAULT 0` },
   { table: "Customer", column: "tier", ddl: `ALTER TABLE "Customer" ADD COLUMN "tier" TEXT NOT NULL DEFAULT 'RETAIL'` },
+  { table: "Customer", column: "code", ddl: `ALTER TABLE "Customer" ADD COLUMN "code" TEXT` },
   { table: "Sale", column: "walletPart", ddl: `ALTER TABLE "Sale" ADD COLUMN "walletPart" INTEGER NOT NULL DEFAULT 0` },
   { table: "SaleReturn", column: "walletRefund", ddl: `ALTER TABLE "SaleReturn" ADD COLUMN "walletRefund" INTEGER NOT NULL DEFAULT 0` },
   { table: "Sale", column: "voidedAt", ddl: `ALTER TABLE "Sale" ADD COLUMN "voidedAt" DATETIME` },

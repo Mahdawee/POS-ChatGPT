@@ -1,15 +1,15 @@
 /**
- * صفحهٔ اسکن موقت با دوربین گوشی — روی HTTP(S) مستقل پل گوشی سرو می‌شود
+ * صفحهٔ اسکن با دوربین گوشی — روی HTTP(S) مستقل پل گوشی سرو می‌شود
  * (نه روی API اصلی). کاملاً خودکفا: ZXing از /zxing.js همان سرور لود می‌شود
  * و هیچ درخواست اینترنتی ندارد. سه حالت: اسکن زنده، عکس، ورود دستی.
- * این بخش «موقت/آزمایشی» است و هیچ ردی در منطق بارکدخوان‌های USB ندارد.
+ * این بخش قابلیت همیشگی برنامه است و هیچ ردی در منطق بارکدخوان‌های USB ندارد.
  */
 export const PHONE_SCAN_HTML = `<!doctype html>
 <html dir="rtl" lang="fa"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="theme-color" content="#10151c">
-<title>اسکنر موقت — Dar POS</title>
+<title>بارکدخوان گوشی — Dar POS</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" type="image/png" href="/icon.png">
 <link rel="apple-touch-icon" href="/icon.png">
@@ -118,7 +118,7 @@ export const PHONE_SCAN_HTML = `<!doctype html>
   </section>
 </main>
 <div id="flash"><span>✓ فرستاده شد</span><code id="flashCode"></code></div>
-<footer>Dar POS — ابزار موقت آزمایش اسکن · بدون اینترنت کار می‌کند</footer>
+<footer>Dar POS — بارکدخوان گوشی · بدون اینترنت کار می‌کند</footer>
 <script src="/zxing.js"></script>
 <script>
 "use strict";

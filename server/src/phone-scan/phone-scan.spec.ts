@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { PhoneScanBridge } from "./phone-scan-bridge";
 
 /**
- * ── پل موقت اسکن با گوشی ──────────────────────────────────────────────────
+ * ── پل اسکن با گوشی ──────────────────────────────────────────────────
  * پل روی یک HTTP ساده (tls:false، پورت تصادفی) بالا می‌آید و کل چرخهٔ
  * گوشی با fetch واقعی آزموده می‌شود: صفحه، کتابخانهٔ اسکن، جفت‌شدن با
  * PIN (غلط/درست/تکرار با token)، ثبت اسکن (توکن غلط، بدنهٔ خراب، بدنهٔ
@@ -14,7 +14,7 @@ import { PhoneScanBridge } from "./phone-scan-bridge";
  * خودامضا هم جداگانه با https.get (بدون اعتبارسنجی) بررسی می‌شود.
  */
 
-describe("PhoneScanBridge (پل موقت اسکن گوشی)", () => {
+describe("PhoneScanBridge (پل اسکن گوشی)", () => {
   let bridge: PhoneScanBridge;
   let base: string;
 
@@ -231,7 +231,7 @@ describe("PhoneScanBridge (پل موقت اسکن گوشی)", () => {
   });
 
   // شبیه‌سازی «بستهٔ selfsigned در runtime نصب نیست» — همان حالتی که اگر
-  // رخ دهد نباید اجرای کل برنامه را متوقف کند (قابلیت موقتِ اختیاری است).
+  // رخ دهد نباید اجرای کل برنامه را متوقف کند (قابلیت اختیاری است).
   const mockMissingSelfsigned = (): void => {
     jest.doMock("selfsigned", () => {
       const error = new Error("Cannot find module 'selfsigned'") as NodeJS.ErrnoException;

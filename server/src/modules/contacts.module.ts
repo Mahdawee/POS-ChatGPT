@@ -15,8 +15,26 @@ export class CustomersController {
     ]);
     return customers.map((customer) => ({ ...customer, balance: balance.get(customer.id) || 0 }));
   }
-  @Post() create(@Body() dto: ContactDto) { return this.prisma.customer.create({ data: { ...dto, name: dto.name.trim() } }); }
-  @Patch(":id") update(@Param("id") id: string, @Body() dto: ContactDto) { return this.prisma.customer.update({ where: { id }, data: { ...dto, name: dto.name.trim() } }); }
+  /** کد مشتری خودکار — کوتاه و خوانا: C-1001، C-1002 … همیشه «بزرگ‌ترین
+   *  شمارهٔ موجود + ۱» تا با کدهای دستی کاربر تصادم نکند. */
+  private async nextCustomerCode(): Promise<string> {
+    const rows = await this.prisma.customer.findMany({ where: { code: { startsWith: "C-" } }, select: { code: true } });
+    const max = rows.reduce((acc, row) => {
+      const match = /^C-(\d+)$/.exec(row.code || "");
+      return match ? Math.max(acc, Number(match[1])) : acc;
+    }, 1000);
+    return `C-${max + 1}`;
+  }
+  @Post() async create(@Body() dto: ContactDto) {
+    // کد خالی → کد خودکارِ پیوسته؛ ثبت مشتری بدون تایپِ کد ممکن است
+    const code = dto.code?.trim() || await this.nextCustomerCode();
+    const { code: _code, ...rest } = dto;
+    return this.prisma.customer.create({ data: { ...rest, code, name: dto.name.trim() } });
+  }
+  @Patch(":id") update(@Param("id") id: string, @Body() dto: ContactDto) {
+    const { code, ...rest } = dto;
+    return this.prisma.customer.update({ where: { id }, data: { ...rest, code: code?.trim() || undefined, name: dto.name.trim() } });
+  }
 
   /** حساب نسیهٔ مشتری: مانده = فروش نسیه − برگشتی‌های نسیه − پرداخت‌ها */
   @Get(":id") async detail(@Param("id") id: string) {
@@ -89,8 +107,9 @@ export class SuppliersController {
     ]);
     return suppliers.map((supplier) => ({ ...supplier, balance: balance.get(supplier.id) || 0 }));
   }
-  @Post() create(@Body() dto: ContactDto) { return this.prisma.supplier.create({ data: { ...dto, name: dto.name.trim() } }); }
-  @Patch(":id") update(@Param("id") id: string, @Body() dto: ContactDto) { return this.prisma.supplier.update({ where: { id }, data: { ...dto, name: dto.name.trim() } }); }
+  // DTO با مشتری مشترک است؛ تأمین‌کننده ستون «کد» ندارد → قبل از نوشتن کنار گذاشته می‌شود.
+  @Post() create(@Body() dto: ContactDto) { const { code: _code, ...rest } = dto; return this.prisma.supplier.create({ data: { ...rest, name: dto.name.trim() } }); }
+  @Patch(":id") update(@Param("id") id: string, @Body() dto: ContactDto) { const { code: _code, ...rest } = dto; return this.prisma.supplier.update({ where: { id }, data: { ...rest, name: dto.name.trim() } }); }
 
   /** حساب تأمین‌کننده: مانده = جمع خرید − پرداخت هنگام خرید − پرداخت‌های بعدی */
   @Get(":id") async detail(@Param("id") id: string) {

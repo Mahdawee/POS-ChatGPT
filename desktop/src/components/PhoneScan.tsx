@@ -6,7 +6,7 @@ import { qrCreate } from "../lib/vendor/qr-core";
 
 /** نسخهٔ بصری پنل — اگر این متن را در تنظیمات نمی‌بینید، برنامهٔ در حال
  *  اجرا قدیمی است و باید دوباره ساخته شود (تشخیص قطعی build کهنه). */
-const PHONE_SCAN_PANEL_VERSION = "8"; // CA محلی: نصب یک‌بارهٔ گواهی = اسکن زنده بدون هشدار
+const PHONE_SCAN_PANEL_VERSION = "9"; // همیشگی + بارکد از گوشی به فرم ثبت کالا
 /** رندر QR روی canvas — مطمئن‌ترین راه نمایش در هر WebView: بدون <img>،
  *  بدون data-URI و بدون SVG؛ پیکسل‌ها مستقیم با جاوااسکریپت نقش می‌شوند
  *  و ماتریسِ همان موتور QR رسیدهای چاپی (تأییدشده در عمل) است. */
@@ -41,14 +41,13 @@ function QrCanvas({ text, target }: { text: string; target: number }) {
 }
 
 /**
- * ── پل موقت اسکن با دوربین گوشی (دور ۵۳) ──────────────────────────────────
+ * ── پل اسکن با دوربین گوشی (دور ۵۳؛ از دور ۶۱ همیشگی شد) ──────────────────
  * دو قطعهٔ کاملاً جدا از بارکدخوان‌های USB:
  *
  *  PhoneScanListener — در App رندر می‌شود (خروجی ندارد) و هر ~۰٫۷ ثانیه
- *    /phone-scan/pull را می‌خواند؛ هر کد تازه یا داخل فرم جست‌وجوی صفحهٔ
- *    صندوق تزریق می‌شود (دقیقاً مثل تایپ بارکدخوان سخت‌افزاری، بدون هیچ
- *    تغییری در منطق scan) یا — اگر صندوق باز نیست — به‌صورت پیام نشان
- *    داده می‌شود.
+ *    /phone-scan/pull را می‌خواند؛ هر کد تازه اول به فیلد بارکدِ فرمِ بازِ
+ *    کالا می‌رسد (ثبت کالا با اسکن گوشی)، بعد به فرم جست‌وجوی صندوق
+ *    (دقیقاً مثل تایپ بارکدخوان سخت‌افزاری) و در پایان به‌صورت پیام.
  *
  *  PhoneScanPanel — بخش «اسکن با گوشی» در تنظیمات ← بارکدخوان: وضعیت پل،
  *    PIN جفت‌کردن، نشانی‌های گوشی با QR و راهنمای اتصال.
@@ -61,10 +60,20 @@ function phoneScanInjectEnabled(): boolean {
   try { return localStorage.getItem(INJECT_KEY) !== "0"; } catch { return true; }
 }
 
-/** رهاسازی یک بارکد در برنامه — مسیر دقیقاً همان بارکدخوان سخت‌افزاری است:
- *  مقدار در input جست‌وجوی صندوق نوشته و فرم submit می‌شود تا scan() خودِ
- *  برنامه (بارکد ترازو، تطبیق دقیق، بوق، افزودن) بدون هیچ تغییری اجرا شود. */
+/** رهاسازی یک بارکد در برنامه — مقصد اول فیلد بارکدِ فرمِ بازِ کالاست
+ *  (ثبت/ویرایش کالا: اسکن کن، فیلد همان لحظه پر می‌شود)؛ بعد فرم جست‌وجوی
+ *  صندوق که مقدار در آن نوشته و submit می‌شود تا scan() خودِ برنامه
+ *  (بارکد ترازو، تطبیق دقیق، بوق، افزودن) بدون هیچ تغییری اجرا شود. */
 function deliverScan(code: string): void {
+  // فرم کالا باز است → بارکد مستقیم در فیلد بارکد همان فرم می‌نشیند؛
+  // بارکدخوان USB هم همین‌جا تایپ می‌کند (وقتی فیلد فعال باشد).
+  const productBarcode = document.querySelector<HTMLInputElement>('input[data-scan-target="product-barcode"]');
+  if (productBarcode) {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+    setter?.call(productBarcode, code);
+    productBarcode.dispatchEvent(new Event("input", { bubbles: true }));
+    return;
+  }
   if (phoneScanInjectEnabled()) {
     const form = document.querySelector<HTMLFormElement>("form.pos-search");
     const input = form?.querySelector<HTMLInputElement>("input");
@@ -198,7 +207,7 @@ export function PhoneScanPanel() {
     <div className="phone-scan-head">
       <Smartphone size={19}/>
       <div className="grow">
-        <b>{t("اسکن موقت با دوربین گوشی")}</b>
+        <b>{t("اسکن با دوربین گوشی")}</b>
         <small>{t("گوشی و کامپیوتر باید در یک WiFi باشند؛ بارکد زیر را با دوربین گوشی اسکن کنید تا بدون تایپ، خودکار وصل شود.")}</small>
       </div>
       {status && <span className={`phone-scan-badge ${status.running ? "ok" : ""}`}>{status.running ? t("فعال") : t("غیرفعال")}</span>}

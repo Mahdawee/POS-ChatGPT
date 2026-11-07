@@ -50,6 +50,7 @@ describe("Column migrations for installed databases", () => {
       `ALTER TABLE "Product" ADD COLUMN "reserved" REAL NOT NULL DEFAULT 0`,
       `ALTER TABLE "Customer" ADD COLUMN "walletBalance" INTEGER NOT NULL DEFAULT 0`,
       `ALTER TABLE "Customer" ADD COLUMN "tier" TEXT NOT NULL DEFAULT 'RETAIL'`,
+      `ALTER TABLE "Customer" ADD COLUMN "code" TEXT`,
       `ALTER TABLE "Sale" ADD COLUMN "walletPart" INTEGER NOT NULL DEFAULT 0`,
       `ALTER TABLE "SaleReturn" ADD COLUMN "walletRefund" INTEGER NOT NULL DEFAULT 0`,
       `ALTER TABLE "Sale" ADD COLUMN "voidedAt" DATETIME`,
@@ -68,7 +69,7 @@ describe("Column migrations for installed databases", () => {
       Purchase: ["paidAmount", "voidedAt", "voidReason", "voidedBy"],
       PurchaseItem: ["expiryDate"],
       Product: ["isWeighted", "expiryDate", "wholesalePrice", "wholesaleMinQty", "backstock", "isBundle", "isSerialized", "reserved"],
-      Customer: ["creditLimit", "walletBalance", "tier"],
+      Customer: ["creditLimit", "walletBalance", "tier", "code"],
       Sale: ["cashPart", "mobilePart", "creditPart", "invoiceNo", "walletPart", "voidedAt", "voidReason", "voidedBy"],
       SaleReturn: ["creditRelief", "cashAmount", "walletRefund"],
     });

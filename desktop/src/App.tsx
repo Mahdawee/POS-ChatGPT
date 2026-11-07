@@ -6,7 +6,7 @@ import { applyBrandWindowTitle, loadBrand, useBrand } from "./lib/brand";
 import { applyCurrencyList, applyLocaleSettings, LANGS, licensePlanLabel, t, useLanguage } from "./i18n";
 import { LicenseExpiryBanner, type PageId, Shell, TrialBanner } from "./components/Shell";
 import { CustomerDisplay } from "./components/CustomerDisplay";
-// پل موقت اسکن با گوشی (دور ۵۳) — listener بدون رابط؛ با حذف همین تغییرات به‌کل جداست.
+// پل اسکن با گوشی (دور ۵۳؛ همیشگی) — listener بدون رابط؛ با حذف همین تغییرات به‌کل جداست.
 import { PhoneScanListener } from "./components/PhoneScan";
 import { SectionHead } from "./components/SectionHead";
 
@@ -123,7 +123,7 @@ export default function App() {
   }, []);
 
   useEffect(() => { if (page === "pos") setPosMounted(true); }, [page]);
-  // اسکنِ گوشی وقتی صفحهٔ صندوق باز نیست → فقط پیام (دور ۵۳، موقت)
+  // اسکنِ گوشی وقتی نه فرم کالا باز است نه صندوق → فقط پیام
   useEffect(() => {
     const fromPhone = (event: Event): void => {
       const detail = (event as CustomEvent<{ code?: string }>).detail;

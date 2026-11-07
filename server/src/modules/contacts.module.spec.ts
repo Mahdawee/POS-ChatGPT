@@ -17,6 +17,7 @@ function setup() {
         { id: "customer-1", name: "احمد", isActive: true },
         { id: "customer-2", name: "زبیده", isActive: true },
       ]),
+      create: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ id: "c-new", ...data })),
     },
     sale: { groupBy: jest.fn().mockResolvedValue([{ customerId: "customer-1", _sum: { creditPart: 500 } }]) },
     saleReturn: { findMany: jest.fn().mockResolvedValue([{ creditRelief: 100, sale: { customerId: "customer-1" } }]) },
@@ -101,5 +102,38 @@ describe("Supplier balances", () => {
     tx.cashSession.findFirst.mockResolvedValue(null);
     await expect(controller.pay("supplier-1", { amount: 150, fromCash: true }, user)).rejects.toBeInstanceOf(BadRequestException);
     expect(tx.supplierPayment.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("کد مشتری خودکار (C-1001…)", () => {
+  it("کد خالی → بزرگ‌ترین شمارهٔ موجود + ۱ ساخته می‌شود", async () => {
+    const { controller, prisma } = setup();
+    prisma.customer.findMany.mockResolvedValue([{ code: null }, { code: "C-1003" }]);
+    const created = (await controller.create({ name: "مریم" } as never)) as { code: string };
+    expect(created.code).toBe("C-1004");
+    expect(prisma.customer.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ name: "مریم", code: "C-1004" }) }));
+  });
+
+  it("اولین مشتری بدون کد → C-1001", async () => {
+    const { controller, prisma } = setup();
+    prisma.customer.findMany.mockResolvedValue([]);
+    const created = (await controller.create({ name: "احمد" } as never)) as { code: string };
+    expect(created.code).toBe("C-1001");
+  });
+
+  it("کد دستی دست‌نخورده می‌ماند", async () => {
+    const { controller, prisma } = setup();
+    const created = (await controller.create({ name: "زبیده", code: "Z-1" } as never)) as { code: string };
+    expect(created.code).toBe("Z-1");
+    expect(prisma.customer.findMany).not.toHaveBeenCalled();
+  });
+
+  it("تأمین‌کننده ستون کد ندارد — فیلد code قبل از نوشتن کنار گذاشته می‌شود", async () => {
+    const { controller } = supplierSetup();
+    const prisma = (controller as unknown as { prisma: { supplier: { create: jest.Mock } } }).prisma;
+    prisma.supplier.create = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ id: "s-new", ...data }));
+    const created = (await controller.create({ name: "انبار مرکزی", code: "SHOULD-DROP" } as never)) as Record<string, unknown>;
+    expect("code" in created).toBe(false);
+    expect(prisma.supplier.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.not.objectContaining({ code: expect.anything() }) }));
   });
 });

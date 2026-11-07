@@ -88,6 +88,8 @@ model Product {
 
 model Customer {
   id          String  @id @default(cuid())
+  /// Short readable code (C-1001…) — auto-generated when blank.
+  code        String?
   name        String
   phone       String?
   address     String?

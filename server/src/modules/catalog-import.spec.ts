@@ -7,6 +7,7 @@ function setup(existing: unknown = null) {
     product: {
       findUnique: jest.fn().mockResolvedValue(existing),
       findFirst: jest.fn().mockResolvedValue(existing),
+      findMany: jest.fn().mockResolvedValue([]),
       create: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ id: "new-1", ...data })),
       update: jest.fn().mockResolvedValue({}),
     },
@@ -72,5 +73,49 @@ describe("Bulk product import", () => {
     expect(result.errors).toHaveLength(2);
     expect(result.errors.every((error) => error.message.includes("پشتیبانی نمی‌شود"))).toBe(true);
     expect(tx.product.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("کد کالای خودکار (P-1001…)", () => {
+  it("کد خالی → اولین کد P-1001 است و در create می‌نشیند", async () => {
+    const { controller, tx } = setup();
+    tx.product.findMany.mockResolvedValue([]);
+    const product = await controller.create({ name: "نمک", price: 30 } as never);
+    expect(product.sku).toBe("P-1001");
+    expect(tx.product.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ sku: "P-1001" }) }));
+  });
+
+  it("همیشه بزرگ‌ترین شمارهٔ موجود + ۱ — کدهای دستیِ P-… هم حساب می‌شوند", async () => {
+    const { controller, tx } = setup();
+    tx.product.findMany.mockResolvedValue([{ sku: "P-1001" }, { sku: "P-1007" }, { sku: "G-2" }]);
+    const product = await controller.create({ name: "فلفل", price: 10 } as never);
+    expect(product.sku).toBe("P-1008");
+  });
+
+  it("کد دستی دست‌نخورده می‌ماند و سازنده اجرا نمی‌شود", async () => {
+    const { controller, tx } = setup();
+    const product = await controller.create({ name: "شکر", sku: "S-9", price: 90 } as never);
+    expect(product.sku).toBe("S-9");
+    expect(tx.product.findMany).not.toHaveBeenCalled();
+  });
+
+  it("سطر فایل ورودِ بدون کد هم کد خودکار می‌گیرد (نه IMP-…)", async () => {
+    const { controller, tx } = setup();
+    tx.product.findMany.mockResolvedValue([{ sku: "P-1001" }]);
+    const result = await controller.importProducts({ rows: [{ name: "روغن", price: 120 }] }, user);
+    expect(result).toEqual({ created: 1, updated: 0, errors: [] });
+    expect(tx.product.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ sku: "P-1002" }) }));
+  });
+
+  it("کدهای خودکارِ یک فایل ورود پیوسته‌اند (هر سطر سطر قبلی را می‌بیند)", async () => {
+    const { controller, tx } = setup();
+    // شبیه‌سازی رفتار واقعی پرایسما: تراکنش نوشته‌های خودش را هم می‌بیند
+    const skus: string[] = ["P-1001", "P-1002"];
+    tx.product.findMany.mockImplementation(() => Promise.resolve(skus.map((sku) => ({ sku }))));
+    const innerCreate = tx.product.create;
+    tx.product.create = jest.fn((({ data }: { data: { sku: string } }) => { skus.push(data.sku); return innerCreate({ data }); }) as never);
+    await controller.importProducts({ rows: [{ name: "ماست", price: 45 }, { name: "دوغ", price: 20 }] }, user);
+    const created = tx.product.create.mock.calls.map((call) => (call[0] as { data: { sku: string } }).data.sku);
+    expect(created).toEqual(["P-1003", "P-1004"]);
   });
 });

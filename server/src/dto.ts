@@ -14,7 +14,8 @@ export class CategoryDto {
   @IsOptional() @IsString() color?: string;
 }
 export class ProductDto {
-  @IsString() @MinLength(1) @MaxLength(40) sku!: string;
+  /** کد کالا — خالی بگذارید تا سرور کدِ خودکار و پیوسته (P-1001…) بسازد. */
+  @IsOptional() @IsString() @MaxLength(40) sku?: string;
   @IsOptional() @IsString() @MaxLength(80) barcode?: string;
   @IsString() @MinLength(1) @MaxLength(120) name!: string;
   @IsOptional() @IsString() @MaxLength(24) unit?: string;
@@ -34,6 +35,8 @@ export class ProductDto {
 }
 export class ContactDto {
   @IsString() @MinLength(1) @MaxLength(100) name!: string;
+  /** فقط مشتری: کد کوتاه و خوانا (C-1001…) — خالی یعنی خودکار ساخته شود. */
+  @IsOptional() @IsString() @MaxLength(40) code?: string;
   @IsOptional() @IsString() @MaxLength(40) phone?: string;
   @IsOptional() @IsString() @MaxLength(200) address?: string;
   @IsOptional() @IsString() @MaxLength(300) note?: string;

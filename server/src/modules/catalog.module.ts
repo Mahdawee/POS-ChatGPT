@@ -7,6 +7,23 @@ import { PrismaService } from "../prisma.service";
  * Prisma's unique-constraint error (P2002) would surface as a raw 500; the
  * cashier only needs to know the code/barcode is already taken.
  */
+/** تراکنشی که فقط جدول کالا را می‌خواند — همان TransactionClient پرایسما. */
+type ProductTx = { product: { findMany(args: unknown): Promise<Array<{ sku: string }>> } };
+
+/**
+ * کد کالای خودکار — کوتاه، خوانا و پیوسته: P-1001، P-1002 …
+ * شماره‌ها از ۱۰۰۱ شروع می‌شوند (سبک دستی مغازه‌ها) و همیشه «بزرگ‌ترین
+ * شمارهٔ موجود + ۱» گرفته می‌شود تا با کدهای دستی کاربر هم تصادم نکند.
+ */
+async function nextSku(tx: ProductTx): Promise<string> {
+  const rows = await tx.product.findMany({ where: { sku: { startsWith: "P-" } }, select: { sku: true } });
+  const max = rows.reduce((acc, row) => {
+    const match = /^P-(\d+)$/.exec(row.sku);
+    return match ? Math.max(acc, Number(match[1])) : acc;
+  }, 1000);
+  return `P-${max + 1}`;
+}
+
 function mapProductConflict(error: unknown): unknown {
   if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {
     const target = JSON.stringify((error as { meta?: unknown }).meta ?? "");
@@ -112,7 +129,9 @@ export class ProductsController {
     if (dto.isBundle && dto.isSerialized) throw new BadRequestException("یک کالا نمی‌تواند هم‌زمان بسته و سریال‌دار باشد؛ بسته اجزایی ساده دارد.");
     const stock = dto.stock ?? 0;
     const item = await this.prisma.$transaction(async (tx) => {
-      const product = await tx.product.create({ data: { sku: dto.sku.trim(), barcode: dto.barcode?.trim() || null, name: dto.name.trim(), unit: dto.unit || "عدد", isWeighted: dto.isWeighted ?? false, isBundle: dto.isBundle ?? false, isSerialized: dto.isSerialized ?? false, expiryDate: dto.expiryDate ? new Date(`${dto.expiryDate}T00:00:00.000Z`) : null, price: dto.price, wholesalePrice: dto.wholesalePrice ?? null, wholesaleMinQty: dto.wholesaleMinQty ?? null, cost: dto.cost ?? 0, stock, minStock: dto.minStock ?? 0, categoryId: dto.categoryId || null } });
+      // کد خالی → کد خودکارِ پیوسته؛ صد‌ها کالا بدون تایپِ کد ثبت می‌شوند
+      const sku = dto.sku?.trim() || await nextSku(tx as unknown as ProductTx);
+      const product = await tx.product.create({ data: { sku, barcode: dto.barcode?.trim() || null, name: dto.name.trim(), unit: dto.unit || "عدد", isWeighted: dto.isWeighted ?? false, isBundle: dto.isBundle ?? false, isSerialized: dto.isSerialized ?? false, expiryDate: dto.expiryDate ? new Date(`${dto.expiryDate}T00:00:00.000Z`) : null, price: dto.price, wholesalePrice: dto.wholesalePrice ?? null, wholesaleMinQty: dto.wholesaleMinQty ?? null, cost: dto.cost ?? 0, stock, minStock: dto.minStock ?? 0, categoryId: dto.categoryId || null } });
       if (stock > 0) await tx.inventoryMovement.create({ data: { productId: product.id, type: "ADJUSTMENT_IN", quantity: stock, stockAfter: stock, note: "موجودی اولیه" } });
       await tx.auditLog.create({ data: { action: "CREATE", entity: "Product", entityId: product.id, detail: product.sku } });
       return product;
@@ -133,7 +152,7 @@ export class ProductsController {
       if (stored.isBundle && fields.isBundle === false) await tx.bundleComponent.deleteMany({ where: { bundleId: id } });
       return tx.product.update({ where: { id }, data: {
       ...fields,
-      sku: fields.sku.trim(), barcode: fields.barcode?.trim() || null, name: fields.name.trim(), categoryId: fields.categoryId || null,
+      sku: fields.sku?.trim() || undefined, barcode: fields.barcode?.trim() || null, name: fields.name.trim(), categoryId: fields.categoryId || null,
       // Same normalisation as create: an absent key leaves the date untouched,
       // null clears it (the product form sends null when the field is emptied),
       // and "YYYY-MM-DD" sets it. Passing the raw string through used to work
@@ -222,7 +241,7 @@ export class ProductsController {
             if (stockDelta !== 0) await tx.inventoryMovement.create({ data: { productId: existing.id, type: stockDelta > 0 ? "ADJUSTMENT_IN" : "ADJUSTMENT_OUT", quantity: stockDelta, stockAfter: nextStock, note: "ورود از فایل" } });
             updated += 1;
           } else {
-            const sku = row.sku?.trim() || `IMP-${Date.now()}-${index}`;
+            const sku = row.sku?.trim() || await nextSku(tx as unknown as ProductTx);
             const product = await tx.product.create({ data: {
               sku, barcode: row.barcode?.trim() || null, name, unit: row.unit || "عدد",
               isWeighted: row.isWeighted ?? false, expiryDate,

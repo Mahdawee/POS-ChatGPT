@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, CircleAlert, Keyboard, ScanBarcode } from "lucide-react";
 import { t, dateTime } from "../i18n";
 import { beep, classifyBarcode, lastScannerTest, rememberScannerTest, saveScannerSettings, scannerSettings, SCANNER_DEVICES, type ScannerTest } from "../lib/scanner";
-// پل موقت اسکن با گوشی (دور ۵۳) — با حذف همین دو سطر به‌کل جداست.
+// پل اسکن با گوشی (دور ۵۳؛ همیشگی) — با حذف همین دو سطر به‌کل جداست.
 import { PhoneScanPanel } from "./PhoneScan";
 
 /**
