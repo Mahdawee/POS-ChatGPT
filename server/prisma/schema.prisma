@@ -89,7 +89,10 @@ model Product {
 model Customer {
   id          String  @id @default(cuid())
   /// Short readable code (C-1001…) — auto-generated when blank.
-  code        String?
+  /// Unique at the database level: two concurrent creates that both derive
+  /// the same next code end in P2002, which the API retries — and manual
+  /// duplicates fail with a friendly message instead of ambiguous lookups.
+  code        String? @unique
   name        String
   phone       String?
   address     String?
@@ -211,6 +214,8 @@ model SaleItem {
   discount  Int     @default(0)
   lineTotal Int
   @@index([saleId])
+  /// Profit/discount reports group sold lines by product.
+  @@index([productId])
 }
 
 model InventoryMovement {
@@ -286,6 +291,8 @@ model Purchase {
   createdAt  DateTime       @default(now())
   @@index([createdAt])
   @@index([supplierId])
+  /// The purchases list searches and sorts by the supplier receipt number.
+  @@index([invoiceNo])
 }
 
 model PurchaseItem {

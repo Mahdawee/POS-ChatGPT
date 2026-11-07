@@ -99,6 +99,37 @@ describe("کد کالای خودکار (P-1001…)", () => {
     expect(tx.product.findMany).not.toHaveBeenCalled();
   });
 
+  it("دو ثبتِ همزمان با یک کد خودکار → تلاشِ دوباره کدِ تازه می‌گیرد (P2002 روی sku)", async () => {
+    const { controller, tx } = setup();
+    // تلاش اول همان P-1008 را می‌سازد که ثبتِ همزمانِ دیگری برداشته —
+    // قید یکتای sku نوشتن را رد می‌کند؛ تلاش دوم بزرگ‌ترین شمارهٔ
+    // «الان-موجود» را می‌خواند و یکی جلوتر می‌رود.
+    tx.product.findMany.mockResolvedValueOnce([{ sku: "P-1001" }, { sku: "P-1007" }]).mockResolvedValueOnce([{ sku: "P-1001" }, { sku: "P-1007" }, { sku: "P-1008" }]);
+    tx.product.create.mockRejectedValueOnce(Object.assign(new Error("unique constraint failed"), { code: "P2002", meta: { target: ["Product_sku_key"] } }));
+    const product = await controller.create({ name: "فلفل", price: 10 } as never);
+    expect(product.sku).toBe("P-1009");
+    expect(tx.product.findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("بارکدِ تکراری با کدِ خودکار → تلاشِ دوباره نمی‌شود، پیام همان‌جا برمی‌گردد", async () => {
+    const { controller, tx, prisma } = setup();
+    // قید یکتای «بارکد» خطای کاربر است نه تصادمِ کد خودکار — retry نباید
+    // خطای واقعی را پشت سرِ هم پنهان کند.
+    const race = Object.assign(new Error("unique constraint failed"), { code: "P2002", meta: { target: ["Product_barcode_key"] } });
+    tx.product.create.mockRejectedValueOnce(race);
+    await expect(controller.create({ name: "روغن", price: 120, barcode: "123" } as never)).rejects.toThrow("این بارکد برای کالای دیگری ثبت شده است.");
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("کد دستیِ تکراری → بدون تلاشِ دوباره، پیام دوستانه", async () => {
+    const { controller, tx, prisma } = setup();
+    const race = Object.assign(new Error("unique constraint failed"), { code: "P2002", meta: { target: ["Product_sku_key"] } });
+    tx.product.create.mockRejectedValueOnce(race);
+    await expect(controller.create({ name: "شکر", sku: "S-9", price: 90 } as never)).rejects.toThrow("این کد کالا برای کالای دیگری ثبت شده است.");
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(tx.product.findMany).not.toHaveBeenCalled();
+  });
+
   it("سطر فایل ورودِ بدون کد هم کد خودکار می‌گیرد (نه IMP-…)", async () => {
     const { controller, tx } = setup();
     tx.product.findMany.mockResolvedValue([{ sku: "P-1001" }]);

@@ -135,6 +135,28 @@ describe("Products page endpoint", () => {
   });
 });
 
+/** GET /products/pos — لیست سبک صفحهٔ صندوق: فقط فیلدهای فروش سریع، فقط
+ *  کالاهای فعال، بدون سریال‌ها (صندوق آنها را جداگانه می‌خواند). با
+ *  کاتالوگ چند-هزارتایی پاسخ چند برابر کوچک‌تر از /products کامل است. */
+describe("Light POS product list", () => {
+  it("selects only the fields fast selling needs, active products, name order", async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const prisma = { product: { findMany } };
+    const controller = new ProductsController(prisma as never);
+    await controller.posList();
+    const arg = findMany.mock.calls[0][0] as { where: { isActive: boolean }; orderBy: { name: string }; select: Record<string, boolean> };
+    expect(arg.where).toEqual({ isActive: true });
+    expect(arg.orderBy).toEqual({ name: "asc" });
+    // فیلدهای لازمِ فروش سریع باید همه حاضر باشند…
+    for (const key of ["id", "sku", "barcode", "name", "unit", "price", "stock", "reserved", "isBundle", "isWeighted", "isSerialized", "wholesalePrice", "wholesaleMinQty", "minStock", "categoryId"]) {
+      expect(arg.select[key]).toBe(true);
+    }
+    // …و ستون‌های سنگینِ مدیریتی و سریال‌ها نیایند.
+    expect(arg.select.serialUnits).toBeUndefined();
+    expect(arg.select.cost).toBe(true); // نوع Product در UI آن را لازم دارد
+  });
+});
+
 describe("Product update — bundle flip", () => {
   function flipSetup(stored: { isBundle: boolean; isSerialized: boolean }) {
     const tx = {

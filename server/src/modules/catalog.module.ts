@@ -1,5 +1,6 @@
 import { BadRequestException, Body, Controller, Get, Module, NotFoundException, Param, Patch, Post, Put, Query } from "@nestjs/common";
 import { AdminOnly, CurrentUser, SessionUser } from "../auth";
+import { AUTO_CODE_ATTEMPTS, autoCodeRetryDelay, isAutoCodeRace, serialized } from "../auto-code";
 import { BundleDto, CategoryDto, ProductDto, ProductImportDto } from "../dto";
 import { PrismaService } from "../prisma.service";
 
@@ -59,6 +60,27 @@ export class ProductsController {
     const where: { isActive: boolean; OR?: Array<{ name: { contains: string } } | { sku: { contains: string } } | { barcode: { contains: string } }> } = { isActive: archived !== "1" };
     if (search) where.OR = [{ name: { contains: search } }, { sku: { contains: search } }, { barcode: { contains: search } }];
     return this.prisma.product.findMany({ where, include: { category: true, bundleComponents: { include: { component: { select: { id: true, name: true, sku: true, unit: true, stock: true, reserved: true, isSerialized: true } } } }, serialUnits: { where: { status: "IN_STOCK" }, select: { id: true } } }, orderBy: { name: "asc" } });
+  }
+  /** لیست سبک برای صفحهٔ صندوق — فقط فیلدهایی که فروشِ سریع لازم دارد:
+   *  جست‌وجو (نام/بارکد/کد)، قیمت (شامل عمده)، موجودیِ آزاد (رزرو/بسته) و
+   *  سریال‌دار بودن. نسخهٔ کامل /products دستهٔ کامل، شمارهٔ سریال‌های
+   *  موجود و ستون‌های مدیریتی را هم می‌فرستد؛ با کاتالوگ چند-هزارتایی
+   *  پاسخِ این نسخه چند برابر کوچک‌تر است و صندوق سریع‌تر باز می‌شود.
+   *  شمارهٔ سریال‌ها لازم نیست — صندوق آنها را جداگانه و فقط برای کالاهای
+   *  سریال‌دارِ داخل سبد می‌خواند (/inventory/serials). */
+  @Get("pos") posList() {
+    return this.prisma.product.findMany({
+      where: { isActive: true },
+      orderBy: { name: "asc" },
+      select: {
+        id: true, sku: true, barcode: true, name: true, unit: true,
+        isWeighted: true, isBundle: true, isSerialized: true, reserved: true,
+        expiryDate: true, price: true, wholesalePrice: true, wholesaleMinQty: true,
+        cost: true, stock: true, minStock: true, categoryId: true,
+        category: { select: { id: true, name: true, color: true } },
+        bundleComponents: { select: { id: true, componentId: true, quantity: true, component: { select: { id: true, name: true, sku: true, unit: true, stock: true, reserved: true, isSerialized: true } } } },
+      },
+    });
   }
   /** Paged variant of list() for the management table: same filters, but only
    *  one page of rows plus the total, so a 10k-item warehouse never ships the
@@ -128,15 +150,26 @@ export class ProductsController {
   @Post() async create(@Body() dto: ProductDto) {
     if (dto.isBundle && dto.isSerialized) throw new BadRequestException("یک کالا نمی‌تواند هم‌زمان بسته و سریال‌دار باشد؛ بسته اجزایی ساده دارد.");
     const stock = dto.stock ?? 0;
-    const item = await this.prisma.$transaction(async (tx) => {
-      // کد خالی → کد خودکارِ پیوسته؛ صد‌ها کالا بدون تایپِ کد ثبت می‌شوند
-      const sku = dto.sku?.trim() || await nextSku(tx as unknown as ProductTx);
-      const product = await tx.product.create({ data: { sku, barcode: dto.barcode?.trim() || null, name: dto.name.trim(), unit: dto.unit || "عدد", isWeighted: dto.isWeighted ?? false, isBundle: dto.isBundle ?? false, isSerialized: dto.isSerialized ?? false, expiryDate: dto.expiryDate ? new Date(`${dto.expiryDate}T00:00:00.000Z`) : null, price: dto.price, wholesalePrice: dto.wholesalePrice ?? null, wholesaleMinQty: dto.wholesaleMinQty ?? null, cost: dto.cost ?? 0, stock, minStock: dto.minStock ?? 0, categoryId: dto.categoryId || null } });
-      if (stock > 0) await tx.inventoryMovement.create({ data: { productId: product.id, type: "ADJUSTMENT_IN", quantity: stock, stockAfter: stock, note: "موجودی اولیه" } });
-      await tx.auditLog.create({ data: { action: "CREATE", entity: "Product", entityId: product.id, detail: product.sku } });
-      return product;
-    }).catch((error) => { throw mapProductConflict(error); });
-    return item;
+    // کد خودکار → دو ثبتِ همزمان هر دو «بزرگ‌ترین شمارهٔ موجود + ۱» را
+    // می‌خوانند؛ قید یکتای sku بازنده را با P2002/P2034 برمی‌گرداند و
+    // تلاشِ تازه شمارهٔ درست را می‌گیرد. کد دستی هیچ‌وقت دوباره تلاش
+    // نمی‌شود — خطای همان‌جا و با پیام دوستانه برمی‌گردد.
+    const autoSku = !dto.sku?.trim();
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await serialized(() => this.prisma.$transaction(async (tx) => {
+          // کد خالی → کد خودکارِ پیوسته؛ صد‌ها کالا بدون تایپِ کد ثبت می‌شوند
+          const sku = dto.sku?.trim() || await nextSku(tx as unknown as ProductTx);
+          const product = await tx.product.create({ data: { sku, barcode: dto.barcode?.trim() || null, name: dto.name.trim(), unit: dto.unit || "عدد", isWeighted: dto.isWeighted ?? false, isBundle: dto.isBundle ?? false, isSerialized: dto.isSerialized ?? false, expiryDate: dto.expiryDate ? new Date(`${dto.expiryDate}T00:00:00.000Z`) : null, price: dto.price, wholesalePrice: dto.wholesalePrice ?? null, wholesaleMinQty: dto.wholesaleMinQty ?? null, cost: dto.cost ?? 0, stock, minStock: dto.minStock ?? 0, categoryId: dto.categoryId || null } });
+          if (stock > 0) await tx.inventoryMovement.create({ data: { productId: product.id, type: "ADJUSTMENT_IN", quantity: stock, stockAfter: stock, note: "موجودی اولیه" } });
+          await tx.auditLog.create({ data: { action: "CREATE", entity: "Product", entityId: product.id, detail: product.sku } });
+          return product;
+        }));
+      } catch (error) {
+        if (autoSku && attempt < AUTO_CODE_ATTEMPTS && isAutoCodeRace(error, "sku")) { await autoCodeRetryDelay(attempt); continue; }
+        throw mapProductConflict(error);
+      }
+    }
   }
   @Patch(":id") async update(@Param("id") id: string, @Body() dto: ProductDto) {
     const { stock: _stock, ...fields } = dto;

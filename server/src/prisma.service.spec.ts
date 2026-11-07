@@ -1,4 +1,4 @@
-import { backfillPaymentParts, ensureColumnMigrations, ensureUniqueInvoiceNos, repairFractionalQuantities } from "./prisma.service";
+import { backfillPaymentParts, ensureColumnMigrations, ensureUniqueCustomerCodes, ensureUniqueInvoiceNos, repairFractionalQuantities } from "./prisma.service";
 
 function db(tableColumns: Record<string, string[]>) {
   const statements: string[] = [];
@@ -159,6 +159,34 @@ describe("Invoice-number repair before the unique index is built", () => {
       $executeRawUnsafe: jest.fn().mockImplementation((sql: string) => { statements.push(sql); return Promise.resolve(0); }),
     };
     await ensureUniqueInvoiceNos(client);
+    expect(statements).toEqual([]);
+  });
+});
+
+describe("Customer-code repair before the unique index is built", () => {
+  it("suffixes only later duplicates and leaves NULL codes alone", async () => {
+    const statements: string[] = [];
+    const client = {
+      $queryRawUnsafe: jest.fn().mockResolvedValue([{ name: "Customer" }]),
+      $executeRawUnsafe: jest.fn().mockImplementation((sql: string) => { statements.push(sql); return Promise.resolve(0); }),
+    };
+    await ensureUniqueCustomerCodes(client);
+    // One pass: within each duplicate group only the oldest row keeps the
+    // code; the rest get a stable `-<rowid>` suffix. NULL is guarded
+    // explicitly — concatenating onto NULL would stay NULL anyway, but the
+    // guard documents the intent (multiple NULLs are fine for the index).
+    expect(statements).toEqual([
+      expect.stringContaining(`UPDATE "Customer" SET "code" = "code" || '-' || "rowid" WHERE "code" IS NOT NULL AND "rowid" NOT IN (SELECT MIN("rowid") FROM "Customer" GROUP BY "code")`),
+    ]);
+  });
+
+  it("does nothing on a brand-new database (Customer table not created yet)", async () => {
+    const statements: string[] = [];
+    const client = {
+      $queryRawUnsafe: jest.fn().mockResolvedValue([]),
+      $executeRawUnsafe: jest.fn().mockImplementation((sql: string) => { statements.push(sql); return Promise.resolve(0); }),
+    };
+    await ensureUniqueCustomerCodes(client);
     expect(statements).toEqual([]);
   });
 });

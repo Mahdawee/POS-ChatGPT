@@ -1,8 +1,33 @@
 import { BadRequestException, Body, Controller, Get, Module, NotFoundException, Param, Patch, Post } from "@nestjs/common";
 import { CurrentUser, SessionUser } from "../auth";
+import { AUTO_CODE_ATTEMPTS, autoCodeRetryDelay, isAutoCodeRace, serialized } from "../auto-code";
 import { customerBalances, supplierBalances } from "../balances";
 import { ContactDto, CustomerPaymentDto, SupplierPaymentDto, WalletChargeDto } from "../dto";
 import { PrismaService } from "../prisma.service";
+
+/** تراکنشی که فقط جدول مشتری را می‌خواند — همان TransactionClient پرایسما. */
+type CustomerTx = { customer: { findMany(args: unknown): Promise<Array<{ code: string | null }>> } };
+
+/** کد مشتری خودکار — کوتاه و خوانا: C-1001، C-1002 … همیشه «بزرگ‌ترین
+ *  شمارهٔ موجود + ۱» تا با کدهای دستی کاربر تصادم نکند. داخل تراکنشِ
+ *  ثبت خوانده می‌شود تا دو ثبتِ همزمان هر دو همان شماره را نگیرند. */
+async function nextCustomerCode(tx: CustomerTx): Promise<string> {
+  const rows = await tx.customer.findMany({ where: { code: { startsWith: "C-" } }, select: { code: true } });
+  const max = rows.reduce((acc, row) => {
+    const match = /^C-(\d+)$/.exec(row.code || "");
+    return match ? Math.max(acc, Number(match[1])) : acc;
+  }, 1000);
+  return `C-${max + 1}`;
+}
+
+/** قید یکتای کد (schema.sql) برای کد دستیِ تکراری با پیام روشن برمی‌گردد،
+ *  نه با خطای خام پرایسما. */
+function mapCustomerConflict(error: unknown): unknown {
+  if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {
+    return new BadRequestException("این کد برای مشتری دیگری ثبت شده است.");
+  }
+  return error;
+}
 
 @Controller("customers")
 export class CustomersController {
@@ -15,25 +40,32 @@ export class CustomersController {
     ]);
     return customers.map((customer) => ({ ...customer, balance: balance.get(customer.id) || 0 }));
   }
-  /** کد مشتری خودکار — کوتاه و خوانا: C-1001، C-1002 … همیشه «بزرگ‌ترین
-   *  شمارهٔ موجود + ۱» تا با کدهای دستی کاربر تصادم نکند. */
-  private async nextCustomerCode(): Promise<string> {
-    const rows = await this.prisma.customer.findMany({ where: { code: { startsWith: "C-" } }, select: { code: true } });
-    const max = rows.reduce((acc, row) => {
-      const match = /^C-(\d+)$/.exec(row.code || "");
-      return match ? Math.max(acc, Number(match[1])) : acc;
-    }, 1000);
-    return `C-${max + 1}`;
-  }
   @Post() async create(@Body() dto: ContactDto) {
-    // کد خالی → کد خودکارِ پیوسته؛ ثبت مشتری بدون تایپِ کد ممکن است
-    const code = dto.code?.trim() || await this.nextCustomerCode();
+    // کد خالی → کد خودکارِ پیوسته؛ ثبت مشتری بدون تایپِ کد ممکن است.
+    // خواندنِ شمارهٔ بعدی و نوشتن در «یک» تراکنش انجام می‌شود و اگر دو
+    // ثبتِ همزمان هر دو همان کد را ساختند، قید یکتا بازنده را با
+    // P2002/P2034 برمی‌گرداند — تلاشِ تازه شمارهٔ درست را می‌گیرد.
     const { code: _code, ...rest } = dto;
-    return this.prisma.customer.create({ data: { ...rest, code, name: dto.name.trim() } });
+    const autoCode = !dto.code?.trim();
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await serialized(() => this.prisma.$transaction(async (tx) => {
+          const code = dto.code?.trim() || await nextCustomerCode(tx as unknown as CustomerTx);
+          return tx.customer.create({ data: { ...rest, code, name: dto.name.trim() } });
+        }));
+      } catch (error) {
+        if (autoCode && attempt < AUTO_CODE_ATTEMPTS && isAutoCodeRace(error)) { await autoCodeRetryDelay(attempt); continue; }
+        throw mapCustomerConflict(error);
+      }
+    }
   }
-  @Patch(":id") update(@Param("id") id: string, @Body() dto: ContactDto) {
+  @Patch(":id") async update(@Param("id") id: string, @Body() dto: ContactDto) {
     const { code, ...rest } = dto;
-    return this.prisma.customer.update({ where: { id }, data: { ...rest, code: code?.trim() || undefined, name: dto.name.trim() } });
+    try {
+      return await this.prisma.customer.update({ where: { id }, data: { ...rest, code: code?.trim() || undefined, name: dto.name.trim() } });
+    } catch (error) {
+      throw mapCustomerConflict(error);
+    }
   }
 
   /** حساب نسیهٔ مشتری: مانده = فروش نسیه − برگشتی‌های نسیه − پرداخت‌ها */

@@ -113,6 +113,21 @@ export async function ensureUniqueInvoiceNos(db: { $queryRawUnsafe(sql: string):
 }
 
 /**
+ * Repairs historical duplicate customer codes before the unique index is
+ * created (schema.sql). Codes became unique-by-construction only in round 61;
+ * an upgraded database can carry duplicates from a manual entry or a rare
+ * concurrent create. Within each group of duplicates only the oldest row
+ * keeps the code; the rest get a stable `-<rowid>` suffix. NULL codes are
+ * left alone — concatenating onto NULL stays NULL, and multiple NULLs are
+ * allowed by SQLite unique indexes anyway.
+ */
+export async function ensureUniqueCustomerCodes(db: { $queryRawUnsafe(sql: string): Promise<unknown>; $executeRawUnsafe(sql: string): Promise<unknown> }): Promise<void> {
+  const tables = (await db.$queryRawUnsafe(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'Customer'`)) as Array<{ name: string }>;
+  if (!Array.isArray(tables) || tables.length === 0) return;
+  await db.$executeRawUnsafe(`UPDATE "Customer" SET "code" = "code" || '-' || "rowid" WHERE "code" IS NOT NULL AND "rowid" NOT IN (SELECT MIN("rowid") FROM "Customer" GROUP BY "code")`);
+}
+
+/**
  * Rounds fractional quantities of COUNTABLE (non-weighted) goods on workflow
  * lines. The round-30 stepper bug (min 0.001 combined with unit steps) let
  * order/quote/purchase lines slip in as 1.001/2.001 — such an order can never
@@ -193,6 +208,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     // upgrade dies on "no such column" / "UNIQUE constraint failed".
     await ensureColumnMigrations(this);
     await ensureUniqueInvoiceNos(this);
+    await ensureUniqueCustomerCodes(this);
     const schemaPath = join(__dirname, "../prisma/schema.sql");
     const schema = readFileSync(schemaPath, "utf8");
     for (const statement of schema.split(";").map((sql) => sql.trim()).filter(Boolean)) await this.$executeRawUnsafe(statement);

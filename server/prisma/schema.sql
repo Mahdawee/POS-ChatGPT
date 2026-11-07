@@ -492,6 +492,9 @@ CREATE INDEX IF NOT EXISTS "Product_name_idx" ON "Product"("name");
 CREATE INDEX IF NOT EXISTS "Product_categoryId_idx" ON "Product"("categoryId");
 
 -- CreateIndex
+CREATE UNIQUE INDEX IF NOT EXISTS "Customer_code_key" ON "Customer"("code");
+
+-- CreateIndex
 CREATE INDEX IF NOT EXISTS "Customer_name_idx" ON "Customer"("name");
 
 -- CreateIndex
@@ -522,6 +525,9 @@ CREATE INDEX IF NOT EXISTS "Sale_customerId_idx" ON "Sale"("customerId");
 CREATE INDEX IF NOT EXISTS "SaleItem_saleId_idx" ON "SaleItem"("saleId");
 
 -- CreateIndex
+CREATE INDEX IF NOT EXISTS "SaleItem_productId_idx" ON "SaleItem"("productId");
+
+-- CreateIndex
 CREATE INDEX IF NOT EXISTS "InventoryMovement_productId_createdAt_idx" ON "InventoryMovement"("productId", "createdAt");
 
 -- CreateIndex
@@ -538,6 +544,9 @@ CREATE INDEX IF NOT EXISTS "Purchase_createdAt_idx" ON "Purchase"("createdAt");
 
 -- CreateIndex
 CREATE INDEX IF NOT EXISTS "Purchase_supplierId_idx" ON "Purchase"("supplierId");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "Purchase_invoiceNo_idx" ON "Purchase"("invoiceNo");
 
 -- CreateIndex
 CREATE INDEX IF NOT EXISTS "PurchaseItem_purchaseId_idx" ON "PurchaseItem"("purchaseId");

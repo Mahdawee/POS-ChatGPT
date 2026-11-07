@@ -429,7 +429,9 @@ export function PosPage({ notify, user, active = true }: { notify: Notify; user:
   // Shop settings (incl. the logo data-URL and print options) are fetched
   // once per mount — re-downloading them after every checkout only added
   // latency to the next sale.
-  const load = () => Promise.all([get<Product[]>("/products"), get<Contact[]>("/customers"), get<CashSession | null>("/cash/current")]).then(([p, c, s]) => { setProducts(p); setCustomers(c); setCash(s); }).catch((e) => setError(e.message));
+  // لیست سبک صندوق: فقط فیلدهای لازم برای فروش سریع — با کاتالوگ بزرگ
+  // چند برابر کوچک‌تر از /products کامل جواب می‌دهد و صندوق سریع‌تر باز می‌شود.
+  const load = () => Promise.all([get<Product[]>("/products/pos"), get<Contact[]>("/customers"), get<CashSession | null>("/cash/current")]).then(([p, c, s]) => { setProducts(p); setCustomers(c); setCash(s); }).catch((e) => setError(e.message));
   useEffect(() => { get<ShopSettings>("/settings").then(setShop).catch((e) => setError(e.message)); }, []);
   // صفحه در حافظه می‌ماند، پس موجودی/مشتری‌ها باید با هر بازگشت تازه شوند:
   // قیمت و موجودی آزاد در صفحه‌های دیگر (خرید، مرجوعی، سفارش…) عوض می‌شود.
