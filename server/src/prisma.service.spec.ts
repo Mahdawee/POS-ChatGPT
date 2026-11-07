@@ -1,4 +1,4 @@
-import { backfillPaymentParts, ensureColumnMigrations, ensureUniqueInvoiceNos } from "./prisma.service";
+import { backfillPaymentParts, ensureColumnMigrations, ensureUniqueCustomerCodes, ensureUniqueInvoiceNos, repairFractionalQuantities } from "./prisma.service";
 
 function db(tableColumns: Record<string, string[]>) {
   const statements: string[] = [];
@@ -21,6 +21,7 @@ function db(tableColumns: Record<string, string[]>) {
 describe("Column migrations for installed databases", () => {
   it("adds every missing column to its existing table", async () => {
     const { client, statements } = db({
+      User: ["id", "username", "displayName", "passwordHash", "role", "isActive"],
       Sale: ["id", "receiptNo", "subtotal", "total", "paymentMethod"],
       SaleItem: ["id", "saleId", "productId", "name", "sku", "quantity", "unitPrice", "lineTotal"],
       SaleReturn: ["id", "returnNo", "total"],
@@ -32,6 +33,7 @@ describe("Column migrations for installed databases", () => {
     });
     await ensureColumnMigrations(client);
     expect(statements).toEqual([
+      `ALTER TABLE "User" ADD COLUMN "mustChangePassword" BOOLEAN NOT NULL DEFAULT false`,
       `ALTER TABLE "SaleItem" ADD COLUMN "unitCost" INTEGER NOT NULL DEFAULT 0`,
       `ALTER TABLE "SaleReturnItem" ADD COLUMN "unitCost" INTEGER NOT NULL DEFAULT 0`,
       `ALTER TABLE "Purchase" ADD COLUMN "paidAmount" INTEGER NOT NULL DEFAULT 0`,
@@ -50,8 +52,15 @@ describe("Column migrations for installed databases", () => {
       `ALTER TABLE "Product" ADD COLUMN "reserved" REAL NOT NULL DEFAULT 0`,
       `ALTER TABLE "Customer" ADD COLUMN "walletBalance" INTEGER NOT NULL DEFAULT 0`,
       `ALTER TABLE "Customer" ADD COLUMN "tier" TEXT NOT NULL DEFAULT 'RETAIL'`,
+      `ALTER TABLE "Customer" ADD COLUMN "code" TEXT`,
       `ALTER TABLE "Sale" ADD COLUMN "walletPart" INTEGER NOT NULL DEFAULT 0`,
       `ALTER TABLE "SaleReturn" ADD COLUMN "walletRefund" INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE "Sale" ADD COLUMN "voidedAt" DATETIME`,
+      `ALTER TABLE "Sale" ADD COLUMN "voidReason" TEXT`,
+      `ALTER TABLE "Sale" ADD COLUMN "voidedBy" TEXT`,
+      `ALTER TABLE "Purchase" ADD COLUMN "voidedAt" DATETIME`,
+      `ALTER TABLE "Purchase" ADD COLUMN "voidReason" TEXT`,
+      `ALTER TABLE "Purchase" ADD COLUMN "voidedBy" TEXT`,
     ]);
   });
 
@@ -59,12 +68,13 @@ describe("Column migrations for installed databases", () => {
     const { client, statements } = db({
       SaleItem: ["unitCost", "discount"],
       SaleReturnItem: ["unitCost"],
-      Purchase: ["paidAmount"],
+      Purchase: ["paidAmount", "voidedAt", "voidReason", "voidedBy"],
       PurchaseItem: ["expiryDate"],
       Product: ["isWeighted", "expiryDate", "wholesalePrice", "wholesaleMinQty", "backstock", "isBundle", "isSerialized", "reserved"],
-      Customer: ["creditLimit", "walletBalance", "tier"],
-      Sale: ["cashPart", "mobilePart", "creditPart", "invoiceNo", "walletPart"],
+      Customer: ["creditLimit", "walletBalance", "tier", "code"],
+      Sale: ["cashPart", "mobilePart", "creditPart", "invoiceNo", "walletPart", "voidedAt", "voidReason", "voidedBy"],
       SaleReturn: ["creditRelief", "cashAmount", "walletRefund"],
+      User: ["mustChangePassword"],
     });
     await ensureColumnMigrations(client);
     expect(statements).toEqual([]);
@@ -74,6 +84,27 @@ describe("Column migrations for installed databases", () => {
     const { client, statements } = db({ SaleItem: ["unitCost", "discount"] });
     await ensureColumnMigrations(client);
     expect(statements).toEqual([]);
+  });
+});
+
+describe("Fractional-quantity repair for countable goods (round-30 stepper bug)", () => {
+  it("heals workflow lines, open stocktakes and recomputes reservations", async () => {
+    const statements: string[] = [];
+    const client = { $executeRawUnsafe: jest.fn().mockImplementation((sql: string) => { statements.push(sql); return Promise.resolve(0); }) };
+    await repairFractionalQuantities(client);
+    // Only fractional quantities of countable (non-weighted) goods are touched…
+    expect(statements[0]).toEqual(expect.stringContaining(`UPDATE "CustomerOrderLine" SET "quantity" = ROUND("quantity") WHERE "quantity" != ROUND("quantity") AND "productId" IN (SELECT id FROM "Product" WHERE "isWeighted" = 0)`));
+    expect(statements[1]).toEqual(expect.stringContaining(`UPDATE "QuoteItem" SET "quantity" = ROUND("quantity")`));
+    expect(statements[2]).toEqual(expect.stringContaining(`UPDATE "PurchaseItem" SET "quantity" = ROUND("quantity")`));
+    expect(statements[3]).toEqual(expect.stringContaining(`UPDATE "StocktakeLine" SET "counted" = ROUND("counted")`));
+    expect(statements[3]).toEqual(expect.stringContaining(`status = 'OPEN'`));
+    // …and reservations are recomputed from the healed OPEN order lines, so
+    // products whose lines were rounded down release the phantom fraction.
+    expect(statements[4]).toEqual(expect.stringContaining(`UPDATE "Product" SET "reserved" = COALESCE((SELECT SUM(l."quantity" - l."deliveredQty")`));
+    // Sales history stays untouched — financial records are never rewritten.
+    expect(statements.some((sql) => sql.includes('"SaleItem"') || sql.includes('"SaleReturnItem"'))).toBe(false);
+    // Idempotent: whole numbers never match `quantity != ROUND(quantity)`.
+    expect(statements[0]).toEqual(expect.stringContaining(`WHERE "quantity" != ROUND("quantity")`));
   });
 });
 
@@ -131,6 +162,34 @@ describe("Invoice-number repair before the unique index is built", () => {
       $executeRawUnsafe: jest.fn().mockImplementation((sql: string) => { statements.push(sql); return Promise.resolve(0); }),
     };
     await ensureUniqueInvoiceNos(client);
+    expect(statements).toEqual([]);
+  });
+});
+
+describe("Customer-code repair before the unique index is built", () => {
+  it("suffixes only later duplicates and leaves NULL codes alone", async () => {
+    const statements: string[] = [];
+    const client = {
+      $queryRawUnsafe: jest.fn().mockResolvedValue([{ name: "Customer" }]),
+      $executeRawUnsafe: jest.fn().mockImplementation((sql: string) => { statements.push(sql); return Promise.resolve(0); }),
+    };
+    await ensureUniqueCustomerCodes(client);
+    // One pass: within each duplicate group only the oldest row keeps the
+    // code; the rest get a stable `-<rowid>` suffix. NULL is guarded
+    // explicitly — concatenating onto NULL would stay NULL anyway, but the
+    // guard documents the intent (multiple NULLs are fine for the index).
+    expect(statements).toEqual([
+      expect.stringContaining(`UPDATE "Customer" SET "code" = "code" || '-' || "rowid" WHERE "code" IS NOT NULL AND "rowid" NOT IN (SELECT MIN("rowid") FROM "Customer" GROUP BY "code")`),
+    ]);
+  });
+
+  it("does nothing on a brand-new database (Customer table not created yet)", async () => {
+    const statements: string[] = [];
+    const client = {
+      $queryRawUnsafe: jest.fn().mockResolvedValue([]),
+      $executeRawUnsafe: jest.fn().mockImplementation((sql: string) => { statements.push(sql); return Promise.resolve(0); }),
+    };
+    await ensureUniqueCustomerCodes(client);
     expect(statements).toEqual([]);
   });
 });

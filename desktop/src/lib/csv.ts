@@ -68,7 +68,7 @@ const toNumber = (value: string): number | undefined => {
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 const toWeighted = (value: string): boolean | undefined => {
-  const lowered = toLatinDigits(value).trim().toLowerCase();
+  const lowered = toLatinDigits(String(value ?? "")).trim().toLowerCase();
   if (["1", "true", "yes", "بله", "هو", "وزنی"].includes(lowered)) return true;
   if (["0", "false", "no", "نه", ""].includes(lowered)) return false;
   return undefined;
@@ -99,7 +99,10 @@ export function mapImportRows(grid: string[][]): { rows: ImportRow[]; skipped: n
     const stock = toNumber(record.stock); if (stock !== undefined) row.stock = Math.round(stock * 1000) / 1000;
     const minStock = toNumber(record.minStock); if (minStock !== undefined) row.minStock = Math.round(minStock * 1000) / 1000;
     if (record.unit) row.unit = record.unit;
-    const weighted = toWeighted(record.isWeighted); if (weighted !== undefined) row.isWeighted = weighted;
+    // Only read the weighted flag when the CSV actually has that column: a
+    // missing column must leave the flag unset (an update then keeps the
+    // product's own setting) instead of silently un-weighting every match.
+    if (record.isWeighted !== undefined) { const weighted = toWeighted(record.isWeighted); if (weighted !== undefined) row.isWeighted = weighted; }
     if (record.expiryDate) {
       const normalized = toLatinDigits(record.expiryDate).trim();
       if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(normalized)) {

@@ -1,5 +1,17 @@
-const DEFAULT_API = "http://127.0.0.1:4317/api";
+const BUNDLED_API = "http://127.0.0.1:4317/api";
 const SERVER_KEY = "darpos-server-origin";
+
+/**
+ * Default API base for this context:
+ *  • inside the Tauri desktop app → the bundled local server (127.0.0.1:4317);
+ *  • in a normal browser (PWA on a phone or another computer) → the UI is
+ *    served BY the API server, so the same origin is always correct and keeps
+ *    working when the app is later hosted on a real server with HTTPS.
+ */
+function defaultApiBase(): string {
+  if (typeof window === "undefined" || "__TAURI_INTERNALS__" in window) return BUNDLED_API;
+  return `${window.location.origin}/api`;
+}
 
 /** Base URL of the POS API — the bundled local server by default, or a LAN
  *  server when this machine runs as a network client (Settings → Network). */
@@ -8,7 +20,7 @@ export function apiBase(): string {
     const origin = localStorage.getItem(SERVER_KEY);
     if (origin) return `${origin.replace(/\/+$/, "")}/api`;
   } catch { /* storage unavailable */ }
-  return DEFAULT_API;
+  return defaultApiBase();
 }
 
 /** Points this machine at a LAN server (empty string restores local mode). */
@@ -53,7 +65,14 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     throw new Error(message);
   }
   if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+  // Some routes answer 200 with an EMPTY body (e.g. /cash/current when the
+  // drawer is closed — Nest sends nothing for a null return). Calling
+  // response.json() on that throws "Unexpected end of JSON input", which used
+  // to crash the cash page and the POS basket. An empty body now reads as
+  // "no data" instead of an error.
+  const text = await response.text();
+  if (!text) return undefined as T;
+  return JSON.parse(text) as T;
 }
 
 import { t } from "../i18n";
@@ -64,25 +83,32 @@ export const put = <T,>(path: string, body: unknown) => request<T>(path, { metho
 export const patch = <T,>(path: string, body: unknown) => request<T>(path, { method: "PATCH", body: JSON.stringify(body) });
 export const del = <T,>(path: string) => request<T>(path, { method: "DELETE" });
 
-export type User = { id: string; username: string; displayName: string; role: "ADMIN" | "CASHIER" };
+export type User = { id: string; username: string; displayName: string; role: "ADMIN" | "CASHIER"; mustChangePassword?: boolean };
 export type Category = { id: string; name: string; color: string; _count?: { products: number } };
-export type Product = { id: string; sku: string; barcode: string | null; name: string; unit: string; isWeighted?: boolean; isBundle?: boolean; isSerialized?: boolean; reserved?: number; expiryDate?: string | null; price: number; wholesalePrice?: number | null; wholesaleMinQty?: number | null; cost: number; stock: number; backstock?: number; minStock: number; categoryId: string | null; category?: Category | null; isActive?: boolean; bundleComponents?: Array<{ id: string; componentId: string; quantity: number; component?: { id: string; name: string; sku: string; unit: string } }>; serialUnits?: Array<{ id: string }> };
-export type Contact = { id: string; name: string; phone: string | null; address: string | null; note: string | null; balance?: number; creditLimit?: number; walletBalance?: number; tier?: "RETAIL" | "WHOLESALE" };
+export type Product = { id: string; sku: string; barcode: string | null; name: string; unit: string; isWeighted?: boolean; isBundle?: boolean; isSerialized?: boolean; reserved?: number; expiryDate?: string | null; price: number; wholesalePrice?: number | null; wholesaleMinQty?: number | null; cost: number; stock: number; backstock?: number; minStock: number; categoryId: string | null; category?: Category | null; isActive?: boolean; bundleComponents?: Array<{ id: string; componentId: string; quantity: number; component?: { id: string; name: string; sku: string; unit: string; stock?: number; reserved?: number; isSerialized?: boolean } }>; serialUnits?: Array<{ id: string }> };
+export type Contact = { id: string; name: string; code?: string | null; phone: string | null; address: string | null; note: string | null; balance?: number; creditLimit?: number; walletBalance?: number; tier?: "RETAIL" | "WHOLESALE" };
 export type SaleItem = { id: string; name: string; sku: string; quantity: number; unitPrice: number; lineTotal: number; productId: string; discount?: number };
 export type SaleReturnItem = { id: string; productId: string; name: string; sku: string; quantity: number; unitPrice: number; lineTotal: number };
-export type SaleReturn = { id: string; returnNo: string; total: number; creditRelief?: number; cashAmount?: number; note: string | null; createdAt: string; user?: { displayName: string }; items?: SaleReturnItem[] };
-export type Sale = { id: string; receiptNo: string; invoiceNo?: string | null; subtotal: number; discount: number; total: number; amountPaid: number; change: number; cashPart?: number; mobilePart?: number; creditPart?: number; walletPart?: number; paymentMethod: "CASH" | "MOBILE" | "CREDIT" | "WALLET"; createdAt: string; customer?: Contact | null; user?: { displayName: string }; items: SaleItem[]; returns?: SaleReturn[] };
+export type SaleReturn = { id: string; returnNo: string; total: number; creditRelief?: number; cashAmount?: number; walletRefund?: number; note: string | null; createdAt: string; user?: { displayName: string }; items?: SaleReturnItem[] };
+export type Sale = { id: string; receiptNo: string; invoiceNo?: string | null; subtotal: number; discount: number; total: number; amountPaid: number; change: number; cashPart?: number; mobilePart?: number; creditPart?: number; walletPart?: number; paymentMethod: "CASH" | "MOBILE" | "CREDIT" | "WALLET"; createdAt: string; customer?: Contact | null; user?: { displayName: string }; items: SaleItem[]; returns?: SaleReturn[]; voidedAt?: string | null; voidReason?: string | null; voidedBy?: string | null };
 export type PurchaseItem = { id: string; productId: string; name: string; sku: string; quantity: number; unitCost: number; lineTotal: number; expiryDate?: string | null };
-export type Purchase = { id: string; invoiceNo: string | null; note: string | null; total: number; paidAmount: number; createdAt: string; supplier?: Contact | null; user?: { displayName: string }; items: PurchaseItem[] };
+export type Purchase = { id: string; invoiceNo: string | null; note: string | null; total: number; paidAmount: number; createdAt: string; supplier?: Contact | null; user?: { displayName: string }; items: PurchaseItem[]; voidedAt?: string | null; voidReason?: string | null; voidedBy?: string | null };
 export type PurchaseReturnItem = { id: string; productId: string; name: string; sku: string; quantity: number; unitCost: number; lineTotal: number };
 export type PurchaseReturn = { id: string; returnNo: string; total: number; note: string | null; createdAt: string; supplier?: Contact | null; user?: { displayName: string }; purchase?: { invoiceNo: string | null } | null; items: PurchaseReturnItem[] };
 export type Expense = { id: string; title: string; amount: number; category: string | null; note: string | null; fromCash: boolean; cashSessionId: string | null; createdAt: string; user?: { displayName: string } };
 export type ExpenseList = { list: Expense[]; total: number };
+export type SaleList = { list: Sale[]; total: number };
+export type PurchaseList = { list: Purchase[]; total: number };
+export type PurchasesReport = { from: string; to: string; invoiceCount: number; total: number; paid: number; outstanding: number; bySupplier: Array<{ name: string; total: number; count: number }>; byDay: Array<{ day: string; total: number }> };
+export type DiscountsReport = { from: string; to: string; invoiceDiscount: number; lineDiscount: number; total: number; invoiceCount: number; byDay: Array<{ day: string; total: number }>; topProducts: Array<{ name: string; quantity: number; discount: number }> };
+export type CustomersReport = { from: string; to: string; customerCount: number; total: number; credit: number; byCustomer: Array<{ name: string; phone: string | null; invoices: number; total: number; credit: number; wallet: number }> };
+export type SuppliersReport = { from: string; to: string; supplierCount: number; total: number; paid: number; bySupplier: Array<{ name: string; phone: string | null; invoices: number; total: number; paid: number }> };
+export type InventoryReport = { productCount: number; stockValue: number; backstockValue: number; totalValue: number; lowStockCount: number; outOfStockCount: number; expiringCount: number; expiringValue: number; byCategory: Array<{ name: string; count: number; value: number }> };
 export type CustomerPayment = { id: string; amount: number; note: string | null; createdAt: string; user?: { displayName: string } };
 export type WalletTxn = { id: string; type: "CHARGE" | "SALE" | "REFUND"; amount: number; note: string | null; saleId: string | null; createdAt: string };
 export type CustomerDetail = { customer: Contact; creditSales: number; creditReturns: number; paymentsTotal: number; balance: number; payments: CustomerPayment[]; recentSales: Sale[]; walletTxns?: WalletTxn[]; walletBalance?: number };
 export type Installment = { id: string; planId: string; seq: number; amount: number; dueDate: string; paidAt: string | null; paidAmount: number };
-export type InstallmentPlan = { id: string; customerId: string; total: number; paidAmount: number; status: "OPEN" | "SETTLED"; note: string | null; saleId: string | null; createdAt: string; installments: Installment[]; customer?: { id: string; name: string; phone: string | null } };
+export type InstallmentPlan = { id: string; customerId: string; total: number; paidAmount: number; status: "OPEN" | "SETTLED" | "VOID"; note: string | null; saleId: string | null; createdAt: string; installments: Installment[]; customer?: { id: string; name: string; phone: string | null } };
 export type CustomerOrderLine = { id: string; productId: string; name: string; sku: string; quantity: number; unitPrice: number; deliveredQty: number };
 export type CustomerOrder = { id: string; orderNo: string; customerId: string | null; status: "OPEN" | "FULFILLED" | "CANCELLED"; note: string | null; createdAt: string; lines: CustomerOrderLine[]; customer?: { id: string; name: string; phone: string | null } | null };
 export type ReorderRow = { productId: string; name: string; sku: string; unit: string; onHand: number; reserved: number; minStock: number; soldLast30: number; velocityPerDay: number; daysLeft: number | null; suggested: number; belowMin: boolean; lastSupplier: { id: string; name: string; phone: string | null } | null; estimatedCost: number };
@@ -94,6 +120,8 @@ export type SupplierDetail = { supplier: Contact; purchasesTotal: number; paidAt
 export type ProfitReport = {
   from: string; to: string; revenue: number; refunds: number; netRevenue: number; cost: number; profit: number; margin: number;
   unknownCostRevenue: number; invoiceCount: number; purchasesTotal: number; expenses: number; netProfit: number;
+  /** Server flags windows larger than the 50k-invoice report cap. */
+  truncated?: boolean; trueInvoiceCount?: number;
   byDay: { day: string; revenue: number; profit: number }[];
   byUser?: { userId: string; cashier: string; revenue: number; profit: number; count: number }[];
   bySession?: { sessionId: string; cashier: string; openedAt: string; closedAt: string | null; revenue: number; count: number }[];
@@ -112,12 +140,12 @@ export type DebtorsReport = {
   suppliers: { id: string; name: string; phone: string | null; balance: number }[];
   suppliersTotal: number;
 };
-export type ShopSettings = { shopName?: string; receiptFooter?: string; logo?: string; [key: string]: string | undefined };
+export type ShopSettings = { shopName?: string; receiptFooter?: string; logo?: string; address?: string; phone?: string; [key: string]: string | undefined };
 export type CashSession = { id: string; status: "OPEN" | "CLOSED"; openingCash: number; expectedCash: number; cashSalesAmount?: number; countedCash: number | null; difference?: number; openedAt: string; closedAt: string | null; user?: { displayName: string }; movements?: { id: string; type: "IN" | "OUT"; amount: number; description: string }[] };
 /** End-of-shift (Z) report returned when a cash session is closed. */
 export type ZReport = {
   sessionId: string; cashier: string; openedAt: string; closedAt: string;
-  openingCash: number; cashIn: number; cashOut: number; cashSales: number; mobileSales: number; creditSales: number;
+  openingCash: number; cashIn: number; cashOut: number; cashSales: number; mobileSales: number; creditSales: number; walletSales: number; mobileRefunds?: number;
   invoiceCount: number; returnsTotal: number; expected: number; counted: number; difference: number;
 };
 export type ProductImportResult = { created: number; updated: number; errors: Array<{ row: number; message: string }> };

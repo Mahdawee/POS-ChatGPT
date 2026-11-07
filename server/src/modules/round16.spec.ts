@@ -210,8 +210,14 @@ describe("Round 16 — backup scheduler", () => {
 
 describe("Round 16 — settings validation", () => {
   function settingsSetup() {
-    const prisma = { setting: { upsert: jest.fn().mockResolvedValue({}) }, auditLog: { create: jest.fn().mockResolvedValue({}) } };
-    return { controller: new SettingsController(prisma as never), prisma };
+    const prisma = {
+      setting: {
+        upsert: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    return { controller: new SettingsController(prisma as never, { reset: jest.fn(), seed: jest.fn() } as never, { readOwnerConfig: () => ({}) } as never), prisma };
   }
   it("accepts valid calendar/timezone/currency values", async () => {
     const { controller, prisma } = settingsSetup();
@@ -232,6 +238,37 @@ describe("Round 16 — settings validation", () => {
     const { controller } = settingsSetup();
     await expect(controller.put({ key: "lastScheduledBackupAt", value: "2000-01-01" }, admin)).rejects.toThrow(BadRequestException);
     await expect(controller.put({ key: "invoiceSeq:20261102", value: "0" }, admin)).rejects.toThrow(BadRequestException);
+  });
+  it("manages the shop currency list: AFN is permanent, extras come and go", async () => {
+    const { controller, prisma } = settingsSetup();
+    // A custom list with AFN + USD + a shop-added currency is accepted…
+    const list = [{ code: "AFN", label: "افغانی" }, { code: "USD", label: "دلار امریکا" }, { code: "EUR", label: "یورو" }];
+    await controller.put({ key: "currencies", value: JSON.stringify(list) }, admin);
+    expect(prisma.setting.upsert).toHaveBeenCalledWith({ where: { key: "currencies" }, create: { key: "currencies", value: JSON.stringify(list) }, update: { value: JSON.stringify(list) } });
+    // …and once stored, EUR becomes a valid base currency.
+    (prisma.setting.findUnique as jest.Mock).mockResolvedValue({ key: "currencies", value: JSON.stringify(list) });
+    await controller.put({ key: "currency", value: "EUR" }, admin);
+    // Removing AFN from the list is refused — it is the permanent base currency.
+    const withoutAfn = list.slice(1);
+    await expect(controller.put({ key: "currencies", value: JSON.stringify(withoutAfn) }, admin)).rejects.toThrow(BadRequestException);
+    // Malformed lists (bad codes, duplicates, wrong shapes) are refused too.
+    await expect(controller.put({ key: "currencies", value: JSON.stringify([{ code: "afn", label: "افغانی" }]) }, admin)).rejects.toThrow(BadRequestException);
+    await expect(controller.put({ key: "currencies", value: JSON.stringify([{ code: "AFN", label: "افغانی" }, { code: "AFN", label: "افغانی دیگر" }]) }, admin)).rejects.toThrow(BadRequestException);
+    await expect(controller.put({ key: "currencies", value: "not json" }, admin)).rejects.toThrow(BadRequestException);
+    await expect(controller.put({ key: "currencies", value: JSON.stringify([{ code: "AFN" }]) }, admin)).rejects.toThrow(BadRequestException);
+    // A base currency outside the stored list stays rejected.
+    (prisma.setting.findUnique as jest.Mock).mockResolvedValue({ key: "currencies", value: JSON.stringify(list) });
+    await expect(controller.put({ key: "currency", value: "PKR" }, admin)).rejects.toThrow(BadRequestException);
+  });
+  it("falls back to the default currency list when the stored one is missing", async () => {
+    const { controller } = settingsSetup();
+    // findUnique → null: defaults are AFN + USD only.
+    await expect(controller.put({ key: "currency", value: "EUR" }, admin)).rejects.toThrow(BadRequestException);
+    await controller.put({ key: "currency", value: "USD" }, admin);
+    // A corrupt stored value also falls back to the defaults.
+    const { controller: broken, prisma } = settingsSetup();
+    (prisma.setting.findUnique as jest.Mock).mockResolvedValue({ key: "currencies", value: "{not-json" });
+    await expect(broken.put({ key: "currency", value: "EUR" }, admin)).rejects.toThrow(BadRequestException);
   });
 });
 
@@ -275,7 +312,8 @@ describe("Round 16 — orders reserve and release stock", () => {
       $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)),
       customerOrder: { findUnique: findOrder, findMany: jest.fn().mockResolvedValue([]) },
     };
-    const checkout = { checkout: jest.fn().mockResolvedValue({ id: "sale-1", total: 100 }) };
+    // Deliveries run inside one transaction via checkoutInTx.
+    const checkout = { checkout: jest.fn().mockResolvedValue({ id: "sale-1", total: 100 }), checkoutInTx: jest.fn().mockResolvedValue({ id: "sale-1", total: 100 }), assertLicensed: jest.fn().mockResolvedValue(undefined) };
     const controller = new OrdersController(prisma as never, checkout as never);
     return { controller, tx, prisma, checkout, findOrder };
   }
@@ -285,6 +323,32 @@ describe("Round 16 — orders reserve and release stock", () => {
     const order = (await controller.create({ items: [{ productId: "product-1", quantity: 4 }], customerId: "customer-1" }, admin)) as { orderNo: string };
     expect(order.orderNo).toMatch(/^ORD-/);
     expect(tx.product.update).toHaveBeenCalledWith(expect.objectContaining({ data: { reserved: { increment: 4 } } }));
+  });
+
+  it("delivering runs in ONE transaction — a checkout failure leaves the order untouched", async () => {
+    const productRow = { id: "product-1", name: "چای", sku: "T-1", price: 10, stock: 10, reserved: 4, isBundle: false, isActive: true };
+    const order = { id: "order-1", orderNo: "ORD-1", status: "OPEN", customerId: "customer-1", lines: [{ id: "line-1", productId: "product-1", quantity: 4, deliveredQty: 0 }] };
+    const { controller, tx, prisma, checkout } = ordersSetup(productRow, order);
+    // The shared checkout refuses (e.g. price/stock/license): the delivery
+    // must throw inside the same transaction — no deliveredQty bump, no
+    // separate compensating transactions to half-apply.
+    checkout.checkoutInTx.mockRejectedValue(new Error("موجودی کافی نیست"));
+    await expect(controller.deliver("order-1", { deliveries: [{ lineId: "line-1", quantity: 4 }], paymentMethod: "CASH" }, admin)).rejects.toThrow(/موجودی/);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(tx.customerOrderLine.update).not.toHaveBeenCalled();
+    expect(tx.customerOrder.update).not.toHaveBeenCalled();
+  });
+
+  it("rounds stray fractional counts of countable goods to whole units at create (round-30 stepper repair)", async () => {
+    const { controller, tx } = ordersSetup({ id: "product-1", name: "چای", sku: "T-1", price: 10, stock: 10, reserved: 0, isBundle: false, isActive: true });
+    const order = (await controller.create({ items: [{ productId: "product-1", quantity: 2.001 }] }, admin)) as { lines: { quantity: number }[] };
+    expect(order.lines[0].quantity).toBe(2);
+    expect(tx.product.update).toHaveBeenCalledWith(expect.objectContaining({ data: { reserved: { increment: 2 } } }));
+  });
+
+  it("rejects a countable order line that rounds below one unit", async () => {
+    const { controller } = ordersSetup({ id: "product-1", name: "چای", sku: "T-1", price: 10, stock: 10, reserved: 0, isBundle: false, isActive: true });
+    await expect(controller.create({ items: [{ productId: "product-1", quantity: 0.4 }] }, admin)).rejects.toThrow(/صحیح/);
   });
 
   it("refuses an order above free stock", async () => {
@@ -298,7 +362,7 @@ describe("Round 16 — orders reserve and release stock", () => {
       { id: "order-1", orderNo: "ORD-1", status: "OPEN", customerId: "customer-1", lines: [{ id: "line-1", productId: "product-1", name: "چای", sku: "T-1", quantity: 4, unitPrice: 10, deliveredQty: 0 }] },
     );
     await controller.deliver("order-1", { deliveries: [{ lineId: "line-1", quantity: 4 }], paymentMethod: "CASH" }, admin);
-    expect(checkout.checkout).toHaveBeenCalledWith(expect.objectContaining({ items: [{ productId: "product-1", quantity: 4, discount: 0, serials: undefined }], paymentMethod: "CASH" }), admin);
+    expect(checkout.checkoutInTx).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ items: [{ productId: "product-1", quantity: 4, discount: 0, serials: undefined }], paymentMethod: "CASH" }), admin);
     expect(tx.product.update).toHaveBeenCalledWith(expect.objectContaining({ data: { reserved: { decrement: 4 } } }));
     expect(tx.customerOrderLine.update).toHaveBeenCalledWith(expect.objectContaining({ data: { deliveredQty: { increment: 4 } } }));
   });
@@ -413,5 +477,54 @@ describe("Round 16 audit — regression fixes", () => {
     await expect(controller.create({ customerId: "customer-1", total: 9000, installmentCount: 3, saleId: "sale-9" }, admin)).rejects.toThrow(/فاکتور/);
     // No saleId → no link check, plan is created as before.
     await expect(controller.create({ customerId: "customer-1", total: 9000, installmentCount: 3 }, admin)).resolves.toBeTruthy();
+  });
+});
+
+describe("Round 30 — sale deadlock fix + serial picking", () => {
+  it("checks the license BEFORE opening the transaction (SQLite P2028 regression)", async () => {
+    // The bug: assertLicensed() used to run INSIDE the $transaction callback
+    // and queried the parent client. SQLite gives an interactive transaction
+    // the only pooled connection, so that query could never finish — the
+    // transaction expired after 5 s and every sale died with P2028.
+    const calls: string[] = [];
+    const license = { assertLicensed: jest.fn(async () => { calls.push("license"); }) };
+    const { tx } = checkoutSetup([product()]);
+    const prisma = {
+      $transaction: jest.fn(async (work: (client: unknown) => unknown) => { calls.push("transaction"); return work(tx); }),
+    };
+    const service = new CheckoutService(prisma as never, license as never);
+    await service.checkout({ items: [{ productId: "product-1", quantity: 1 }], paymentMethod: "CASH" }, admin);
+    expect(calls).toEqual(["license", "transaction"]);
+    // A wider window than the 5 s default, so slow disks retry instead of failing.
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 15000, maxWait: 5000 });
+  });
+
+  it("exposes assertLicensed for callers that open their own transaction", async () => {
+    const license = { assertLicensed: jest.fn().mockResolvedValue(undefined) };
+    const service = new CheckoutService({} as never, license as never);
+    await service.assertLicensed();
+    expect(license.assertLicensed).toHaveBeenCalledTimes(1);
+    const bare = new CheckoutService({} as never);
+    await expect(bare.assertLicensed()).resolves.toBeUndefined();
+  });
+
+  it("serials(saleId) narrows the list to one invoice's still-out units", async () => {
+    const prisma = {
+      sale: { findUnique: jest.fn().mockResolvedValue({ items: [{ id: "item-1" }, { id: "item-2" }] }) },
+      serialUnit: { findMany: jest.fn().mockResolvedValue([{ serial: "S1", saleItemId: "item-1", status: "SOLD" }]) },
+    };
+    const controller = new InventoryController(prisma as never);
+    await controller.serials(undefined, "SOLD", undefined, "sale-1");
+    expect(prisma.sale.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "sale-1" } }));
+    expect(prisma.serialUnit.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ saleItemId: { in: ["item-1", "item-2"] }, status: "SOLD" }) }));
+  });
+
+  it("serials(saleId) rejects an unknown invoice", async () => {
+    const prisma = {
+      sale: { findUnique: jest.fn().mockResolvedValue(null) },
+      serialUnit: { findMany: jest.fn() },
+    };
+    const controller = new InventoryController(prisma as never);
+    await expect(controller.serials(undefined, undefined, undefined, "nope")).rejects.toThrow(/فاکتور پیدا نشد/);
   });
 });

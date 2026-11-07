@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { dir, t } from "../i18n";
+import { useBrand } from "../lib/brand";
 
 /**
  * Second-window customer display (Settings → system → "customer display").
@@ -20,6 +21,7 @@ const CHANNEL = "darpos-display";
 
 export function CustomerDisplay() {
   const [state, setState] = useState<DisplayState | null>(null);
+  const brand = useBrand();
   useEffect(() => {
     let channel: BroadcastChannel | null = null;
     try {
@@ -30,7 +32,7 @@ export function CustomerDisplay() {
   }, []);
   const last = state?.items?.[state.items.length - 1];
   return <div className="customer-display" dir={dir()}>
-    <header className="cd-head"><div className="brand-mark"> {t("رو")} </div><div><strong>{state?.shop || t("روشن")}</strong><small>{t("نمایشگر مشتری")}</small></div></header>
+    <header className="cd-head"><div className="brand-mark"> {brand.appName.trim().slice(0, 2)} </div><div><strong>{state?.shop || brand.appName}</strong><small>{t("نمایشگر مشتری")}</small></div></header>
     {state && state.count > 0 ? <main className="cd-body">
       <div className="cd-last"><span>{t("آخرین قلم")}</span><b>{last?.name}</b><small>{last ? `${last.quantity} × ${last.lineTotal}` : ""}</small></div>
       <div className="cd-total"><span>{t("جمع فاکتور")}</span><b>{t("{amount} افغانی", { amount: new Intl.NumberFormat("fa-AF").format(state.total) })}</b></div>

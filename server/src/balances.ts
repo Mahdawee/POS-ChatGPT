@@ -7,7 +7,7 @@ import { PrismaService } from "./prisma.service";
  */
 export async function customerBalances(prisma: PrismaService): Promise<Map<string, number>> {
   const [creditSales, creditReturns, payments] = await Promise.all([
-    prisma.sale.groupBy({ by: ["customerId"], _sum: { creditPart: true }, where: { creditPart: { gt: 0 } } }),
+    prisma.sale.groupBy({ by: ["customerId"], _sum: { creditPart: true }, where: { creditPart: { gt: 0 }, voidedAt: null } }),
     prisma.saleReturn.findMany({ where: { sale: { creditPart: { gt: 0 } } }, select: { creditRelief: true, sale: { select: { customerId: true } } } }),
     prisma.customerPayment.groupBy({ by: ["customerId"], _sum: { amount: true } }),
   ]);
@@ -23,7 +23,7 @@ export async function customerBalances(prisma: PrismaService): Promise<Map<strin
  */
 export async function supplierBalances(prisma: PrismaService): Promise<Map<string, number>> {
   const [purchases, payments, returns] = await Promise.all([
-    prisma.purchase.groupBy({ by: ["supplierId"], _sum: { total: true, paidAmount: true }, where: { supplierId: { not: null } } }),
+    prisma.purchase.groupBy({ by: ["supplierId"], _sum: { total: true, paidAmount: true }, where: { supplierId: { not: null }, voidedAt: null } }),
     prisma.supplierPayment.groupBy({ by: ["supplierId"], _sum: { amount: true } }),
     prisma.purchaseReturn.groupBy({ by: ["supplierId"], _sum: { total: true }, where: { supplierId: { not: null } } }),
   ]);

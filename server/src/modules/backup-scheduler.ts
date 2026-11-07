@@ -1,5 +1,5 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
-import { createBackup, pruneAutoBackups } from "../backup";
+import { createBackup, pruneAutoBackups, resolveBackupDir } from "../backup";
 import { PrismaService } from "../prisma.service";
 
 /**
@@ -18,7 +18,7 @@ export function nextScheduledRun(lastRun: Date | null, hour: number, from: Date)
 }
 
 /** Deletes `auto-` backups older than `days` (age by file mtime). */
-export function pruneBackupsOlderThan(days: number): number {
+export function pruneBackupsOlderThan(days: number, custom?: string | null): number {
   // Lazily imported to keep this function unit-testable without dragging the
   // whole fs surface in; readdir/unlink are cheap enough inline.
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -29,7 +29,7 @@ export function pruneBackupsOlderThan(days: number): number {
   const { configureLocalStorage } = require("../storage") as typeof import("../storage");
   let removed = 0;
   try {
-    const dir = join(configureLocalStorage(), "backups");
+    const dir = resolveBackupDir(custom);
     const cutoff = Date.now() - days * 86400000;
     for (const name of readdirSync(dir)) {
       if (!name.startsWith("auto-") || !name.endsWith(".db")) continue;
@@ -78,7 +78,8 @@ export class BackupScheduler implements OnModuleInit, OnModuleDestroy {
       update: { value: now.toISOString() },
     });
     const retentionDays = Number(await this.setting("backupRetentionDays")) || 0;
-    const pruned = retentionDays > 0 ? pruneBackupsOlderThan(retentionDays) : (pruneAutoBackups(10), 0);
+    const customDir = await this.setting("backupDir");
+    const pruned = retentionDays > 0 ? pruneBackupsOlderThan(retentionDays, customDir) : (pruneAutoBackups(10, customDir), 0);
     await this.prisma.auditLog.create({ data: { action: "SCHEDULED_BACKUP", entity: "Database", detail: path } }).catch(() => undefined);
     return { ran: true, path, pruned };
   }

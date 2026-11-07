@@ -43,7 +43,19 @@ function cmdKeygen(args) {
   const dir = resolve(args.dir || KEYS_DIR);
   const priv = join(dir, "private.pem");
   const pub = join(dir, "public.pem");
-  if (existsSync(priv) && !args.force) fail(`کلید از قبل موجود است: ${priv}\nاگر واقعاً می‌خواهید کلید تازه بسازید --force بدهید (همهٔ لایسنس‌های قبلی نامعتبر می‌شوند!).`);
+  // A healthy existing key needs an explicit --force to replace; a file that
+  // exists but cannot be decoded (empty / truncated / wrong content) is
+  // replaced freely — it never signed a usable license.
+  let broken = false;
+  if (existsSync(priv)) {
+    try {
+      createPrivateKey(readFileSync(priv, "utf8").replace(/^\uFEFF/, ""));
+    } catch {
+      broken = true;
+    }
+    if (!broken && !args.force) fail(`کلید از قبل موجود است: ${priv}\nاگر واقعاً می‌خواهید کلید تازه بسازید --force بدهید (همهٔ لایسنس‌های قبلی نامعتبر می‌شوند!).`);
+    if (broken) console.log(`توجه: فایل کلید خصوصی موجود اما خراب/ناخواناست — نادیده گرفته می‌شود و جفت‌کلید تازه ساخته می‌شود: ${priv}`);
+  }
   mkdirSync(dir, { recursive: true });
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   writeFileSync(priv, privateKey.export({ type: "pkcs8", format: "pem" }), { mode: 0o600 });
@@ -118,6 +130,14 @@ function cmdIssue(args) {
   }
   const keyPath = resolve(args.key || join(KEYS_DIR, "private.pem"));
   if (!existsSync(keyPath)) fail(`کلید خصوصی پیدا نشد: ${keyPath} — ابتدا keygen کنید.`);
+  let signingKey;
+  try {
+    // A readable-but-invalid file (empty / truncated / wrong content) throws
+    // a raw OpenSSL "DECODER routines::unsupported" — translate it.
+    signingKey = createPrivateKey(readFileSync(keyPath, "utf8").replace(/^\uFEFF/, ""));
+  } catch {
+    fail(`فایل کلید خصوصی موجود است اما محتوایش معتبر نیست و نمی‌توان با آن امضا کرد: ${keyPath}\nفایل خالی، ناقص یا خراب است — دوباره keygen کنید (کلید خراب بدون --force هم جایگزین می‌شود).`);
+  }
   const payload = {
     v: 1,
     licenseId: randomUUID(),
@@ -130,7 +150,7 @@ function cmdIssue(args) {
     ...(args.note ? { note: String(args.note) } : {}),
   };
   const body = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-  const signature = sign(null, Buffer.from(body, "utf8"), createPrivateKey(readFileSync(keyPath, "utf8")));
+  const signature = sign(null, Buffer.from(body, "utf8"), signingKey);
   const license = `${LICENSE_BEGIN}\n${body}.${signature.toString("base64url")}\n${LICENSE_END}\n`;
   if (args.out) { writeFileSync(resolve(args.out), license); console.log(`لایسنس در ${resolve(args.out)} ذخیره شد.`); }
   process.stdout.write(license);

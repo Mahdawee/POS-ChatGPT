@@ -14,7 +14,8 @@ export class CategoryDto {
   @IsOptional() @IsString() color?: string;
 }
 export class ProductDto {
-  @IsString() @MinLength(1) @MaxLength(40) sku!: string;
+  /** کد کالا — خالی بگذارید تا سرور کدِ خودکار و پیوسته (P-1001…) بسازد. */
+  @IsOptional() @IsString() @MaxLength(40) sku?: string;
   @IsOptional() @IsString() @MaxLength(80) barcode?: string;
   @IsString() @MinLength(1) @MaxLength(120) name!: string;
   @IsOptional() @IsString() @MaxLength(24) unit?: string;
@@ -34,6 +35,8 @@ export class ProductDto {
 }
 export class ContactDto {
   @IsString() @MinLength(1) @MaxLength(100) name!: string;
+  /** فقط مشتری: کد کوتاه و خوانا (C-1001…) — خالی یعنی خودکار ساخته شود. */
+  @IsOptional() @IsString() @MaxLength(40) code?: string;
   @IsOptional() @IsString() @MaxLength(40) phone?: string;
   @IsOptional() @IsString() @MaxLength(200) address?: string;
   @IsOptional() @IsString() @MaxLength(300) note?: string;
@@ -120,6 +123,12 @@ export class ReturnLineDto {
   /** Serialized products: which exact units are coming back. */
   @IsOptional() @IsArray() @ArrayMaxSize(100) @IsString({ each: true }) serials?: string[];
 }
+/** Reason payload for voiding (ابطال) a sale or a purchase — history is
+ *  always kept, the reason documents why the document was cancelled. */
+export class VoidDto {
+  @IsString() @MinLength(3) @MaxLength(300) reason!: string;
+}
+
 export class SaleReturnDto {
   @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => ReturnLineDto) items!: ReturnLineDto[];
   @IsOptional() @IsString() @MaxLength(300) note?: string;
@@ -170,12 +179,20 @@ export class PurchaseReturnLineDto {
   @IsString() productId!: string;
   @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001) @Max(2147483647) quantity!: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) unitCost?: number;
+  /** IMEI/serials of the exact units going back to the supplier
+   *  (required for serialized products). */
+  @IsOptional() @IsArray() @ArrayMaxSize(500) @IsString({ each: true }) serials?: string[];
 }
 export class PurchaseReturnDto {
   @IsOptional() @IsString() purchaseId?: string;
   @IsOptional() @IsString() supplierId?: string;
   @IsOptional() @IsString() @MaxLength(300) note?: string;
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(200) @ValidateNested({ each: true }) @Type(() => PurchaseReturnLineDto) items!: PurchaseReturnLineDto[];
+}
+
+/** تأیید صریح بازنشانی داده‌ها — رشتهٔ ثابت تا کلیک اشتباه پاک‌سازی نکند. */
+export class ResetDataDto {
+  @IsIn(["RESET"]) confirm!: string;
 }
 
 /** Base64 payload of a portable .db backup (Settings → restore). */
@@ -209,6 +226,15 @@ export class QuoteDto {
   @IsOptional() @IsString() customerId?: string;
   @IsOptional() @IsString() @MaxLength(300) note?: string;
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(200) @ValidateNested({ each: true }) @Type(() => QuoteLineDto) items!: QuoteLineDto[];
+}
+export class QuoteConvertSerialLineDto {
+  @IsString() itemId!: string;
+  /** Serialized products (and serialized components of a bundle line):
+   *  which exact units are handed over when the quote becomes a sale. */
+  @IsOptional() @IsArray() @ArrayMaxSize(100) @IsString({ each: true }) serials?: string[];
+}
+export class ConvertQuoteDto {
+  @IsOptional() @IsArray() @ArrayMaxSize(200) @ValidateNested({ each: true }) @Type(() => QuoteConvertSerialLineDto) items?: QuoteConvertSerialLineDto[];
 }
 
 // ── Round 16: wallet, bundles, serials, installments, orders ──────────────

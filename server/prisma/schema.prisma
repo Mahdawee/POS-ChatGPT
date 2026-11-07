@@ -88,6 +88,11 @@ model Product {
 
 model Customer {
   id          String  @id @default(cuid())
+  /// Short readable code (C-1001…) — auto-generated when blank.
+  /// Unique at the database level: two concurrent creates that both derive
+  /// the same next code end in P2002, which the API retries — and manual
+  /// duplicates fail with a friendly message instead of ambiguous lookups.
+  code        String? @unique
   name        String
   phone       String?
   address     String?
@@ -135,6 +140,8 @@ model User {
   passwordHash String
   role         UserRole    @default(CASHIER)
   isActive     Boolean     @default(true)
+  /// نصب تازه: کاربر پیش‌فرض باید در اولین ورود گذرواژه‌اش را عوض کند.
+  mustChangePassword Boolean @default(false)
   sales        Sale[]
   cashSessions CashSession[]
   purchases    Purchase[]
@@ -174,6 +181,12 @@ model Sale {
   invoiceNo      String?       @unique
   paymentMethod  PaymentMethod
   note           String?
+  /// Set when the invoice is voided (ابطال): the row and all its history
+  /// stay untouched; stock/wallet/drawer effects are reversed at void time
+  /// and every report excludes voided rows.
+  voidedAt       DateTime?
+  voidReason     String?
+  voidedBy       String?
   customerId     String?
   customer       Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
   userId         String
@@ -203,6 +216,8 @@ model SaleItem {
   discount  Int     @default(0)
   lineTotal Int
   @@index([saleId])
+  /// Profit/discount reports group sold lines by product.
+  @@index([productId])
 }
 
 model InventoryMovement {
@@ -262,6 +277,10 @@ model Purchase {
   id         String         @id @default(cuid())
   invoiceNo  String?
   note       String?
+  /// Same void trail as Sale: the receipt row is kept, effects reversed.
+  voidedAt   DateTime?
+  voidReason String?
+  voidedBy   String?
   supplierId String?
   supplier   Supplier?      @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   userId     String
@@ -274,6 +293,8 @@ model Purchase {
   createdAt  DateTime       @default(now())
   @@index([createdAt])
   @@index([supplierId])
+  /// The purchases list searches and sorts by the supplier receipt number.
+  @@index([invoiceNo])
 }
 
 model PurchaseItem {

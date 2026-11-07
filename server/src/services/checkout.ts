@@ -53,9 +53,38 @@ export class CheckoutService {
   }
 
   async checkout(dto: SaleDto, user: SessionUser, idempotencyKey?: string): Promise<unknown> {
-    if (this.license) await this.license.assertLicensed();
+    // License gate BEFORE the transaction opens. assertLicensed() reads and
+    // writes the licenseState row through the pooled (parent) client, but a
+    // SQLite interactive transaction owns the only pooled connection (and
+    // the write lock) from its first statement — any parent-client query
+    // inside the callback can never complete, the transaction expires after
+    // its 5 s window and every sale dies with P2028 (“سرور موقتاً مشغول است”).
+    // Callers that hand us their own transaction (order delivery, quote
+    // conversion) run this gate before opening it.
+    await this.assertLicensed();
+    // A wider window than the 5 s default: a large invoice on a slow disk
+    // (or a second register waiting on SQLite's busy_timeout) is a retryable
+    // hiccup, not a lost basket.
+    return this.prisma.$transaction((tx) => this.checkoutInTx(tx, dto, user, idempotencyKey), { timeout: 15_000, maxWait: 5_000 });
+  }
+
+  /** License gate shared by every checkout entry point — POS, quote
+   *  conversion and order delivery. Always OUTSIDE the caller's transaction. */
+  async assertLicensed(): Promise<void> {
+    await this.license?.assertLicensed();
+  }
+
+  /** The whole checkout inside a CALLER-PROVIDED transaction. Order delivery
+   *  and quote conversion use this so that their reservation release, the
+   *  sale itself and their own workflow writes commit — or roll back — as
+   *  ONE unit: a crash between the steps can never leave an order
+   *  deliverable twice or an OPEN quote convertible again (double sale). */
+  async checkoutInTx(tx: Prisma.TransactionClient, dto: SaleDto, user: SessionUser, idempotencyKey?: string): Promise<unknown> {
+    // NOTE: no license check here — it queries the parent client and would
+    // deadlock the transaction on SQLite (see checkout()). Callers must run
+    // assertLicensed() before opening the transaction.
     if (idempotencyKey) {
-      const previous = await this.prisma.sale.findUnique({ where: { idempotencyKey }, include: { items: true, customer: true } });
+      const previous = await tx.sale.findUnique({ where: { idempotencyKey }, include: { items: true, customer: true } });
       if (previous) return previous;
     }
     const quantities = new Map<string, number>();
@@ -67,7 +96,7 @@ export class CheckoutService {
       if (line.serials?.length) serialsByProduct.set(line.productId, (serialsByProduct.get(line.productId) || []).concat(line.serials));
     }
     const lines = [...quantities.entries()];
-    return this.prisma.$transaction(async (tx) => {
+    {
       const products = await tx.product.findMany({ where: { id: { in: lines.map(([id]) => id) }, isActive: true } });
       if (products.length !== lines.length) throw new BadRequestException("یکی از کالاها غیرفعال است یا پیدا نشد.");
       const productMap = new Map(products.map((product) => [product.id, product as StockishProduct]));
@@ -90,6 +119,10 @@ export class CheckoutService {
       // reserve stock, so walk-in availability is stock − reserved.
       const bundleComponents = new Map<string, Array<{ component: StockishProduct; quantity: number }>>();
       const componentById = new Map<string, StockishProduct>();
+      // Serials that must flip to SOLD when the sale commits, keyed by the
+      // sale line they leave with: a direct product, or the BUNDLE for units
+      // handed over inside a kit (so a sale-return can still find them).
+      const serialFlipPlan: Array<{ ownerProductId: string; serial: string }> = [];
       for (const [productId, quantity] of lines) {
         const product = productMap.get(productId)!;
         if (product.isBundle) {
@@ -120,6 +153,35 @@ export class CheckoutService {
             const unit = unitMap.get(serial);
             if (!unit || unit.productId !== productId) throw new BadRequestException(`سریال ${serial} برای این کالا ثبت نشده است.`);
             if (unit.status !== "IN_STOCK") throw new BadRequestException(`سریال ${serial} قبلاً فروخته یا برگشتی است.`);
+          }
+          for (const serial of serials) serialFlipPlan.push({ ownerProductId: productId, serial });
+        }
+        if (product.isBundle) {
+          // A kit containing tracked devices hands those devices over too.
+          // Their serials ride on the bundle line; without this the unit
+          // leaves the shop while its serial stays "in stock" — sellable a
+          // second time and returnable to the supplier as phantom stock.
+          const serializedParts = (bundleComponents.get(productId) || []).filter((part) => part.component.isSerialized);
+          if (serializedParts.length) {
+            const serials = (serialsByProduct.get(productId) || []).map((value) => value.trim()).filter(Boolean);
+            const needed = serializedParts.reduce((sum, part) => sum + part.quantity, 0);
+            if (!serials.length) throw new BadRequestException(`برای «${product.name}» شمارهٔ سریال/IMEI اجزای سریال‌دار هر بسته را وارد کنید (${needed} عدد).`);
+            if (new Set(serials).size !== serials.length) throw new BadRequestException(`سریال تکراری در اقلام «${product.name}» هست؛ هر دستگاه را یک بار وارد کنید.`);
+            const units = await tx.serialUnit.findMany({ where: { serial: { in: serials } } });
+            const unitMap = new Map(units.map((unit) => [unit.serial, unit]));
+            const perComponent = new Map<string, string[]>();
+            for (const serial of serials) {
+              const unit = unitMap.get(serial);
+              const part = serializedParts.find((row) => row.component.id === unit?.productId);
+              if (!unit || !part) throw new BadRequestException(`سریال ${serial} برای اجزای بستهٔ «${product.name}» ثبت نشده است.`);
+              if (unit.status !== "IN_STOCK") throw new BadRequestException(`سریال ${serial} قبلاً فروخته یا برگشتی است.`);
+              perComponent.set(unit.productId, (perComponent.get(unit.productId) || []).concat(serial));
+            }
+            for (const part of serializedParts) {
+              const have = (perComponent.get(part.component.id) || []).length;
+              if (have !== part.quantity) throw new BadRequestException(`برای جزء «${part.component.name}» از بستهٔ «${product.name}» دقیقاً ${part.quantity} سریال لازم است (${have} عدد وارد شد).`);
+            }
+            for (const serial of serials) serialFlipPlan.push({ ownerProductId: productId, serial });
           }
         }
       }
@@ -261,14 +323,12 @@ export class CheckoutService {
           // Bundle lines name the bundle so the cardex shows why the shelf moved.
           await deduct(part.product, part.quantity, product.isBundle ? `جزء بستهٔ ${product.name}` : undefined);
         }
-        // Serialized units flip to SOLD and remember the sale item they left with.
-        if (product.isSerialized) {
-          const saleItem = sale.items.find((item) => item.productId === productId);
-          const serials = serialsByProduct.get(productId) || [];
-          for (const serial of serials) {
-            await tx.serialUnit.update({ where: { serial }, data: { status: "SOLD", saleItemId: saleItem?.id, updatedAt: new Date() } });
-          }
-        }
+      }
+      // Serialized units flip to SOLD and remember the sale item they left
+      // with — direct lines name the product, kit lines name the bundle.
+      for (const flip of serialFlipPlan) {
+        const saleItem = sale.items.find((item) => item.productId === flip.ownerProductId);
+        await tx.serialUnit.update({ where: { serial: flip.serial }, data: { status: "SOLD", saleItemId: saleItem?.id, updatedAt: new Date() } });
       }
       // ── Wallet settlement ────────────────────────────────────────────
       if (walletPart > 0 && dto.customerId) {
@@ -277,6 +337,6 @@ export class CheckoutService {
       }
       await tx.auditLog.create({ data: { actor: user.username, action: "CHECKOUT", entity: "Sale", entityId: sale.id, detail: `${receiptNo} / ${total}` } });
       return sale;
-    });
+    }
   }
 }

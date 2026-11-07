@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Module, Param, Post } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Module, Param, Post, Query } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { CurrentUser, SessionUser } from "../auth";
 import { StocktakeDto } from "../dto";
@@ -14,9 +14,12 @@ export class StocktakesController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get()
-  list() {
+  list(@Query("skip") skip?: string, @Query("take") take?: string) {
+    const limit = Math.min(300, Math.max(1, Number(take) || 50));
+    const offset = Math.max(0, Number(skip) || 0);
     return this.prisma.stocktake.findMany({
-      take: 50,
+      skip: offset,
+      take: limit,
       include: { user: { select: { displayName: true } }, _count: { select: { lines: true } } },
       orderBy: { createdAt: "desc" },
     });
@@ -39,6 +42,11 @@ export class StocktakesController {
       const products = await tx.product.findMany({ where: { id: { in: lines.map(([id]) => id) }, isActive: true } });
       if (products.length !== lines.length) throw new BadRequestException("یکی از کالاها غیرفعال است یا پیدا نشد.");
       const productMap = new Map(products.map((product) => [product.id, product]));
+      // Countable goods are counted in whole units (round-30 stepper repair).
+      for (const line of lines) {
+        const product = productMap.get(line[0])!;
+        if (!product.isWeighted) line[1] = Math.round(line[1]);
+      }
       const record = await tx.stocktake.create({
         data: {
           name: dto.name?.trim() || null,

@@ -1,26 +1,96 @@
 import { BadRequestException, Body, Controller, Get, Module, Post, Put } from "@nestjs/common";
+import * as os from "node:os";
 import { closeSync, openSync, readFileSync, readSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AdminOnly, CurrentUser, SessionUser } from "../auth";
 import { createBackup } from "../backup";
-import { RestoreBackupDto, SettingDto } from "../dto";
+import { ResetDataDto, RestoreBackupDto, SettingDto } from "../dto";
 import { PrismaService } from "../prisma.service";
-import { configureLocalStorage } from "../storage";
+import { configureLocalStorage, databaseFilePath } from "../storage";
 import { BackupScheduler } from "./backup-scheduler";
+import { SampleDataService } from "../services/sample-data";
+import { OwnerConfigModule, OwnerConfigService } from "../owner-config";
+import { SalesController } from "./sales.module";
+import { PurchasesController, PurchaseReturnsController } from "./purchases.module";
+import { QuotesController } from "./quotes.module";
+import { OrdersController } from "./orders.module";
+import { InstallmentsController } from "./installments.module";
+import { ExpensesController } from "./expenses.module";
+import { CashController } from "./cash.module";
+import { CheckoutService } from "../services/checkout";
 
 @Controller("settings")
 export class SettingsController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly sampleData: SampleDataService, private readonly ownerConfig: OwnerConfigService) {}
   // Reading settings (shop name, receipt footer, …) is allowed for every
   // signed-in user so receipts and the header show the configured name.
   @Get() async get() {
     const entries = await this.prisma.setting.findMany({ orderBy: { key: "asc" } });
-    return Object.fromEntries(entries.map(({ key, value }) => [key, value]));
+    const settings: Record<string, string | string[]> = Object.fromEntries(entries.map(({ key, value }) => [key, value]));
+    // تنظیمات فروشگاه (نام، پانوشت رسید، لوگو، نشانی، تلفن) که فایل مالک
+    // (owner.json) مقدار داده باشد بر مقدار داخل دیتابیس مقدم است — مالک
+    // برنامه از ابزار بیرونی خودش آن‌ها را تعیین کرده. کلیدهای قفل‌شده
+    // به کلاینت اعلام می‌شوند تا صفحهٔ تنظیمات به‌جای «ذخیره نشدن»، علت
+    // واقعی را نشان دهد.
+    const owner = this.ownerConfig.readOwnerConfig();
+    const ownerLocked: string[] = [];
+    for (const key of ["shopName", "receiptFooter", "logo", "address", "phone"] as const) {
+      if (owner[key]) {
+        settings[key] = owner[key];
+        ownerLocked.push(key);
+      }
+    }
+    if (ownerLocked.length) settings.ownerLocked = ownerLocked;
+    return settings;
   }
   /** تقویم نمایش تاریخ‌ها: شمسی (پیش‌فرض)، قمری یا میلادی. */
   static readonly CALENDARS = ["persian", "islamic-umalqura", "gregorian"];
-  /** ارزهای پشتیبانی‌شده در نمایش مبالغ. */
-  static readonly CURRENCIES = ["AFN", "USD", "EUR", "GBP", "IRR", "PKR", "AED", "SAR", "INR", "CNY", "TRY", "KZT", "UZS", "TJS", "IQD", "JOD"];
+  /** ارزهای پیش‌فرض نمایش مبالغ — افغانی همیشه ارز اصلی و دلار ارز دوم است.
+   *  فهرست کامل در تنظیم «currencies» (JSON) ذخیره می‌شود و از بخش
+   *  «مدیریت ارزها» در تنظیمات فروشگاه قابل افزودن/حذف است. */
+  static readonly DEFAULT_CURRENCIES = [
+    { code: "AFN", label: "افغانی" },
+    { code: "USD", label: "دلار امریکا" },
+  ];
+  /** فهرست مؤثر ارزها: از تنظیم currencies؛ در نبود/خرابی آن، پیش‌فرض‌ها. */
+  private async currencyList(): Promise<Array<{ code: string; label: string }>> {
+    try {
+      const row = await this.prisma.setting.findUnique({ where: { key: "currencies" } });
+      if (row) {
+        const parsed = JSON.parse(row.value) as unknown;
+        if (SettingsController.isCurrencyList(parsed)) return parsed;
+      }
+    } catch { /* keep the defaults */ }
+    return SettingsController.DEFAULT_CURRENCIES;
+  }
+  /** نشانی‌های IPv4 همین دستگاه در شبکهٔ محلی — برای نمایش نشانی سرور به
+   *  کامپیوترهای دیگر در صفحهٔ تنظیمات شبکه. */
+  static lanAddresses(): string[] {
+    return Object.values(os.networkInterfaces())
+      .flat()
+      .filter((net): net is os.NetworkInterfaceInfo => Boolean(net) && !net!.internal && net!.family === "IPv4")
+      .map((net) => net!.address);
+  }
+  /** شکل معتبر فهرست ارز: آرایه‌ای از {code,label} با کد یکتا. */
+  static isCurrencyList(value: unknown): value is Array<{ code: string; label: string }> {
+    return (
+      Array.isArray(value) &&
+      value.length > 0 &&
+      value.length <= 12 &&
+      value.every((row) => {
+        if (!row || typeof row !== "object") return false;
+        const entry = row as { code?: unknown; label?: unknown };
+        return (
+          typeof entry.code === "string" &&
+          typeof entry.label === "string" &&
+          /^[A-Z]{2,6}$/.test(entry.code) &&
+          entry.label.trim().length >= 1 &&
+          entry.label.trim().length <= 30
+        );
+      }) &&
+      new Set((value as Array<{ code: string }>).map((row) => row.code)).size === value.length
+    );
+  }
   @AdminOnly() @Put() async put(@Body() dto: SettingDto, @CurrentUser() user: SessionUser) {
     // Internal, machine-owned keys must not be edited from the UI.
     if (dto.key === "lastScheduledBackupAt" || dto.key.startsWith("invoiceSeq:")) {
@@ -29,8 +99,22 @@ export class SettingsController {
     if (dto.key === "calendar" && !SettingsController.CALENDARS.includes(dto.value)) {
       throw new BadRequestException("تقویم باید شمسی، قمری یا میلادی باشد.");
     }
-    if (dto.key === "currency" && !SettingsController.CURRENCIES.includes(dto.value)) {
-      throw new BadRequestException("این ارز در فهرست ارزهای پشتیبانی‌شده نیست.");
+    if (dto.key === "currencies") {
+      let parsed: unknown;
+      try { parsed = JSON.parse(dto.value); } catch { /* handled below */ }
+      if (!SettingsController.isCurrencyList(parsed)) {
+        throw new BadRequestException("فهرست ارزها معتبر نیست: هر ارز باید کد (۲ تا ۶ حرف لاتین بزرگ) و نام (تا ۳۰ نویسه) داشته باشد؛ حداکثر ۱۲ ارز و بدون کد تکراری.");
+      }
+      if (!parsed.some((row) => row.code === "AFN")) {
+        throw new BadRequestException("ارز افغانی (AFN) ارز اصلی برنامه است و از فهرست حذف نمی‌شود.");
+      }
+    }
+    if (dto.key === "currency") {
+      // ارز پایه باید یکی از ارزهای فهرست فروشگاه باشد (پیش‌فرض: افغانی/دلار).
+      const list = await this.currencyList();
+      if (!list.some((row) => row.code === dto.value)) {
+        throw new BadRequestException("این ارز در فهرست ارزهای فروشگاه نیست. ابتدا آن را از بخش «مدیریت ارزها» در تنظیمات اضافه کنید.");
+      }
     }
     if (dto.key === "timezone") {
       try {
@@ -108,10 +192,13 @@ export class SettingsController {
     if (buffer.length < 100 || buffer.subarray(0, 16).toString("latin1") !== "SQLite format 3\u0000") {
       throw new BadRequestException("فایل انتخاب‌شده یک نسخهٔ پشتیبان معتبر این برنامه نیست.");
     }
-    const dbPath = (process.env.DATABASE_URL || "").replace(/^file:/, "");
+    const dbPath = databaseFilePath();
     if (!dbPath) throw new BadRequestException("مسیر دیتابیس محلی پیدا نشد.");
     const safetyPath = await createBackup(this.prisma, "before-restore");
     await this.prisma.$disconnect();
+    // A stale -wal/-shm belonging to the REPLACED database must never be
+    // replayed over the freshly restored file.
+    for (const suffix of ["-wal", "-shm"]) { try { unlinkSync(`${dbPath}${suffix}`); } catch { /* already gone */ } }
     try {
       writeFileSync(dbPath, buffer);
       await this.prisma.$connect();
@@ -128,7 +215,41 @@ export class SettingsController {
     await this.prisma.auditLog.create({ data: { actor: user.username, action: "RESTORE_BACKUP", entity: "Database", detail: `from safety ${safetyPath}` } });
     return { ok: true };
   }
+
+  /** بازنشانی کامل داده‌های فروشگاه (Settings → سیستم): همهٔ داده‌های تجاری
+   *  پاک می‌شود؛ کاربرها، تنظیمات و لایسنس می‌مانند و خودِ عملیات لاگ
+   *  می‌شود. نیاز به تأیید صریح «RESET» دارد تا کلیک اشتباهی چیزی پاک نکند. */
+  @AdminOnly() @Post("data/reset")
+  async resetData(@Body() dto: ResetDataDto, @CurrentUser() user: SessionUser) {
+    if (dto?.confirm !== "RESET") throw new BadRequestException("برای بازنشانی، تأیید «RESET» لازم است.");
+    const counts = await this.sampleData.reset(user);
+    return { ok: true, removed: counts };
+  }
+
+  /** ساخت دیتای نمونهٔ همه‌جانبه — فقط روی فروشگاه خالی؛ هر قابلیت برنامه
+   *  (پرداخت‌ها، وزنی، سریالی، بسته، سفارش، اقساط، برگشتی، ابطال…) را پوشش
+   *  می‌دهد تا همهٔ صفحه‌ها قابل تست باشند. اسناد از همان منطق واقعی
+   *  ثبت می‌شوند تا موجودی و حساب‌ها سازگار بمانند. */
+  @AdminOnly() @Post("data/sample")
+  async seedSampleData(@CurrentUser() user: SessionUser) {
+    const result = await this.sampleData.seed(user);
+    return { ok: true, created: result };
+  }
 }
 
-@Module({ controllers: [SettingsController], providers: [BackupScheduler] })
+@Module({
+  imports: [OwnerConfigModule],
+  controllers: [SettingsController],
+  // The sample-data service drives the REAL controllers (sales, purchases,
+  // quotes, orders, installments, expenses, cash) so every seeded document
+  // follows production logic. Nest does not allow exporting controllers from
+  // their own modules, so they are registered here as plain providers —
+  // stateless, and their dependencies (Prisma, license) are @Global.
+  providers: [
+    BackupScheduler, SampleDataService, CheckoutService,
+    SalesController, PurchasesController, PurchaseReturnsController,
+    QuotesController, OrdersController, InstallmentsController,
+    ExpensesController, CashController,
+  ],
+})
 export class SettingsModule {}

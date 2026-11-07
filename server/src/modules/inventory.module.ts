@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Module, Post, Query } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Module, NotFoundException, Post, Query } from "@nestjs/common";
 import { CurrentUser, SessionUser } from "../auth";
 import { InventoryAdjustmentDto, StockTransferDto } from "../dto";
 import { PrismaService } from "../prisma.service";
@@ -7,7 +7,14 @@ import { PrismaService } from "../prisma.service";
 export class InventoryController {
   constructor(private readonly prisma: PrismaService) {}
   @Get("movements")
-  movements(@Query("take") take = "100") { return this.prisma.inventoryMovement.findMany({ take: Math.min(250, Math.max(1, Number(take) || 100)), include: { product: { select: { name: true, sku: true, unit: true } } }, orderBy: { createdAt: "desc" } }); }
+  movements(@Query("take") take = "100", @Query("productId") productId?: string) {
+    return this.prisma.inventoryMovement.findMany({
+      take: Math.min(250, Math.max(1, Number(take) || 100)),
+      where: productId ? { productId } : undefined,
+      include: { product: { select: { name: true, sku: true, unit: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+  }
 
   /** Live batch/lot quantities with their own expiry dates (FEFO list). */
   @Get("batches")
@@ -22,8 +29,17 @@ export class InventoryController {
 
   /** لیست دستگاه‌های سریال‌دار یک کالا (IMEI/سریال) با وضعیت هرکدام. */
   @Get("serials")
-  serials(@Query("productId") productId?: string, @Query("status") status?: string, @Query("q") q?: string) {
-    const where: { productId?: string; status?: string; serial?: { contains: string } } = {};
+  async serials(@Query("productId") productId?: string, @Query("status") status?: string, @Query("q") q?: string, @Query("saleId") saleId?: string) {
+    const where: { productId?: string; status?: string; serial?: { contains: string }; saleItemId?: { in: string[] } } = {};
+    // saleId narrows the list to the units this invoice handed over (their
+    // saleItemId points at one of its items) — the sale-return screen offers
+    // exactly those for picking, status SOLD filtering out already-returned
+    // ones.
+    if (saleId) {
+      const sale = await this.prisma.sale.findUnique({ where: { id: saleId }, select: { items: { select: { id: true } } } });
+      if (!sale) throw new NotFoundException("فاکتور پیدا نشد.");
+      where.saleItemId = { in: sale.items.map((item) => item.id) };
+    }
     if (productId) where.productId = productId;
     if (status === "IN_STOCK" || status === "SOLD" || status === "RETURNED") where.status = status;
     const search = q?.trim();
@@ -41,7 +57,9 @@ export class InventoryController {
     const since = new Date(Date.now() - 30 * 86400000);
     const [products, soldRows, returnedRows, purchases] = await Promise.all([
       this.prisma.product.findMany({ where: { isActive: true, isBundle: false }, select: { id: true, name: true, sku: true, unit: true, stock: true, backstock: true, reserved: true, minStock: true, cost: true } }),
-      this.prisma.saleItem.findMany({ where: { sale: { createdAt: { gte: since } } }, select: { productId: true, quantity: true } }),
+      // Voided invoices never really left the shelf — they must not inflate
+      // the sales velocity behind the reorder suggestion.
+      this.prisma.saleItem.findMany({ where: { sale: { createdAt: { gte: since }, voidedAt: null } }, select: { productId: true, quantity: true } }),
       this.prisma.saleReturnItem.findMany({ where: { saleReturn: { createdAt: { gte: since } } }, select: { productId: true, quantity: true } }),
       this.prisma.purchaseItem.findMany({ orderBy: { purchase: { createdAt: "desc" } }, take: 2000, select: { productId: true, purchase: { select: { supplier: { select: { id: true, name: true, phone: true } } } } } }),
     ]);

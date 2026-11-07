@@ -7,6 +7,7 @@ function setup(existing: unknown = null) {
     product: {
       findUnique: jest.fn().mockResolvedValue(existing),
       findFirst: jest.fn().mockResolvedValue(existing),
+      findMany: jest.fn().mockResolvedValue([]),
       create: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ id: "new-1", ...data })),
       update: jest.fn().mockResolvedValue({}),
     },
@@ -61,5 +62,91 @@ describe("Bulk product import", () => {
     const result = await controller.importProducts({ rows: [{ name: "  " }] }, user);
     expect(result.created).toBe(0);
     expect(result.errors).toHaveLength(1);
+  });
+
+  it("rejects bundle/serialized rows explicitly instead of silently dropping the flags", async () => {
+    const { controller, tx } = setup();
+    const result = await controller.importProducts({ rows: [{ name: "کیت", sku: "K-1", isBundle: true }, { name: "گوشی", sku: "PH-1", isSerialized: true }, { name: "چای", sku: "T-9" }] }, user);
+    // The two special-type rows are rejected with a clear message; the plain
+    // row still imports — the flags are never swallowed silently.
+    expect(result.created).toBe(1);
+    expect(result.errors).toHaveLength(2);
+    expect(result.errors.every((error) => error.message.includes("پشتیبانی نمی‌شود"))).toBe(true);
+    expect(tx.product.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("کد کالای خودکار (P-1001…)", () => {
+  it("کد خالی → اولین کد P-1001 است و در create می‌نشیند", async () => {
+    const { controller, tx } = setup();
+    tx.product.findMany.mockResolvedValue([]);
+    const product = await controller.create({ name: "نمک", price: 30 } as never);
+    expect(product.sku).toBe("P-1001");
+    expect(tx.product.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ sku: "P-1001" }) }));
+  });
+
+  it("همیشه بزرگ‌ترین شمارهٔ موجود + ۱ — کدهای دستیِ P-… هم حساب می‌شوند", async () => {
+    const { controller, tx } = setup();
+    tx.product.findMany.mockResolvedValue([{ sku: "P-1001" }, { sku: "P-1007" }, { sku: "G-2" }]);
+    const product = await controller.create({ name: "فلفل", price: 10 } as never);
+    expect(product.sku).toBe("P-1008");
+  });
+
+  it("کد دستی دست‌نخورده می‌ماند و سازنده اجرا نمی‌شود", async () => {
+    const { controller, tx } = setup();
+    const product = await controller.create({ name: "شکر", sku: "S-9", price: 90 } as never);
+    expect(product.sku).toBe("S-9");
+    expect(tx.product.findMany).not.toHaveBeenCalled();
+  });
+
+  it("دو ثبتِ همزمان با یک کد خودکار → تلاشِ دوباره کدِ تازه می‌گیرد (P2002 روی sku)", async () => {
+    const { controller, tx } = setup();
+    // تلاش اول همان P-1008 را می‌سازد که ثبتِ همزمانِ دیگری برداشته —
+    // قید یکتای sku نوشتن را رد می‌کند؛ تلاش دوم بزرگ‌ترین شمارهٔ
+    // «الان-موجود» را می‌خواند و یکی جلوتر می‌رود.
+    tx.product.findMany.mockResolvedValueOnce([{ sku: "P-1001" }, { sku: "P-1007" }]).mockResolvedValueOnce([{ sku: "P-1001" }, { sku: "P-1007" }, { sku: "P-1008" }]);
+    tx.product.create.mockRejectedValueOnce(Object.assign(new Error("unique constraint failed"), { code: "P2002", meta: { target: ["Product_sku_key"] } }));
+    const product = await controller.create({ name: "فلفل", price: 10 } as never);
+    expect(product.sku).toBe("P-1009");
+    expect(tx.product.findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("بارکدِ تکراری با کدِ خودکار → تلاشِ دوباره نمی‌شود، پیام همان‌جا برمی‌گردد", async () => {
+    const { controller, tx, prisma } = setup();
+    // قید یکتای «بارکد» خطای کاربر است نه تصادمِ کد خودکار — retry نباید
+    // خطای واقعی را پشت سرِ هم پنهان کند.
+    const race = Object.assign(new Error("unique constraint failed"), { code: "P2002", meta: { target: ["Product_barcode_key"] } });
+    tx.product.create.mockRejectedValueOnce(race);
+    await expect(controller.create({ name: "روغن", price: 120, barcode: "123" } as never)).rejects.toThrow("این بارکد برای کالای دیگری ثبت شده است.");
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("کد دستیِ تکراری → بدون تلاشِ دوباره، پیام دوستانه", async () => {
+    const { controller, tx, prisma } = setup();
+    const race = Object.assign(new Error("unique constraint failed"), { code: "P2002", meta: { target: ["Product_sku_key"] } });
+    tx.product.create.mockRejectedValueOnce(race);
+    await expect(controller.create({ name: "شکر", sku: "S-9", price: 90 } as never)).rejects.toThrow("این کد کالا برای کالای دیگری ثبت شده است.");
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(tx.product.findMany).not.toHaveBeenCalled();
+  });
+
+  it("سطر فایل ورودِ بدون کد هم کد خودکار می‌گیرد (نه IMP-…)", async () => {
+    const { controller, tx } = setup();
+    tx.product.findMany.mockResolvedValue([{ sku: "P-1001" }]);
+    const result = await controller.importProducts({ rows: [{ name: "روغن", price: 120 }] }, user);
+    expect(result).toEqual({ created: 1, updated: 0, errors: [] });
+    expect(tx.product.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ sku: "P-1002" }) }));
+  });
+
+  it("کدهای خودکارِ یک فایل ورود پیوسته‌اند (هر سطر سطر قبلی را می‌بیند)", async () => {
+    const { controller, tx } = setup();
+    // شبیه‌سازی رفتار واقعی پرایسما: تراکنش نوشته‌های خودش را هم می‌بیند
+    const skus: string[] = ["P-1001", "P-1002"];
+    tx.product.findMany.mockImplementation(() => Promise.resolve(skus.map((sku) => ({ sku }))));
+    const innerCreate = tx.product.create;
+    tx.product.create = jest.fn((({ data }: { data: { sku: string } }) => { skus.push(data.sku); return innerCreate({ data }); }) as never);
+    await controller.importProducts({ rows: [{ name: "ماست", price: 45 }, { name: "دوغ", price: 20 }] }, user);
+    const created = tx.product.create.mock.calls.map((call) => (call[0] as { data: { sku: string } }).data.sku);
+    expect(created).toEqual(["P-1003", "P-1004"]);
   });
 });

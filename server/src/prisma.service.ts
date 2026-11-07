@@ -11,6 +11,7 @@ import { ensureInitialData } from "./bootstrap-data";
  * Never remove an entry: installed databases rely on this list to catch up.
  */
 const COLUMN_MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
+  { table: "User", column: "mustChangePassword", ddl: `ALTER TABLE "User" ADD COLUMN "mustChangePassword" BOOLEAN NOT NULL DEFAULT false` },
   { table: "SaleItem", column: "unitCost", ddl: `ALTER TABLE "SaleItem" ADD COLUMN "unitCost" INTEGER NOT NULL DEFAULT 0` },
   { table: "SaleReturnItem", column: "unitCost", ddl: `ALTER TABLE "SaleReturnItem" ADD COLUMN "unitCost" INTEGER NOT NULL DEFAULT 0` },
   { table: "Purchase", column: "paidAmount", ddl: `ALTER TABLE "Purchase" ADD COLUMN "paidAmount" INTEGER NOT NULL DEFAULT 0` },
@@ -33,8 +34,15 @@ const COLUMN_MIGRATIONS: Array<{ table: string; column: string; ddl: string }> =
   { table: "Product", column: "reserved", ddl: `ALTER TABLE "Product" ADD COLUMN "reserved" REAL NOT NULL DEFAULT 0` },
   { table: "Customer", column: "walletBalance", ddl: `ALTER TABLE "Customer" ADD COLUMN "walletBalance" INTEGER NOT NULL DEFAULT 0` },
   { table: "Customer", column: "tier", ddl: `ALTER TABLE "Customer" ADD COLUMN "tier" TEXT NOT NULL DEFAULT 'RETAIL'` },
+  { table: "Customer", column: "code", ddl: `ALTER TABLE "Customer" ADD COLUMN "code" TEXT` },
   { table: "Sale", column: "walletPart", ddl: `ALTER TABLE "Sale" ADD COLUMN "walletPart" INTEGER NOT NULL DEFAULT 0` },
   { table: "SaleReturn", column: "walletRefund", ddl: `ALTER TABLE "SaleReturn" ADD COLUMN "walletRefund" INTEGER NOT NULL DEFAULT 0` },
+  { table: "Sale", column: "voidedAt", ddl: `ALTER TABLE "Sale" ADD COLUMN "voidedAt" DATETIME` },
+  { table: "Sale", column: "voidReason", ddl: `ALTER TABLE "Sale" ADD COLUMN "voidReason" TEXT` },
+  { table: "Sale", column: "voidedBy", ddl: `ALTER TABLE "Sale" ADD COLUMN "voidedBy" TEXT` },
+  { table: "Purchase", column: "voidedAt", ddl: `ALTER TABLE "Purchase" ADD COLUMN "voidedAt" DATETIME` },
+  { table: "Purchase", column: "voidReason", ddl: `ALTER TABLE "Purchase" ADD COLUMN "voidReason" TEXT` },
+  { table: "Purchase", column: "voidedBy", ddl: `ALTER TABLE "Purchase" ADD COLUMN "voidedBy" TEXT` },
 ];
 
 /**
@@ -106,8 +114,48 @@ export async function ensureUniqueInvoiceNos(db: { $queryRawUnsafe(sql: string):
 }
 
 /**
+ * Repairs historical duplicate customer codes before the unique index is
+ * created (schema.sql). Codes became unique-by-construction only in round 61;
+ * an upgraded database can carry duplicates from a manual entry or a rare
+ * concurrent create. Within each group of duplicates only the oldest row
+ * keeps the code; the rest get a stable `-<rowid>` suffix. NULL codes are
+ * left alone — concatenating onto NULL stays NULL, and multiple NULLs are
+ * allowed by SQLite unique indexes anyway.
+ */
+export async function ensureUniqueCustomerCodes(db: { $queryRawUnsafe(sql: string): Promise<unknown>; $executeRawUnsafe(sql: string): Promise<unknown> }): Promise<void> {
+  const tables = (await db.$queryRawUnsafe(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'Customer'`)) as Array<{ name: string }>;
+  if (!Array.isArray(tables) || tables.length === 0) return;
+  await db.$executeRawUnsafe(`UPDATE "Customer" SET "code" = "code" || '-' || "rowid" WHERE "code" IS NOT NULL AND "rowid" NOT IN (SELECT MIN("rowid") FROM "Customer" GROUP BY "code")`);
+}
+
+/**
+ * Rounds fractional quantities of COUNTABLE (non-weighted) goods on workflow
+ * lines. The round-30 stepper bug (min 0.001 combined with unit steps) let
+ * order/quote/purchase lines slip in as 1.001/2.001 — such an order can never
+ * be fully delivered (a 0.001 remainder keeps it OPEN forever) and serialized
+ * lines demand a fractional serial count. Weighted goods keep their
+ * 3-decimal precision. Idempotent: whole numbers are untouched, and Product
+ * reservations are recomputed to the true "open order lines" invariant.
+ */
+export async function repairFractionalQuantities(db: { $executeRawUnsafe(sql: string): Promise<unknown> }): Promise<void> {
+  const countable = `SELECT id FROM "Product" WHERE "isWeighted" = 0`;
+  await db.$executeRawUnsafe(`UPDATE "CustomerOrderLine" SET "quantity" = ROUND("quantity") WHERE "quantity" != ROUND("quantity") AND "productId" IN (${countable})`);
+  await db.$executeRawUnsafe(`UPDATE "QuoteItem" SET "quantity" = ROUND("quantity") WHERE "quantity" != ROUND("quantity") AND "productId" IN (${countable})`);
+  await db.$executeRawUnsafe(`UPDATE "PurchaseItem" SET "quantity" = ROUND("quantity") WHERE "quantity" != ROUND("quantity") AND "productId" IN (${countable})`);
+  await db.$executeRawUnsafe(`UPDATE "StocktakeLine" SET "counted" = ROUND("counted") WHERE "counted" IS NOT NULL AND "counted" != ROUND("counted") AND "productId" IN (${countable}) AND "stocktakeId" IN (SELECT id FROM "Stocktake" WHERE status = 'OPEN')`);
+  // Reservations follow the healed lines: reserved = Σ(undelivered OPEN lines).
+  await db.$executeRawUnsafe(`UPDATE "Product" SET "reserved" = COALESCE((SELECT SUM(l."quantity" - l."deliveredQty") FROM "CustomerOrderLine" l JOIN "CustomerOrder" o ON o."id" = l."orderId" WHERE l."productId" = "Product"."id" AND o."status" = 'OPEN'), 0)`);
+}
+
+/**
  * SQLite tuning applied to every database at boot:
  * - WAL lets reads (reports, lists) continue while a sale is being written.
+ *   (WAL is a property of the database file, so this one statement covers
+ *   every pooled connection.)
+ * - busy_timeout is NOT set here: PRAGMAs issued via $queryRawUnsafe reach a
+ *   single pooled connection only. It lives in the connection URL instead —
+ *   see storage.ts (`?socket_timeout=15`), which the connector applies to
+ *   every connection it opens.
  * - `PRAGMA optimize` refreshes the query planner's statistics; we repeat it
  *   once a day because long-running POS processes never see the connections
  *   that would normally trigger it automatically.
@@ -161,10 +209,12 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     // upgrade dies on "no such column" / "UNIQUE constraint failed".
     await ensureColumnMigrations(this);
     await ensureUniqueInvoiceNos(this);
+    await ensureUniqueCustomerCodes(this);
     const schemaPath = join(__dirname, "../prisma/schema.sql");
     const schema = readFileSync(schemaPath, "utf8");
     for (const statement of schema.split(";").map((sql) => sql.trim()).filter(Boolean)) await this.$executeRawUnsafe(statement);
     await backfillPaymentParts(this);
+    await repairFractionalQuantities(this);
     await ensureInitialData(this);
     this.optimizeTimer = setInterval(() => {
       this.$queryRawUnsafe("PRAGMA optimize").catch(() => undefined);

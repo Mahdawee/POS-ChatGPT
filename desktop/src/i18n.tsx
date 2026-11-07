@@ -39,32 +39,29 @@ let currentCalendar: CalendarId = "persian";
 let currentTimezone = "";
 let currentCurrency = "AFN";
 
-/** Dari labels double as translation keys (see i18n-dictionaries). */
-export const CURRENCIES: Array<{ code: string; label: string }> = [
+/** ارزهای نمایش مبالغ. پیش‌فرض فقط افغانی و دلار؛ فهرست کامل از تنظیمات
+ *  فروشگاه (کلید currencies) بارگذاری می‌شود و افغانی همیشه موجود است. */
+export type CurrencyRow = { code: string; label: string };
+export const BASE_CURRENCIES: CurrencyRow[] = [
   { code: "AFN", label: "افغانی" },
   { code: "USD", label: "دلار امریکا" },
-  { code: "EUR", label: "یورو" },
-  { code: "GBP", label: "پوند" },
-  { code: "IRR", label: "تومان" },
-  { code: "PKR", label: "روپیهٔ پاکستان" },
-  { code: "AED", label: "درهم امارات" },
-  { code: "SAR", label: "ریال سعودی" },
-  { code: "INR", label: "روپیهٔ هند" },
-  { code: "CNY", label: "یوان" },
-  { code: "TRY", label: "لیر" },
-  { code: "KZT", label: "تنگه" },
-  { code: "UZS", label: "سوم" },
-  { code: "TJS", label: "سامانی" },
-  { code: "IQD", label: "دینار عراق" },
-  { code: "JOD", label: "دینار اردن" },
 ];
-export const currencyLabel = (code: string): string => CURRENCIES.find((row) => row.code === code)?.label ?? code;
+let currencyList: CurrencyRow[] = BASE_CURRENCIES;
+export const currencies = (): CurrencyRow[] => currencyList;
+/** فهرست ارزها را از تنظیمات فروشگاه اعمال می‌کند؛ ارز پایهٔ فعلی اگر در
+ *  فهرست نباشد به افغانی برمی‌گردد و افغانی هرگز حذف نمی‌شود. */
+export function applyCurrencyList(rows: CurrencyRow[]): void {
+  const valid = rows.filter((row) => row && typeof row.code === "string" && typeof row.label === "string" && row.label.trim().length > 0);
+  currencyList = valid.some((row) => row.code === "AFN") ? valid : [{ code: "AFN", label: "افغانی" }, ...valid];
+  if (!currencyList.some((row) => row.code === currentCurrency)) currentCurrency = "AFN";
+}
+export const currencyLabel = (code: string): string => currencyList.find((row) => row.code === code)?.label ?? code;
 
 /** Applies shop display settings; unknown values fall back to the defaults. */
 export function applyLocaleSettings(settings: Partial<LocaleSettings>): void {
   if (settings.calendar === "persian" || settings.calendar === "islamic-umalqura" || settings.calendar === "gregorian") currentCalendar = settings.calendar;
   if (typeof settings.timezone === "string") currentTimezone = settings.timezone;
-  if (typeof settings.currency === "string" && CURRENCIES.some((row) => row.code === settings.currency)) currentCurrency = settings.currency;
+  if (typeof settings.currency === "string" && currencyList.some((row) => row.code === settings.currency)) currentCurrency = settings.currency;
 }
 export const localeSettings = (): LocaleSettings => ({ calendar: currentCalendar, timezone: currentTimezone, currency: currentCurrency });
 
@@ -96,19 +93,35 @@ const dateOptions = (): { calendar: string; timeZone?: string } => {
 export const money = (value: number): string => `${new Intl.NumberFormat(activeLocale(), { maximumFractionDigits: 0 }).format(value)} ${t(currencyLabel(currentCurrency))}`;
 export const moneyPlain = (value: number): string => new Intl.NumberFormat(activeLocale(), { maximumFractionDigits: 0 }).format(value);
 export const qty = (value: number): string => new Intl.NumberFormat(activeLocale(), { maximumFractionDigits: 3 }).format(value);
-export const dateTime = (value: string | Date): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium", timeStyle: "short", ...dateOptions() }).format(new Date(value));
+// زمان‌ها در کل برنامه ۱۲ساعته‌اند (ق.ظ/ب.ظ، AM/PM) — درخواست مالک؛
+// hour12 صریحاً گذاشته شده تا هیچ زبانی به ساعت ۲۴نگاره‌ای برنگردد.
+export const dateTime = (value: string | Date): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium", timeStyle: "short", hour12: true, ...dateOptions() }).format(new Date(value));
+export const timeOnly = (value: string | Date): string => new Intl.DateTimeFormat(activeLocale(), { hour: "2-digit", minute: "2-digit", hour12: true, ...dateOptions() }).format(new Date(value));
 export const dateOnly = (value: string | Date): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium", ...dateOptions() }).format(new Date(value));
 export const dayLabel = (day: string): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium", ...dateOptions() }).format(new Date(`${day}T00:00:00`));
 export const todayLabel = (): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium", ...dateOptions() }).format(new Date());
 export const fullDate = (value: string | Date): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "full", ...dateOptions() }).format(new Date(value));
 export const percent = (value: number): string => `${new Intl.NumberFormat(activeLocale(), { maximumFractionDigits: 0 }).format(value)}${currentLang === "en" ? "%" : "٪"}`;
 
-/** Applies the language to the document (direction, lang, title) — called by the provider and at boot. */
+/** نام پلن لایسنس به زبان فعال. */
+export function licensePlanLabel(plan: string | null): string {
+  switch (plan) {
+    case "MONTHLY": return t("ماهانه");
+    case "YEARLY": return t("سالانه");
+    case "CUSTOM": return t("دلخواه");
+    case "LIFETIME": return t("ابدی");
+    default: return plan || "";
+  }
+}
+
+/** Applies the language to the document (direction, lang) — called by the provider and at boot.
+ *  The window/tab TITLE is deliberately not touched here: it belongs to the
+ *  owner-controlled brand (lib/brand.ts), which re-applies it on every
+ *  language or brand change. */
 export function applyDocumentLanguage(which: Lang): void {
   const root = document.documentElement;
   root.lang = which === "fa" ? "fa" : which === "ps" ? "ps" : "en";
   root.dir = which === "en" ? "ltr" : "rtl";
-  document.title = t("روشن | فروش و مدیریت فروشگاه");
 }
 
 type LanguageContextValue = { lang: Lang; dir: "rtl" | "ltr"; setLang: (which: Lang) => void };

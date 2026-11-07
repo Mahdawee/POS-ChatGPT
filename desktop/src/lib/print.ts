@@ -1,15 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
 import { qrSvg } from "./qr";
 import { dateTime, dayLabel, dir, fullDate, lang, money, moneyPlain, percent, t } from "../i18n";
+import { getBrand } from "./brand";
 import type { CustomerDetail, ProfitReport, Product, PurchaseReturn, Sale, SaleReturn, ShopSettings, ZReport } from "./api";
 
 /** Escapes user data before it is embedded into the print document. */
 const esc = (value: unknown): string => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char] as string));
 
-const payLabel = (method: string) => ({ CASH: t("نقدی"), MOBILE: t("موبایلی"), CREDIT: t("نسیه") } as Record<string, string>)[method] || method;
+const payLabel = (method: string) => ({ CASH: t("نقدی"), MOBILE: t("موبایلی"), CREDIT: t("نسیه"), WALLET: t("کیف پول") } as Record<string, string>)[method] || method;
 
-const baseStyles = (width: string) => `
-  @page { margin: ${width === "auto" ? "12mm" : "2mm"}; ${width === "auto" ? "size: A4;" : ""} }
+const baseStyles = (width: string, landscape = false) => `
+  @page { margin: ${width === "auto" ? "12mm" : "2mm"}; ${width === "auto" ? `size: ${landscape ? "A4 landscape" : "A4"};` : ""} }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: #fff; color: #000; }
   body { ${width === "auto" ? "" : `width: ${width};`} font-family: "Segoe UI", Tahoma, Arial, sans-serif; font-size: 12px; line-height: 1.6; }
@@ -48,7 +49,7 @@ const baseStyles = (width: string) => `
  * width is fixed to thermal-receipt paper (works on normal printers too —
  * choose "Microsoft Print to PDF" in the dialog to save a PDF).
  */
-export function printHtml(inner: string, options: { width?: string; title?: string; copies?: number } = {}): void {
+export function printHtml(inner: string, options: { width?: string; title?: string; copies?: number; landscape?: boolean } = {}): void {
   const width = options.width || "72mm";
   const title = options.title || t("رسید فروش");
   const copies = Math.min(3, Math.max(1, Math.round(options.copies || 1)));
@@ -57,7 +58,7 @@ export function printHtml(inner: string, options: { width?: string; title?: stri
   // (thermal printers cannot duplicate a job themselves, and consecutive
   // dialogs are unreliable in WebView2).
   const body = Array.from({ length: copies }, () => inner).join('<div style="break-after:page;page-break-after:always;height:0"></div>');
-  const html = `<!doctype html><html dir="${dir()}" lang="${lang()}"><head><meta charset="utf-8"><title>${esc(title)}</title><style>${baseStyles(width)}</style></head><body>${body}</body></html>`;
+  const html = `<!doctype html><html dir="${dir()}" lang="${lang()}"><head><meta charset="utf-8"><title>${esc(title)}</title><style>${baseStyles(width, options.landscape)}</style></head><body>${body}</body></html>`;
   const frame = document.createElement("iframe");
   frame.setAttribute("aria-hidden", "true");
   frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
@@ -98,10 +99,15 @@ function paymentQrSvg(shop: ShopSettings): string {
 export function textReceipt(sale: Sale, shop: ShopSettings): string {
   const line = (left: string, right: string) => `${left}${" ".repeat(Math.max(1, 40 - left.length - right.length))}${right}`;
   const rows: string[] = [];
-  rows.push(shop.shopName?.trim() || "ROSHAN");
+  rows.push(shop.shopName?.trim() || t("فروشگاه"));
+  // نشانی و تلفن فروشگاه اگر مالک/تنظیمات تعیین کرده باشد، زیر نام می‌آیند.
+  const contact = [shop.address?.trim(), shop.phone?.trim()].filter(Boolean).join(" · ");
+  if (contact) rows.push(contact);
   rows.push("=".repeat(40));
   rows.push(line(t("رسید فروش"), sale.receiptNo));
-  rows.push(line(t("زمان"), new Date(sale.createdAt).toLocaleString("en-GB")));
+  // زمان روی رسید متنی هم ۱۲ساعته است (ساعت ۲۴نگاره‌ای فقط ابهام می‌سازد)؛
+  // ارقام لاتین می‌مانند چون فونت پیش‌فرض چاپگرهای حرارتی ارقام دری را ندارد.
+  rows.push(line(t("زمان"), new Date(sale.createdAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short", hour12: true })));
   rows.push(line(t("مشتری"), sale.customer?.name || t("مشتری گذری")));
   rows.push("-".repeat(40));
   for (const item of sale.items) rows.push(line(`${item.name} x${item.quantity}`, moneyPlain(item.lineTotal)));
@@ -120,7 +126,7 @@ export function invoiceHtml(sale: Sale, shop: ShopSettings): string {
   const rows = sale.items.map((item, index) => `<tr><td class="num">${index + 1}</td><td>${esc(item.name)}</td><td class="num">${item.quantity}</td><td class="num">${money(item.unitPrice)}</td><td class="num">${money(item.lineTotal)}</td></tr>`).join("");
   return `
     <div class="invoice-head">
-      <div>${shop.printLogo === "0" ? "" : shop.logo?.trim() ? `<img class="shop-logo" style="margin:0" src="${esc(shop.logo)}" alt=""/>` : ""}<div class="receipt-brand">ROSHAN</div><p class="shop-name">${esc(shop.shopName?.trim() || t("فروشگاه من"))}</p></div>
+      <div>${shop.printLogo === "0" ? "" : shop.logo?.trim() ? `<img class="shop-logo" style="margin:0" src="${esc(shop.logo)}" alt=""/>` : ""}<div class="receipt-brand">${esc(shop.shopName?.trim() || t("فروشگاه من"))}</div>${[shop.address?.trim(), shop.phone?.trim()].filter(Boolean).join(" · ") ? `<div style="font-size:11px;color:#444;">${esc([shop.address?.trim(), shop.phone?.trim()].filter(Boolean).join(" · "))}</div>` : ""}</div>
       <div class="invoice-party">
         <div><b>${esc(t("فاکتور فروش"))}</b></div>
         <div>${esc(t("شماره فاکتور"))}: <span class="num">${esc(sale.receiptNo)}</span></div>
@@ -167,7 +173,7 @@ export function printDebtReceipt(detail: CustomerDetail, shop: ShopSettings): vo
 
 /** Smoke-tests the quick-print channel from the Settings page. */
 export async function testQuickPrint(shop: ShopSettings): Promise<void> {
-  await invoke("quick_print", { printer: shop.quickPrinter || "", text: ["ROSHAN — " + t("آزمون چاپ سریع"), "=".repeat(40), t("اگر این متن را می‌خوانید، چاپ سریع فعال است."), new Date().toLocaleString("en-GB")].join("\r\n") });
+  await invoke("quick_print", { printer: shop.quickPrinter || "", text: [getBrand().appName + " — " + t("آزمون چاپ سریع"), "=".repeat(40), t("اگر این متن را می‌خوانید، چاپ سریع فعال است."), new Date().toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short", hour12: true })].join("\r\n") });
 }
 
 /** Shop header shared by every printed document: logo (if configured) + name. */
@@ -175,7 +181,11 @@ function shopHeader(shop: ShopSettings): string {
   // The "printLogo" setting (saved from Settings) can turn the logo off for
   // receipts even when one is configured for the screen.
   const logo = shop.printLogo === "0" ? undefined : shop.logo?.trim();
-  return `${logo ? `<img class="shop-logo" src="${esc(logo)}" alt=""/>` : ""}<div class="receipt-brand">ROSHAN</div><p class="shop-name">${esc(shop.shopName?.trim() || t("فروشگاه من"))}</p>`;
+  // The brand line is the shop's own configured name — no hardcoded brand.
+  // Address/phone (when the owner file or in-app settings provide them) ride
+  // along on every printed document, right under the name.
+  const contact = [shop.address?.trim(), shop.phone?.trim()].filter(Boolean).join(" · ");
+  return `${logo ? `<img class="shop-logo" src="${esc(logo)}" alt=""/>` : ""}<div class="receipt-brand">${esc(shop.shopName?.trim() || t("فروشگاه من"))}</div>${contact ? `<div style="font-size:10px;color:#444;">${esc(contact)}</div>` : ""}`;
 }
 
 /** receipt body shared by sale receipts and return slips */
@@ -213,6 +223,11 @@ export function returnSlipHtml(sale: Sale, record: SaleReturn, shop: ShopSetting
   ];
   const items = (record.items || []).map((item) => `<div class="receipt-item"><span>${esc(item.name)} × ${item.quantity}</span><b>${money(item.lineTotal)}</b></div>`);
   const totals: Array<[string, string, boolean?]> = [[t("مبلغ برگشتی"), money(record.total), true]];
+  // Refund channels, so money sent back over mobile money stays visible.
+  if (record.cashAmount) totals.push([t("بازپرداخت نقدی"), money(record.cashAmount)]);
+  if (record.walletRefund) totals.push([t("بازپرداخت به کیف پول"), money(record.walletRefund)]);
+  const mobilePart = Math.max(0, record.total - (record.cashAmount || 0) - (record.walletRefund || 0));
+  if (mobilePart > 0) totals.push([t("بازپرداخت موبایلی"), money(mobilePart)]);
   if (record.note) totals.push([t("یادداشت"), record.note]);
   return receiptShell(shop, meta, items, totals, t("برگشت کالا با این رسید ثبت شد"));
 }
@@ -227,8 +242,10 @@ export function zReportHtml(z: ZReport, shop: ShopSettings): string {
     [t("فروش نقدی"), money(z.cashSales)],
     [t("پرداخت موبایلی"), money(z.mobileSales)],
     [t("فروش نسیه"), money(z.creditSales)],
+    [t("فروش کیف پول"), money(z.walletSales || 0)],
     [t("تعداد فاکتور"), String(z.invoiceCount)],
     [t("برگشتی‌ها"), money(z.returnsTotal)],
+    ...(z.mobileRefunds ? [[t("برگشت موبایلی"), money(z.mobileRefunds)]] as Array<[string, string, boolean?]> : []),
     [t("ورودی نقدی دستی"), money(z.cashIn)],
     [t("خروجی نقدی دستی"), money(z.cashOut)],
     [t("مبلغ مورد انتظار"), money(z.expected), true],
@@ -279,9 +296,9 @@ export function debtReceiptHtml(detail: CustomerDetail, shop: ShopSettings, qrHt
   return receiptShell(shop, meta, items, totals, t("لطفاً مانده بدهی خود را در اولین فرصت تسویه کنید.")) + qrHtml;
 }
 
-export function reportHtml(report: ProfitReport): string {
+export function reportHtml(report: ProfitReport, shop: ShopSettings = {}): string {
   return `
-    <h1>ROSHAN · ${esc(t("گزارش سود و فروش"))}</h1>
+    <h1>${esc(shop.shopName?.trim() || t("فروشگاه من"))} · ${esc(t("گزارش سود و فروش"))}</h1>
     <p class="muted">${esc(t("بازه"))}: ${esc(report.from ? `${dayLabel(report.from.slice(0, 10))} — ${dayLabel(report.to.slice(0, 10))}` : "")}</p>
     <h2>${esc(t("خلاصهٔ دوره"))}</h2>
     <table>
@@ -299,10 +316,10 @@ export function reportHtml(report: ProfitReport): string {
     <p class="receipt-thanks muted">${esc(t("برای خروجی PDF، در پنجرهٔ چاپ گزینهٔ Microsoft Print to PDF را انتخاب کنید."))}</p>`;
 }
 
-export function debtorsHtml(data: { customers: Array<{ id: string; name: string; phone: string | null; balance: number }>; customersTotal: number; suppliers: Array<{ id: string; name: string; phone: string | null; balance: number }>; suppliersTotal: number }): string {
+export function debtorsHtml(data: { customers: Array<{ id: string; name: string; phone: string | null; balance: number }>; customersTotal: number; suppliers: Array<{ id: string; name: string; phone: string | null; balance: number }>; suppliersTotal: number }, shop: ShopSettings = {}): string {
   const row = (item: { name: string; phone: string | null; balance: number }) => `<tr><td>${esc(item.name)}</td><td class="num">${esc(item.phone || "—")}</td><td class="num">${money(item.balance)}</td></tr>`;
   return `
-    <h1>ROSHAN · ${esc(t("گزارش بدهی‌ها"))}</h1>
+    <h1>${esc(shop.shopName?.trim() || t("فروشگاه من"))} · ${esc(t("گزارش بدهی‌ها"))}</h1>
     <p class="muted">${esc(fullDate(new Date()))}</p>
     <h2>${esc(t("مشتریان بدهکار (نسیه)"))} — ${esc(t("جمع"))}: ${money(data.customersTotal)}</h2>
     <table><thead><tr><th>${esc(t("نام"))}</th><th>${esc(t("تماس"))}</th><th>${esc(t("مانده"))}</th></tr></thead>

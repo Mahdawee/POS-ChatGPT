@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ابزار تنظیمات مالک — فروشگاه</title>
+<style>
+  :root {
+    --ink: #1d2b28; --muted: #5d7069; --line: #d9e3de; --card: #ffffff;
+    --brand: #0e7a5f; --brand-dark: #0a5c48; --brand-soft: #e6f4ef;
+    --warn: #b45309; --warn-soft: #fef3c7; --ok: #166534; --ok-soft: #dcfce7;
+    --danger: #b91c1c; --danger-soft: #fee2e2;
+    --shadow: 0 10px 30px rgba(13, 60, 47, 0.10), 0 2px 6px rgba(13, 60, 47, 0.06);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #f2f6f4; color: var(--ink);
+    font-family: "Vazirmatn", "Segoe UI", Tahoma, "Iranian Sans", sans-serif;
+    font-size: 14.5px; line-height: 1.9;
+  }
+  .page { max-width: 920px; margin: 0 auto; padding: 24px 18px 60px; }
+
+  header.hero {
+    background: linear-gradient(135deg, #0e7a5f 0%, #0a5c48 60%, #074435 100%);
+    color: #fff; border-radius: 18px; padding: 26px 28px; box-shadow: var(--shadow);
+    display: flex; gap: 18px; align-items: center; flex-wrap: wrap;
+  }
+  .hero .mark {
+    width: 58px; height: 58px; border-radius: 16px; background: rgba(255,255,255,.14);
+    display: grid; place-items: center; font-size: 26px; flex: none;
+    border: 1px solid rgba(255,255,255,.25);
+  }
+  .hero h1 { margin: 0; font-size: 21px; }
+  .hero p { margin: 2px 0 0; opacity: .85; font-size: 13px; }
+  .hero .spacer { flex: 1; }
+  .hero .file-state {
+    background: rgba(0,0,0,.22); border: 1px solid rgba(255,255,255,.22);
+    border-radius: 12px; padding: 8px 14px; font-size: 12.5px; max-width: 320px;
+  }
+  .file-state b { display: block; font-size: 13px; }
+
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin: 18px 0; }
+  button {
+    font: inherit; cursor: pointer; border-radius: 11px; padding: 10px 18px;
+    border: 1px solid var(--line); background: #fff; color: var(--ink);
+    transition: .15s; display: inline-flex; align-items: center; gap: 8px;
+  }
+  button:hover { border-color: var(--brand); color: var(--brand-dark); }
+  button.primary { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 600; }
+  button.primary:hover { background: var(--brand-dark); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.ghost { background: transparent; }
+
+  .grid { display: grid; grid-template-columns: 1fr 340px; gap: 16px; align-items: start; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 20px 22px; box-shadow: var(--shadow); margin-bottom: 16px;
+  }
+  .card h2 { margin: 0 0 4px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+  .card h2 .tag { font-size: 11px; font-weight: 400; color: var(--brand-dark); background: var(--brand-soft); border-radius: 99px; padding: 2px 10px; }
+  .card .sub { margin: 0 0 14px; color: var(--muted); font-size: 12.5px; }
+
+  .field { margin-bottom: 14px; }
+  .field label { display: flex; justify-content: space-between; align-items: baseline; font-weight: 600; font-size: 13.5px; margin-bottom: 5px; }
+  .field label .hint-label { font-weight: 400; color: var(--muted); font-size: 11.5px; }
+  .field input, .field textarea {
+    width: 100%; font: inherit; padding: 10px 12px; border-radius: 11px;
+    border: 1.5px solid var(--line); background: #fbfdfc; color: var(--ink);
+  }
+  .field textarea { resize: vertical; min-height: 64px; }
+  .field input:focus, .field textarea:focus { outline: none; border-color: var(--brand); background: #fff; }
+  .field .desc { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .field .row { display: flex; gap: 8px; }
+  .field .row input { flex: 1; }
+  .field .clear-btn { flex: none; padding: 6px 12px; font-size: 12px; border-radius: 9px; }
+  .counter { color: var(--muted); font-size: 11px; direction: ltr; }
+
+  .note { border-radius: 12px; padding: 12px 14px; font-size: 13px; margin: 12px 0; }
+  .note.info { background: var(--brand-soft); border: 1px solid #bcdcd2; }
+  .note.warn { background: var(--warn-soft); border: 1px solid #f3d9a4; }
+  .note.ok { background: var(--ok-soft); border: 1px solid #b7e4c0; }
+  .note b { display: block; margin-bottom: 2px; }
+
+  pre#jsonPreview {
+    background: #0f1f1b; color: #c9f0e2; border-radius: 12px; padding: 14px 16px;
+    font-size: 12.5px; direction: ltr; text-align: left; overflow: auto;
+    max-height: 300px; margin: 0; line-height: 1.7;
+  }
+  .path-box {
+    display: flex; align-items: center; gap: 8px; background: #f6f8f7;
+    border: 1px dashed var(--line); border-radius: 11px; padding: 9px 12px;
+    font-size: 12.5px; direction: ltr; text-align: left; justify-content: space-between;
+  }
+  .path-box code { font-family: Consolas, monospace; color: var(--brand-dark); }
+  .steps { margin: 8px 0 0; padding-right: 18px; color: var(--muted); font-size: 12.5px; }
+  .steps li { margin-bottom: 4px; }
+  kbd { background: #eef3f0; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 0 6px; font-size: 11.5px; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 26px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="hero">
+    <div class="mark">🛍️</div>
+    <div>
+      <h1>ابزار تنظیمات مالک</h1>
+      <p>نام برنامه، نام فروشگاه، نشانی، تلفن و پانوشت رسید — بی‌نیاز از باز کردن برنامه</p>
+    </div>
+    <div class="spacer"></div>
+    <div class="file-state" id="fileState"><b>فایلی باز نشده</b>برای آغاز، فایل <span dir="ltr">owner.json</span> را باز کنید یا فایل تازه بسازید.</div>
+  </header>
+
+  <div class="toolbar">
+    <button id="openBtn" class="primary">📂 گشودن owner.json…</button>
+    <button id="newBtn">✨ ساخت فایل تازه</button>
+    <button id="saveBtn" disabled>💾 ذخیره در همین فایل</button>
+    <button id="saveAsBtn" disabled>🔗 ذخیره در مسیر دیگر…</button>
+    <button id="downloadBtn">⬇️ دانلود فایل</button>
+    <input type="file" id="fallbackInput" accept=".json,application/json" class="hidden">
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="card">
+        <h2>🪪 هویت برنامه <span class="tag">مهم‌ترین تنظیم مالک</span></h2>
+        <p class="sub">نامی که همه‌جا دیده می‌شود: صفحهٔ ورود، منوی کناری، عنوان پنجره، رسیدها و نمایشگر مشتری. تا وقتی تعیین نکنید برنامه «روشن» نام دارد.</p>
+        <div class="field">
+          <label>نام برنامه <span class="hint-label">— مثلاً: فروشگاه نوری</span></label>
+          <div class="row">
+            <input id="appName" maxlength="40" placeholder="روشن (پیش‌فرض)">
+            <button class="clear-btn" data-clear="appName" title="خالی کردن = استفاده از پیش‌فرض">پاک</button>
+          </div>
+          <div class="desc">این فیلد تنها راه تغییر نامِ خودِ برنامه است؛ در تنظیمات داخل برنامه وجود ندارد. <span class="counter" data-counter="appName"></span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>🏪 مشخصات فروشگاه</h2>
+        <p class="sub">اگر این‌ها را پر کنید، بر تنظیماتِ داخل برنامه مقدم می‌شوند. خالی بگذارید تا از «تنظیمات فروشگاه» داخل خود برنامه استفاده شود.</p>
+        <div class="field">
+          <label>نام فروشگاه <span class="hint-label">— روی فاکتورها و رسیدها</span></label>
+          <div class="row">
+            <input id="shopName" maxlength="80" placeholder="مثلاً: نوری مارکت">
+            <button class="clear-btn" data-clear="shopName">پاک</button>
+          </div>
+          <div class="desc"><span class="counter" data-counter="shopName"></span></div>
+        </div>
+        <div class="field">
+          <label>نشانی <span class="hint-label">— زیر نام فروشگاه در سربرگ همهٔ برگه‌های چاپی</span></label>
+          <div class="row">
+            <input id="address" maxlength="160" placeholder="مثلاً: کابل، شهر نو، چهارراهی...">
+            <button class="clear-btn" data-clear="address">پاک</button>
+          </div>
+          <div class="desc"><span class="counter" data-counter="address"></span></div>
+        </div>
+        <div class="field">
+          <label>تلفن <span class="hint-label">— همراه نشانی چاپ می‌شود</span></label>
+          <div class="row">
+            <input id="phone" maxlength="40" placeholder="مثلاً: 0790 123 456" dir="ltr" style="text-align:right">
+            <button class="clear-btn" data-clear="phone">پاک</button>
+          </div>
+          <div class="desc"><span class="counter" data-counter="phone"></span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>🧾 پانوشت رسید</h2>
+        <p class="sub">متن پایین رسید و فاکتور — معمولاً پیام تشکر یا شعار فروشگاه.</p>
+        <div class="field">
+          <label>متن پانوشت</label>
+          <div class="row">
+            <textarea id="receiptFooter" maxlength="200" placeholder="مثلاً: از خرید شما سپاس‌گزاریم — جنس فروخته‌شده پس گرفته نمی‌شود"></textarea>
+          </div>
+          <div class="desc"><span class="counter" data-counter="receiptFooter"></span></div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h2>👁️ پیش‌نمایش فایل</h2>
+        <p class="sub">همان چیزی که ذخیره می‌شود. کلیدهای خالی اصلاً نوشته نمی‌شوند (یعنی «از تنظیمات خود برنامه»).</p>
+        <pre id="jsonPreview">{ }</pre>
+      </div>
+
+      <div class="card">
+        <h2>📌 فایل کجاست؟</h2>
+        <p class="sub">در پوشهٔ داده‌های برنامه، کنار <span dir="ltr">pos.db</span>:</p>
+        <div class="path-box"><code id="defaultPath">%APPDATA%\DarPOSERP\owner.json</code><button id="copyPath" class="ghost" style="padding:4px 10px;font-size:12px">کپی</button></div>
+        <div class="note warn"><b>خطای «can't open files in this folder because it contains system files»؟</b> یعنی خودِ این صفحه را از داخل پوشهٔ سیستمی (%APPDATA% و مانند آن) باز کرده‌اید؛ مرورگرها اجازهٔ باز کردن صفحه‌های داخل چنین پوشه‌هایی را نمی‌دهند. راه‌حل قطعی: <span dir="ltr">tool-run.bat</span> کنار همین ابزار را دابل‌کلیک کنید — صفحه را از <span dir="ltr">http://localhost</span> باز می‌کند و این خطا دیگر هرگز پیش نمی‌آید، هر جایی که پوشه باشد. یا فایل ابزار را روی دسکتاپ کپی کنید و از آنجا باز کنید. گشودن و ذخیرهٔ <span dir="ltr">owner.json</span> داخل پوشهٔ داده از داخل ابزار کاملاً مانعی ندارد — ممنوعیت فقط برای باز شدن خودِ صفحه از آن پوشه‌هاست. <b>owner.json را هرگز مستقیم دابل‌کلیک نکنید</b> — فقط از دکمهٔ «گشودن» همین ابزار باز می‌شود.</div>
+        <ol class="steps">
+          <li>در ویندوز <kbd>Win</kbd>+<kbd>R</kbd> را بزنید، <span dir="ltr">%APPDATA%\DarPOSERP</span> را بنویسید و Enter کنید.</li>
+          <li>اگر <span dir="ltr">owner.json</span> نبود، با همین ابزار «فایل تازه» بسازید و همان‌جا ذخیره کنید.</li>
+          <li>اگر برنامه با پوشهٔ سفارشی نصب شده، فایل را در همان پوشه‌ای بگذارید که <span dir="ltr">pos.db</span> در آن است.</li>
+          <li>نکته: در پنجرهٔ «گشودن owner.json…» می‌توانید مسیر <span dir="ltr">%APPDATA%\DarPOSERP</span> را در کادر نام فایل بچسبانید تا مستقیم همان‌جا بروید.</li>
+        </ol>
+        <div class="note info"><b>چرا فایل، نه تنظیمات برنامه؟</b> این فایل بیرون از داده‌های فروشگاه زندگی می‌کند؛ حتی «صفر کردن کامل داده‌ها» یا برگرداندن پشتیبان، هویت مالک را پاک نمی‌کند و لازم نیست هر بار دوباره تنظیمش کنید.</div>
+      </div>
+
+      <div class="card">
+        <h2>⏱️ کی اعمال می‌شود؟</h2>
+        <div class="note warn" style="margin-top:8px"><b>بدون نصب دوباره</b> برنامهٔ باز، تغییرات را ظرف حدود یک دقیقه خودش برمی‌دارد؛ اگر عجله دارید برنامه را یک بار ببندید و باز کنید. هر تغییر در سابقهٔ برنامه (Audit) هم ثبت می‌شود.</div>
+      </div>
+    </div>
+  </div>
+
+  <footer>این ابزار کاملاً آفلاین است؛ هیچ اطلاعاتی به جایی فرستاده نمی‌شود و فقط همان فایلی را می‌نویسد که خودتان باز کرده‌اید.</footer>
+</div>
+
+<script>
+"use strict";
+// ---------- state ----------
+var FIELDS = [
+  { id: "appName", max: 40 },
+  { id: "shopName", max: 80 },
+  { id: "address", max: 160 },
+  { id: "phone", max: 40 },
+  { id: "receiptFooter", max: 200 },
+];
+var fileHandle = null;   // File System Access handle (وقتی مرورگر پشتیبانی کند)
+var fileLoaded = false;  // آیا فایلی باز/ساخته شده؟
+var savedSnapshot = "";  // JSON آخرین وضعیت ذخیره‌شده
+
+var $ = function (id) { return document.getElementById(id); };
+var hasFsAccess = typeof window.showOpenFilePicker === "function";
+
+// ---------- helpers ----------
+function readForm() {
+  var out = {};
+  FIELDS.forEach(function (f) {
+    var value = $(f.id).value.trim();
+    if (value) out[f.id] = value;
+  });
+  return out;
+}
+function fillForm(obj) {
+  FIELDS.forEach(function (f) { $(f.id).value = (obj && typeof obj[f.id] === "string") ? obj[f.id] : ""; });
+}
+function currentJson() {
+  return JSON.stringify(readForm(), null, 2) + "\n";
+}
+function refresh() {
+  var json = currentJson();
+  $("jsonPreview").textContent = json;
+  var dirty = fileLoaded && json !== savedSnapshot;
+  $("saveBtn").disabled = !(fileLoaded && hasFsAccess && dirty);
+  $("saveAsBtn").disabled = !hasFsAccess || !fileLoaded;
+  var state = $("fileState");
+  if (!fileLoaded) {
+    state.innerHTML = "<b>فایلی باز نشده</b>برای آغاز، فایل <span dir=\"ltr\">owner.json</span> را باز کنید یا فایل تازه بسازید.";
+  } else {
+    state.innerHTML = "<b>" + (dirty ? "● تغییرات ذخیره نشده" : "✓ همه‌چیز ذخیره است") + "</b>" +
+      (fileHandle ? "در حال نوشتن در: <span dir=\"ltr\">" + escapeHtml(fileHandle.name) + "</span>" : "حالت دانلود — فایل را جای درست بگذارید");
+  }
+  FIELDS.forEach(function (f) {
+    var el = document.querySelector('[data-counter="' + f.id + '"]');
+    if (el) el.textContent = $(f.id).value.length + " / " + f.max;
+  });
+}
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+function toast(kind, title, text) {
+  var el = document.createElement("div");
+  el.className = "note " + kind;
+  el.innerHTML = "<b>" + escapeHtml(title) + "</b>" + escapeHtml(text);
+  el.style.position = "fixed"; el.style.bottom = "18px"; el.style.left = "18px";
+  el.style.zIndex = "50"; el.style.maxWidth = "380px"; el.style.boxShadow = "var(--shadow)";
+  document.body.appendChild(el);
+  setTimeout(function () { el.remove(); }, 6000);
+}
+
+// ---------- open / new ----------
+var PICKER_TYPES = [{ description: "Owner config (owner.json)", accept: { "application/json": [".json"] } }];
+
+async function openFromDisk() {
+  try {
+    var handles = await window.showOpenFilePicker({ types: PICKER_TYPES, multiple: false });
+    fileHandle = handles[0];
+    var text = await (await fileHandle.getFile()).text();
+    loadJsonText(text);
+  } catch (e) {
+    if (e && e.name === "AbortError") return; // کاربر لغو کرد
+    console.error(e);
+    toast("warn", "باز نشد", String(e && e.message ? e.message : e));
+  }
+}
+function loadJsonText(text) {
+  var parsed;
+  try { parsed = JSON.parse(text); }
+  catch (e) {
+    toast("warn", "فایل خوانا نبود", "محتوای فایل JSON معتبر نیست؛ فرم خالی آغاز می‌شود تا از نو بنویسید.");
+    parsed = {};
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) parsed = {};
+  fillForm(parsed);
+  fileLoaded = true;
+  savedSnapshot = currentJson();
+  refresh();
+}
+$("openBtn").addEventListener("click", function () {
+  if (hasFsAccess) { openFromDisk(); }
+  else { $("fallbackInput").click(); }
+});
+$("fallbackInput").addEventListener("change", async function () {
+  var file = this.files && this.files[0];
+  if (!file) return;
+  loadJsonText(await file.text());
+  this.value = "";
+});
+$("newBtn").addEventListener("click", function () {
+  fillForm({});
+  fileLoaded = true;
+  savedSnapshot = currentJson();
+  fileHandle = null;
+  refresh();
+  toast("ok", "فایل تازه آماده است", "مقادیر را پر کنید و با «ذخیره در مسیر دیگر…» یا «دانلود فایل» در پوشهٔ برنامه بگذاریدش.");
+});
+
+// ---------- save ----------
+async function saveToHandle() {
+  if (!fileHandle) return;
+  try {
+    var writable = await fileHandle.createWritable();
+    await writable.write(currentJson());
+    await writable.close();
+    savedSnapshot = currentJson();
+    refresh();
+    toast("ok", "ذخیره شد ✓", "برنامهٔ باز، تغییر را ظرف حدود یک دقیقه برمی‌دارد؛ یا برنامه را یک بار ببندید و باز کنید.");
+  } catch (e) {
+    console.error(e);
+    toast("warn", "ذخیره نشد", String(e && e.message ? e.message : e));
+  }
+}
+$("saveBtn").addEventListener("click", saveToHandle);
+$("saveAsBtn").addEventListener("click", async function () {
+  try {
+    fileHandle = await window.showSaveFilePicker({
+      suggestedName: "owner.json", types: PICKER_TYPES,
+    });
+    fileLoaded = true;
+    await saveToHandle();
+  } catch (e) {
+    if (e && e.name === "AbortError") return;
+    console.error(e);
+    toast("warn", "ذخیره نشد", String(e && e.message ? e.message : e));
+  }
+});
+$("downloadBtn").addEventListener("click", function () {
+  var blob = new Blob([currentJson()], { type: "application/json" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url; a.download = "owner.json";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  savedSnapshot = currentJson();
+  fileLoaded = true;
+  refresh();
+  toast("info", "فایل دانلود شد", "آن را در پوشهٔ داده‌های برنامه (کنار pos.db) با نام owner.json بگذارید.");
+});
+
+// ---------- misc ----------
+$("copyPath").addEventListener("click", async function () {
+  try { await navigator.clipboard.writeText("%APPDATA%\\DarPOSERP"); toast("ok", "کپی شد", "مسیر را در پنجرهٔ Run ویندوز بچسبانید."); }
+  catch { toast("warn", "کپی نشد", "مسیر را دستی بنویسید: %APPDATA%\\DarPOSERP"); }
+});
+FIELDS.forEach(function (f) {
+  $(f.id).addEventListener("input", refresh);
+});
+document.querySelectorAll("[data-clear]").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    $(btn.dataset.clear).value = "";
+    refresh();
+  });
+});
+window.addEventListener("beforeunload", function (e) {
+  if (fileLoaded && currentJson() !== savedSnapshot) { e.preventDefault(); e.returnValue = ""; }
+});
+if (!hasFsAccess) {
+  document.getElementById("saveBtn").classList.add("hidden");
+  document.getElementById("saveAsBtn").classList.add("hidden");
+}
+refresh();
+</script>
+</body>
+</html>

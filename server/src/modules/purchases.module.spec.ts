@@ -19,6 +19,31 @@ function setup() {
 }
 
 describe("Purchases", () => {
+  it("windows, date-filters and sorts the receipt history", async () => {
+    const findMany = jest.fn().mockResolvedValue([{ id: "p1" }]);
+    const count = jest.fn().mockResolvedValue(3);
+    const controller = new PurchasesController({ purchase: { findMany, count } } as never);
+    await controller.list("20", "10", "2026-01-01", "2026-01-31", "total", "asc");
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      skip: 20,
+      take: 10,
+      where: { createdAt: { gte: new Date("2026-01-01T00:00:00"), lte: new Date("2026-01-31T23:59:59.999") } },
+      orderBy: { total: "asc" },
+    }));
+    // No filters → the default newest-first window with an empty where.
+    await controller.list(undefined, undefined, undefined, undefined, "bogus", "asc");
+    expect(findMany).toHaveBeenLastCalledWith(expect.objectContaining({ where: {}, orderBy: { createdAt: "asc" } }));
+    // Unparsable dates are ignored instead of poisoning the query.
+    await controller.list(undefined, undefined, "not-a-date", "garbage", undefined, undefined);
+    expect(findMany).toHaveBeenLastCalledWith(expect.objectContaining({ where: {} }));
+    // { list, total } so the client can render real page numbers.
+    const result = await controller.list("0", "1");
+    expect(result).toEqual({ list: [{ id: "p1" }], total: 3 });
+    // Server-side search on supplier name.
+    await controller.list(undefined, undefined, undefined, undefined, undefined, undefined, "کابل");
+    expect(findMany).toHaveBeenLastCalledWith(expect.objectContaining({ where: expect.objectContaining({ OR: expect.arrayContaining([expect.objectContaining({ supplier: { name: { contains: "کابل" } } })]) }) }));
+  });
+
   it("increments stock, refreshes cost and records a PURCHASE movement in one transaction", async () => {
     const { controller, tx } = setup();
     await controller.create({ items: [{ productId: "product-1", quantity: 5, unitCost: 12 }], supplierId: "supplier-1" }, user);
@@ -38,11 +63,26 @@ describe("Purchases", () => {
     expect(tx.productBatch.create).toHaveBeenCalledTimes(1);
   });
 
+  it("rounds stray fractional counts of countable goods to whole units (round-30 stepper repair)", async () => {
+    const { controller, tx } = setup();
+    await controller.create({ items: [{ productId: "product-1", quantity: 5.002, unitCost: 12 }] }, user);
+    expect(tx.product.update).toHaveBeenCalledWith({ where: { id: "product-1" }, data: { stock: { increment: 5 }, cost: 12 } });
+    expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ quantity: 5, stockAfter: 7 }) }));
+  });
+
   it("merges duplicated lines for the same product before writing", async () => {
     const { controller, tx } = setup();
     await controller.create({ items: [{ productId: "product-1", quantity: 2, unitCost: 10 }, { productId: "product-1", quantity: 3, unitCost: 10 }] }, user);
     expect(tx.purchase.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ total: 50 }) }));
     expect(tx.product.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to buy a bundle — kits are assembled from components, their own stock is never real", async () => {
+    const { controller, tx } = setup();
+    tx.product.findMany.mockResolvedValue([{ ...product, isBundle: true }]);
+    await expect(controller.create({ items: [{ productId: "product-1", quantity: 1, unitCost: 10 }] }, user)).rejects.toThrow(/بسته است و خریدنی نیست/);
+    expect(tx.purchase.create).not.toHaveBeenCalled();
+    expect(tx.product.update).not.toHaveBeenCalled();
   });
 
   it("rejects a purchase containing an unknown or archived product", async () => {
@@ -79,6 +119,8 @@ function returnSetup() {
     purchase: { findUnique: jest.fn().mockResolvedValue({ supplierId: "supplier-1" }) },
     purchaseReturn: { create: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ id: "return-1", ...data })) },
     inventoryMovement: { create: jest.fn().mockResolvedValue({}) },
+    productBatch: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn().mockResolvedValue({}) },
+    serialUnit: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn().mockResolvedValue({}) },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
   };
   const prisma = { $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)) };
@@ -96,6 +138,20 @@ describe("Purchase returns", () => {
     expect(tx.auditLog.create).toHaveBeenCalled();
   });
 
+  it("releases the returned quantity from expiry lots — the linked receipt's lots first, then the rest", async () => {
+    const { controller, tx } = returnSetup();
+    tx.productBatch.findMany.mockImplementation(({ where }: { where: { purchaseId?: unknown } }) =>
+      Promise.resolve(where?.purchaseId === "purchase-1"
+        ? [{ id: "b-own", productId: "product-1", purchaseId: "purchase-1", remainingQty: 3, expiryDate: new Date("2027-01-01") }]
+        : [{ id: "b-other", productId: "product-1", remainingQty: 9, expiryDate: new Date("2026-06-01") }]));
+    await controller.createReturn({ purchaseId: "purchase-1", items: [{ productId: "product-1", quantity: 5 }] }, user);
+    // 3 units come off the linked receipt's own lot, the remaining 2 fall
+    // through to the product's other (older) lot — never silently skipped.
+    expect(tx.productBatch.update).toHaveBeenNthCalledWith(1, { where: { id: "b-own" }, data: { remainingQty: { decrement: 3 } } });
+    expect(tx.productBatch.update).toHaveBeenNthCalledWith(2, { where: { id: "b-other" }, data: { remainingQty: { decrement: 2 } } });
+    expect(tx.productBatch.update).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects a return larger than the stock on hand", async () => {
     const { controller, tx } = returnSetup();
     await expect(controller.createReturn({ items: [{ productId: "product-1", quantity: 9 }] }, user)).rejects.toBeInstanceOf(BadRequestException);
@@ -107,5 +163,81 @@ describe("Purchase returns", () => {
     const { controller, tx } = returnSetup();
     tx.product.findMany.mockResolvedValue([]);
     await expect(controller.createReturn({ items: [{ productId: "missing", quantity: 1 }] }, user)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("requires the exact serials of serialized units going back to the supplier and marks them RETURNED", async () => {
+    const { controller, tx } = returnSetup();
+    tx.product.findMany.mockResolvedValue([{ ...product, isSerialized: true }]);
+    tx.serialUnit = { findMany: jest.fn().mockResolvedValue([{ serial: "IMEI-1", productId: "product-1", status: "IN_STOCK" }, { serial: "IMEI-2", productId: "product-1", status: "IN_STOCK" }]), update: jest.fn().mockResolvedValue({}) };
+    // Missing serials → refused before anything is written.
+    await expect(controller.createReturn({ items: [{ productId: "product-1", quantity: 2 }] }, user)).rejects.toThrow(/سریال\/IMEI هر دستگاه/);
+    expect(tx.purchaseReturn.create).not.toHaveBeenCalled();
+    // Wrong count → refused too.
+    await expect(controller.createReturn({ items: [{ productId: "product-1", quantity: 2, serials: ["IMEI-1"] }] }, user)).rejects.toThrow(/سریال\/IMEI هر دستگاه/);
+    // A unit that already left the shop cannot be returned again.
+    tx.serialUnit.findMany.mockResolvedValue([{ serial: "IMEI-1", productId: "product-1", status: "IN_STOCK" }, { serial: "IMEI-2", productId: "product-1", status: "SOLD" }]);
+    await expect(controller.createReturn({ items: [{ productId: "product-1", quantity: 2, serials: ["IMEI-1", "IMEI-2"] }] }, user)).rejects.toThrow(/IMEI-2 در انبار نیست/);
+    expect(tx.purchaseReturn.create).not.toHaveBeenCalled();
+    // The happy path: both units leave the tracked stock for good.
+    tx.serialUnit.findMany.mockResolvedValue([{ serial: "IMEI-1", productId: "product-1", status: "IN_STOCK" }, { serial: "IMEI-2", productId: "product-1", status: "IN_STOCK" }]);
+    await controller.createReturn({ items: [{ productId: "product-1", quantity: 2, serials: ["IMEI-1", "IMEI-2"] }] }, user);
+    expect(tx.serialUnit.update).toHaveBeenCalledTimes(2);
+    expect(tx.serialUnit.update).toHaveBeenCalledWith(expect.objectContaining({ where: { serial: "IMEI-1" }, data: expect.objectContaining({ status: "RETURNED" }) }));
+  });
+});
+
+describe("voiding a purchase (ابطال رسید خرید)", () => {
+  const voidUser = { id: "user-9", username: "auditor", displayName: "Auditor", role: "ADMIN" as const };
+  function voidSetup(overrides: { purchase?: Record<string, unknown>; products?: Array<Record<string, unknown>>; serials?: Array<Record<string, unknown>>; batches?: Array<Record<string, unknown>>; returns?: Array<Record<string, unknown>> } = {}) {
+    const purchase = {
+      id: "purchase-1", invoiceNo: "INV-9", voidedAt: null,
+      items: [{ id: "pi-1", productId: "product-1", quantity: 5 }],
+      ...overrides.purchase,
+    };
+    const tx = {
+      purchase: { findUnique: jest.fn().mockResolvedValue(purchase), update: jest.fn().mockResolvedValue({}) },
+      purchaseReturn: { findMany: jest.fn().mockResolvedValue(overrides.returns || []) },
+      product: { findMany: jest.fn().mockResolvedValue(overrides.products || [{ id: "product-1", name: "چای", stock: 10 }]), update: jest.fn().mockImplementation(({ data }: { data: { stock: { decrement?: number } } }) => Promise.resolve({ stock: 10 - (data.stock.decrement ?? 0) })) },
+      serialUnit: { findMany: jest.fn().mockResolvedValue(overrides.serials || []), updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      productBatch: { findMany: jest.fn().mockResolvedValue(overrides.batches || []), update: jest.fn().mockResolvedValue({}) },
+      inventoryMovement: { create: jest.fn().mockResolvedValue({}) },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = { $transaction: jest.fn((work: (client: typeof tx) => unknown) => work(tx)) };
+    return { controller: new PurchasesController(prisma as never), tx };
+  }
+
+  it("takes the goods back out, records movements and the void trail", async () => {
+    const { controller, tx } = voidSetup();
+    await controller.voidPurchase("purchase-1", { reason: "رسید تکراری بود" }, voidUser);
+    expect(tx.product.update).toHaveBeenCalledWith({ where: { id: "product-1" }, data: { stock: { decrement: 5 } }, select: { stock: true } });
+    expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "ADJUSTMENT_OUT", quantity: -5, note: expect.stringContaining("رسید تکراری") }) }));
+    expect(tx.purchase.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ voidedBy: "auditor", voidReason: "رسید تکراری بود" }) }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: "VOID_PURCHASE" }) }));
+  });
+
+  it("refuses when the goods were already sold (stock too low)", async () => {
+    const { controller, tx } = voidSetup({ products: [{ id: "product-1", name: "چای", stock: 2 }] });
+    await expect(controller.voidPurchase("purchase-1", { reason: "دلیل" }, voidUser)).rejects.toThrow(/کافی نیست/);
+    expect(tx.product.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses when a serialized unit already left the shelf, or an expiry lot was consumed, or a return exists", async () => {
+    const serialGone = voidSetup({ serials: [{ serial: "S1", status: "SOLD" }] });
+    await expect(serialGone.controller.voidPurchase("purchase-1", { reason: "دلیل" }, voidUser)).rejects.toThrow(/سریال‌دار/);
+    const lotEaten = voidSetup({ batches: [{ id: "b1", initialQty: 5, remainingQty: 2 }] });
+    await expect(lotEaten.controller.voidPurchase("purchase-1", { reason: "دلیل" }, voidUser)).rejects.toThrow(/تا حدی/);
+    const hasReturn = voidSetup({ returns: [{ id: "r1" }] });
+    await expect(hasReturn.controller.voidPurchase("purchase-1", { reason: "دلیل" }, voidUser)).rejects.toThrow(/برگشت کالا/);
+  });
+
+  it("exhausts the receipt's expiry lots and voids its serial units when all is intact", async () => {
+    const { controller, tx } = voidSetup({
+      serials: [{ serial: "S1", status: "IN_STOCK" }, { serial: "S2", status: "IN_STOCK" }],
+      batches: [{ id: "b1", initialQty: 5, remainingQty: 5 }],
+    });
+    await controller.voidPurchase("purchase-1", { reason: "دلیل" }, voidUser);
+    expect(tx.productBatch.update).toHaveBeenCalledWith({ where: { id: "b1" }, data: { remainingQty: 0 } });
+    expect(tx.serialUnit.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "VOID" } }));
   });
 });

@@ -5,7 +5,7 @@ import { createBackup, pruneAutoBackups } from "../backup";
 import { PrismaService } from "../prisma.service";
 
 @Controller("cash")
-class CashController {
+export class CashController {
   constructor(private readonly prisma: PrismaService) {}
 
   private async snapshot(sessionId: string) {
@@ -15,6 +15,12 @@ class CashController {
     // Mixed payments contribute their cash part; a session is linked to a
     // sale exactly when that part is non-zero.
     const cashSalesAmount = session.sales.reduce((total, sale) => total + sale.cashPart, 0);
+    // A CLOSED shift is history: its expected cash was computed and stored at
+    // the moment of closing, and that number must never drift afterwards. A
+    // sale voided (or a refund issued) AFTER the drawer closed posts no
+    // movement to it, so re-deriving the sum today would contradict the
+    // money that was actually counted that night.
+    if (session.status === "CLOSED") return { ...session, cashSalesAmount, sales: undefined };
     return { ...session, expectedCash: session.openingCash + manual + cashSalesAmount, cashSalesAmount, sales: undefined };
   }
 
@@ -57,8 +63,8 @@ class CashController {
       const [cashIn, cashOut, partsAgg, returnsAgg, invoiceCount] = await Promise.all([
         tx.cashMovement.aggregate({ where: { cashSessionId: session.id, type: "IN" }, _sum: { amount: true } }),
         tx.cashMovement.aggregate({ where: { cashSessionId: session.id, type: "OUT" }, _sum: { amount: true } }),
-        tx.sale.aggregate({ _sum: { cashPart: true, mobilePart: true, creditPart: true }, where: { cashSessionId: session.id } }),
-        tx.saleReturn.aggregate({ _sum: { total: true, creditRelief: true }, where: { sale: { cashSessionId: session.id } } }),
+        tx.sale.aggregate({ _sum: { cashPart: true, mobilePart: true, creditPart: true, walletPart: true }, where: { cashSessionId: session.id } }),
+        tx.saleReturn.aggregate({ _sum: { total: true, creditRelief: true, cashAmount: true, walletRefund: true }, where: { sale: { cashSessionId: session.id } } }),
         tx.sale.count({ where: { cashSessionId: session.id } }),
       ]);
       const expected = session.openingCash + (cashIn._sum.amount || 0) - (cashOut._sum.amount || 0) + (partsAgg._sum.cashPart || 0);
@@ -86,8 +92,13 @@ class CashController {
         cashSales: partsAgg._sum.cashPart || 0,
         mobileSales: partsAgg._sum.mobilePart || 0,
         creditSales: partsAgg._sum.creditPart || 0,
+        walletSales: partsAgg._sum.walletPart || 0,
         invoiceCount,
         returnsTotal: (returnsAgg._sum.total || 0) + (returnsAgg._sum.creditRelief || 0),
+        // Refunds that went back over mobile money: total minus the parts
+        // that left the drawer or returned to the wallet. Tracked so the
+        // settlement stays visible instead of vanishing from the books.
+        mobileRefunds: Math.max(0, (returnsAgg._sum.total || 0) - (returnsAgg._sum.cashAmount || 0) - (returnsAgg._sum.walletRefund || 0)),
         expected,
         counted: dto.countedCash,
         difference: dto.countedCash - expected,
@@ -98,7 +109,10 @@ class CashController {
     // must never invalidate the already-committed close, so it is best effort.
     try {
       const path = await createBackup(this.prisma, "auto");
-      pruneAutoBackups(10);
+      // Prune the folder the auto backup was actually written to (a custom
+      // backupDir from Settings would otherwise grow without bound).
+      const customDir = (await this.prisma.setting.findUnique({ where: { key: "backupDir" } }))?.value;
+      pruneAutoBackups(10, customDir);
       await this.prisma.auditLog.create({ data: { actor: user.username, action: "CREATE_BACKUP", entity: "Database", detail: path } });
     } catch (error) {
       await this.prisma.auditLog.create({ data: { actor: user.username, action: "BACKUP_FAILED", entity: "Database", detail: String(error) } }).catch(() => undefined);

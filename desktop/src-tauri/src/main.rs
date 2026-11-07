@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -91,6 +91,18 @@ fn cap_log(path: &Path) {
 }
 
 /// Tauri resolves `current_exe()` through `Path::canonicalize()`, which on
+/// Best-effort primary LAN IPv4 of this machine: a UDP "connect" only picks
+/// the route (no packet leaves the machine), then local_addr names it.
+/// Returns None without a default route — callers must treat that as "unknown".
+#[cfg(not(debug_assertions))]
+fn primary_lan_ip() -> Option<String> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    let address = socket.local_addr().ok()?;
+    let ip = address.ip().to_string();
+    if ip.starts_with("127.") { None } else { Some(ip) }
+}
+
 /// Windows returns verbatim paths (`\\?\C:\...`). Node.js 22+ crashes with
 /// `EISDIR: illegal operation on a directory, lstat 'C:'` when its main
 /// script path carries that prefix, so convert the resolved runtime path
@@ -121,6 +133,21 @@ fn report_startup_failure(api_log: &Path, message: &str) {
     windows_dialog::error(&full);
     #[cfg(not(windows))]
     eprintln!("{full}");
+}
+
+/// Asks the API already listening on 127.0.0.1:4317 which mode it bound to.
+/// Offline shops have no internet route, so the LAN-IP probe above returns
+/// nothing there — this check keeps server mode from silently failing.
+#[cfg(not(debug_assertions))]
+fn local_api_reports_server_mode() -> Option<bool> {
+    let mut stream = TcpStream::connect(("127.0.0.1", 4317)).ok()?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let request = b"GET /api/auth/health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    stream.write_all(request).ok()?;
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).ok()?;
+    let text = String::from_utf8_lossy(&response);
+    Some(text.contains("\"mode\":\"server\""))
 }
 
 /// Starts the bundled Node.js API in the background.
@@ -186,6 +213,27 @@ fn start_bundled_api(app: tauri::AppHandle, closing: Arc<AtomicBool>) {
     // Another copy of the app (or a leftover API) is already serving the port:
     // reuse it instead of spawning a Node child that would die with EADDRINUSE.
     if TcpStream::connect(("127.0.0.1", 4317)).is_ok() {
+        // Server-mode trap: a leftover single-computer instance is bound to
+        // 127.0.0.1 only, so other registers would never reach it even though
+        // this app "reused" a listening API. Probe the LAN address too and
+        // tell the user plainly instead of failing silently.
+        if network_mode == "server" {
+            // Reachable on the LAN address → the running API is already in
+            // server mode. Offline machines get no LAN IP from the 8.8.8.8
+            // trick, so fall back to asking the API itself what it bound to.
+            let lan_ok = primary_lan_ip()
+                .map(|lan_ip| TcpStream::connect((lan_ip.as_str(), 4317)).is_ok())
+                .unwrap_or(false);
+            if !lan_ok && !local_api_reports_server_mode().unwrap_or(false) {
+                let message = "An older single-computer instance of the API is still listening on 127.0.0.1 only, so network-server mode cannot take effect. Close the app fully (end any leftover node.exe in Task Manager) or restart Windows, then open the app again.";
+                append_log(&api_log, message);
+                report_startup_failure(
+                    &api_log,
+                    "برای فعال شدن حالت «سرور شبکه»، یک نمونهٔ قدیمی برنامهٔ تک‌کامپیوتری هنوز در پس‌زمینه فعال است.\n\nبرنامه را کاملاً ببندید و در Task Manager هر پروسهٔ node.exe باقی‌مانده را پایان دهید (یا ویندوز را ری‌استارت کنید)، سپس برنامه را دوباره باز کنید.",
+                );
+                return;
+            }
+        }
         append_log(&api_log, "Port 4317 is already in use; reusing the existing local API.");
         return;
     }
@@ -266,7 +314,7 @@ fn start_bundled_api(app: tauri::AppHandle, closing: Arc<AtomicBool>) {
         report_startup_failure(&api_log, "The local POS API did not start within 180 seconds.");
         return;
     }
-    append_log(&api_log, "Bundled API is ready on 127.0.0.1:4317.");
+    append_log(&api_log, &format!("Bundled API is ready on {api_host}:4317."));
     if closing.load(Ordering::SeqCst) {
         let _ = child.kill();
         let _ = child.wait();
@@ -382,13 +430,7 @@ fn quick_print(printer: String, text: String) -> Result<(), String> {
 /// can be copied to a USB stick or another machine.
 #[tauri::command]
 fn save_backup_file(filename: String, data_base64: String) -> Result<String, String> {
-    let safe: String = filename
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-' || *c == '_')
-        .collect();
-    if safe.is_empty() {
-        return Err("invalid backup file name".into());
-    }
+    let safe = sanitize_file_name(&filename)?;
     let documents = std::env::var_os("USERPROFILE")
         .map(|home| std::path::PathBuf::from(home).join("Documents"))
         .or_else(|| std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join("Documents")))
@@ -404,6 +446,136 @@ fn save_backup_file(filename: String, data_base64: String) -> Result<String, Str
     Ok(target.to_string_lossy().into_owned())
 }
 
+/// Keeps a caller-supplied file name safe for the file system: ASCII letters,
+/// digits and the separators we generate ourselves; anything else is dropped.
+fn sanitize_file_name(filename: &str) -> Result<String, String> {
+    let safe: String = filename
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-' || *c == '_')
+        .collect();
+    if safe.is_empty() {
+        return Err("invalid file name".into());
+    }
+    Ok(safe)
+}
+
+/// Saves an exported report (CSV text or the product-import template) into the
+/// user's Downloads folder and returns the full path. The webview cannot run
+/// browser-style downloads (the `download` attribute on a blob link is a
+/// no-op in WebView2/wry), so file exports the user asks for go through this
+/// command instead; a same-named file from an earlier export is overwritten.
+#[tauri::command]
+fn save_export_file(app: tauri::AppHandle, filename: String, data_base64: String) -> Result<String, String> {
+    let safe = sanitize_file_name(&filename)?;
+    let bytes = base64_decode(&data_base64)?;
+    if bytes.is_empty() {
+        return Err("nothing to save".into());
+    }
+    let dir = update_download_dir(&app);
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let target = dir.join(safe);
+    std::fs::write(&target, bytes).map_err(|error| error.to_string())?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
+/// Where update installers are saved: the user's Downloads folder when it
+/// exists (so the setup file stays available for a re-install), otherwise the
+/// shared app-data directory.
+fn update_download_dir(app: &tauri::AppHandle) -> std::path::PathBuf {
+    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+        let downloads = std::path::PathBuf::from(home).join("Downloads");
+        if downloads.is_dir() {
+            return downloads;
+        }
+    }
+    app_data_directory(app)
+}
+
+/// Downloads the given GitHub release asset (the NSIS setup .exe) into the
+/// Downloads folder and returns the saved path. Uses PowerShell's
+/// Invoke-WebRequest (always present on Windows 10/11, follows the release
+/// redirect) so no new Rust dependency is needed; the URL and version are
+/// validated before anything runs.
+#[tauri::command]
+fn download_update(app: tauri::AppHandle, url: String, version: String) -> Result<String, String> {
+    if !url.starts_with("https://github.com/") {
+        return Err("unsupported download url".into());
+    }
+    let safe_version: String = version
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '.')
+        .collect();
+    if safe_version.is_empty() {
+        return Err("invalid version".into());
+    }
+    let dir = update_download_dir(&app);
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        return Err(error.to_string());
+    }
+    let target = dir.join(format!("DarPOS-Setup-{safe_version}.exe"));
+    // Args are passed as separate process arguments (no shell string), so the
+    // URL and path cannot inject commands.
+    let status = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Invoke-WebRequest",
+            // Windows PowerShell 5.1 parses responses with the IE engine by
+            // default, which hangs on machines without a configured IE;
+            // -UseBasicParsing avoids that (a no-op on PowerShell 7+).
+            "-UseBasicParsing",
+            "-Uri",
+            url.as_str(),
+            "-OutFile",
+        ])
+        .arg(&target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|error| error.to_string())?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&target);
+        return Err("download failed".into());
+    }
+    // A real installer is several MB; anything smaller is an error page that
+    // was saved as .exe.
+    let size = std::fs::metadata(&target).map(|meta| meta.len()).unwrap_or(0);
+    if size < 1_000_000 {
+        let _ = std::fs::remove_file(&target);
+        return Err("downloaded file is not the installer".into());
+    }
+    Ok(target.to_string_lossy().into_owned())
+}
+
+/// Launches a downloaded installer, stops the bundled API, and exits the app
+/// so setup can replace the running files. Only files inside our own update
+/// folder are accepted — the frontend can never run arbitrary paths.
+#[tauri::command]
+fn install_update(app: tauri::AppHandle, state: tauri::State<ApiProcess>, path: String) -> Result<(), String> {
+    let resolved = match std::fs::canonicalize(&path) {
+        Ok(path) => path,
+        Err(error) => return Err(error.to_string()),
+    };
+    let folder = match std::fs::canonicalize(update_download_dir(&app)) {
+        Ok(path) => path,
+        Err(error) => return Err(error.to_string()),
+    };
+    if !resolved.starts_with(&folder) || !resolved.extension().map(|ext| std::ffi::OsStr::eq_ignore_ascii_case(ext, "exe")).unwrap_or(false) {
+        return Err("installer is not in the update folder".into());
+    }
+    // Spawn first: if the installer cannot start we keep running untouched.
+    Command::new(&resolved)
+        .stdin(Stdio::null())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    // Same cleanup as closing the window, so the new version starts its own
+    // API instead of reusing this one.
+    stop_api(&state);
+    std::process::exit(0)
+}
+
 fn main() {
     let child_state = ApiProcess(Arc::new(Mutex::new(None)));
     let state_for_exit = child_state.clone();
@@ -412,7 +584,7 @@ fn main() {
     let closing_for_exit = closing.clone();
     tauri::Builder::default()
         .manage(child_state)
-        .invoke_handler(tauri::generate_handler![set_network_mode, open_url, quick_print, save_backup_file])
+        .invoke_handler(tauri::generate_handler![set_network_mode, get_network_mode, open_url, quick_print, save_backup_file, save_export_file, download_update, install_update])
         .setup(move |app| {
             #[cfg(not(debug_assertions))]
             {
@@ -462,6 +634,17 @@ fn set_network_mode(app: tauri::AppHandle, mode: String) -> Result<(), String> {
         return Err("unsupported network mode".into());
     }
     std::fs::write(dir.join("network-mode"), normalized).map_err(|error| error.to_string())
+}
+
+/// Reads the persisted LAN mode so the Settings page can restore the saved
+/// selection ("" when nothing was saved yet). Without this the dropdown
+/// always fell back to «تک‌کامپیوتر» after an app restart.
+#[tauri::command]
+fn get_network_mode(app: tauri::AppHandle) -> Result<String, String> {
+    match std::fs::read_to_string(app_data_directory(&app).join("network-mode")) {
+        Ok(content) => Ok(content.trim().to_string()),
+        Err(_) => Ok(String::new()),
+    }
 }
 
 /// Opens a URL in the system browser (used for release downloads).

@@ -175,6 +175,28 @@ describe("LicenseService state machine", () => {
     expect(again.trialDaysLeft).toBe(started.trialDaysLeft);
   });
 
+  it("does not rewrite the license clock on every request (single-writer contention)", async () => {
+    // ساعت تازه است → تیک‌های پیاپی در پنجرهٔ ۶۰ ثانیه نباید هیچ بنویسند؛
+    // قبلاً هر درخواست یک UPDATE خودکار روی SQLite می‌زد که با تراکنش‌های
+    // اصلی بر سر قفلِ تک‌نویسنده تصادم می‌کرد.
+    const { svc, db } = serviceWith({ licenseText: null, maxSeenAt: new Date(), trialStartedAt: new Date(Date.now() - 3600000), tamperFlag: false });
+    await svc.status(); // تیک اول: شادو نبوده → یک flush می‌سازد
+    const afterFirst = db.updates.length;
+    await svc.status();
+    await svc.status();
+    await svc.status();
+    expect(db.updates.length).toBe(afterFirst);
+  });
+
+  it("refreshes the high-water mark only when it is meaningfully stale", async () => {
+    // ساعتِ بالایی ۵ دقیقه عقب مانده → دقیقاً یک تازه‌سازی، نه بیشتر.
+    const { svc, db } = serviceWith({ licenseText: null, maxSeenAt: new Date(Date.now() - 5 * 60000), trialStartedAt: new Date(Date.now() - 3600000), tamperFlag: false });
+    await svc.status();
+    expect(db.updates.length).toBe(1);
+    await svc.status();
+    expect(db.updates.length).toBe(1); // ساعت تازه شد → تیک بعدی ساکت
+  });
+
   it("a wiped database cannot restart the trial — the shadow file remembers", async () => {
     // Trial started 20 days ago on this machine: status seals that start
     // into the shadow file outside the database.

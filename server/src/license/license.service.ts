@@ -16,6 +16,15 @@ import {
 import { licensePublicKey } from "./license-public-key";
 import { machineKey } from "./machine-key";
 
+/**
+ * حداقل فاصلهٔ دو نوشتنِ ساعتِ لایسنس (LicenseState + فایل مهروموم‌شده).
+ * tick روی هر درخواست اجرا می‌شود؛ بدون این سقف، هر درخواست یک UPDATE
+ * خودکار روی SQLite می‌زد که با تراکنش‌های اصلی بر سر قفلِ تک‌نویسنده
+ * تصادم می‌کرد (تا ۱۵ ثانیه معطلی). مهلتِ کشفِ برگرداندن ساعت ۲۴ ساعت
+ * است، پس دیرکردِ ۶۰ ثانیه‌ایِ high-water بی‌خطر است.
+ */
+export const LICENSE_FLUSH_INTERVAL_MS = 60_000;
+
 export type LicenseStatus = {
   /** Whether the app currently lets the till operate. */
   ok: boolean;
@@ -121,17 +130,30 @@ export class LicenseService {
     const rolledBack = highWater - now.getTime() > ROLLBACK_GRACE_MS;
     const tamper = row.tamperFlag || (shadow?.tamperFlag ?? false) || rolledBack;
     const licenseId = this.payloadOf(row)?.licenseId ?? shadow?.licenseId ?? null;
-    if (
-      effectiveNow.getTime() !== dbMax ||
-      tamper !== row.tamperFlag ||
-      (trialStartedAt ? trialStartedAt.getTime() : null) !== dbTrial
-    ) {
+    // ─── تازه‌سازی کم‌بسامد ساعتِ لایسنس ───
+    // این تیک روی «هر» درخواست اجرا می‌شود. اگر هر بار بنویسیم، یعنی یک
+    // UPDATE خودکار به ازای هر GET/POST — و روی SQLite محلی که فقط یک
+    // نویسنده دارد، این نوشتن با تراکنش‌های اصلی (فروش، ثبت کالا/مشتری)
+    // روی همان قفل واحد تصادم می‌کند و در بدترین حالت هر دو تا سقف
+    // socket_timeout (۱۵ ثانیه) معطل می‌شوند. maxSeenAt فقط سدِ
+    // برگرداندنِ ساعت است و مهلتش ۲۴ ساعت است؛ پس تازه‌سازی هر ۶۰ ثانیه
+    // هیچ دری به تقلب نمی‌گشاید: برگرداندن جدیِ ساعت همچنان در نخستین
+    // تیکِ بعد از آن کشف و همان‌جا مهر می‌شود.
+    const shadowTrialAt = shadow?.trialStartedAt?.getTime() ?? null;
+    const wantTrialAt = trialStartedAt ? trialStartedAt.getTime() : null;
+    const flushDue =
+      highWater - dbMax > LICENSE_FLUSH_INTERVAL_MS || // عقب‌ماندگی معنادارِ ساعتِ بالایی
+      shadowMax < dbMax || // شادو از دیتابیس عقب مانده (نوشتنِ قبلی نیمه‌کاره)
+      (shadow?.tamperFlag ?? false) !== tamper ||
+      shadowTrialAt !== wantTrialAt ||
+      (shadow?.licenseId ?? null) !== licenseId;
+    if (flushDue || tamper !== row.tamperFlag || wantTrialAt !== dbTrial) {
       await this.prisma.licenseState.update({
         where: { id: "1" },
         data: { maxSeenAt: effectiveNow, tamperFlag: tamper, ...(trialStartedAt ? { trialStartedAt } : {}) },
       }).catch(() => undefined);
+      this.writeShadow(machine, effectiveNow, tamper, licenseId, trialStartedAt);
     }
-    this.writeShadow(machine, effectiveNow, tamper, licenseId, trialStartedAt);
     return { effectiveNow, tamper, trialStartedAt };
   }
 

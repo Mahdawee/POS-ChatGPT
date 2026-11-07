@@ -1,0 +1,14 @@
+/* Vazirmatn variable font (100–900), vendored into the repo so the app
+ * builds on any machine without re-installing node modules. The @font-face
+ * mirrors the npm package's own "Vazirmatn-Variable-font-face.css".
+ * `styles.css` asks for Vazirmatn at :root — before this file existed the
+ * family was never bundled and every screen silently fell back to Segoe UI. */
+@font-face {
+  font-family: "Vazirmatn";
+  src: url("./assets/Vazirmatn-Variable.woff2") format("woff2 supports variations"),
+       url("./assets/Vazirmatn-Variable.woff2") format("woff2-variations"),
+       url("./assets/Vazirmatn-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
