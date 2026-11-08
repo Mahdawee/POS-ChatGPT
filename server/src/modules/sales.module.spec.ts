@@ -8,8 +8,20 @@ const cashier = { id: "user-2", username: "cashier", displayName: "Cashier", rol
 const product = { id: "product-1", name: "چای", sku: "T-1", stock: 2, price: 10, cost: 6, isActive: true, backstock: 0, reserved: 0, isBundle: false, isSerialized: false };
 
 function setup(stock = 2) {
+  // قفسهٔ شبیه‌سازی‌شده برای کسر اتمیِ شرطی (UPDATE … WHERE stock >= qty):
+  // پارامترها به ترتیب ظاهر در SQL می‌آیند — (quantity, id, quantity) — و
+  // mock فقط با دو مقدار نخست کار می‌کند. findUnique هم همین قفسه را
+  // می‌خواند تا stockAfter رکورد cardex با دیتابیس واقعی هم‌خوان بماند.
+  const shelf = new Map<string, number>([[product.id, stock]]);
   const tx = {
-    product: { findMany: jest.fn().mockResolvedValue([{ ...product, stock }]), update: jest.fn().mockResolvedValue({}) },
+    $executeRaw: jest.fn(async (_strings: TemplateStringsArray, ...values: unknown[]) => {
+      const [quantity, id] = values as [number, string];
+      const base = shelf.get(id) ?? 0;
+      if (base < quantity) return 0;
+      shelf.set(id, base - quantity);
+      return 1;
+    }),
+    product: { findMany: jest.fn().mockResolvedValue([{ ...product, stock }]), update: jest.fn().mockResolvedValue({}), findUnique: jest.fn(async ({ where }: { where: { id: string } }) => ({ id: where.id, stock: shelf.get(where.id) ?? 0 })) },
     customer: { findUnique: jest.fn().mockResolvedValue(null), update: jest.fn().mockResolvedValue({}) },
     sale: { aggregate: jest.fn().mockResolvedValue({ _sum: { creditPart: null } }), create: jest.fn().mockResolvedValue({ id: "sale-1", receiptNo: "POS-1", items: [] }), findUnique: jest.fn().mockResolvedValue(null) },
     saleReturn: { aggregate: jest.fn().mockResolvedValue({ _sum: { creditRelief: null } }) },
@@ -29,7 +41,7 @@ function setup(stock = 2) {
     sale: { findUnique: jest.fn().mockResolvedValue(null), findFirst: jest.fn(), findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
   };
   const service = new CheckoutService(prisma as never);
-  return { controller: new SalesController(prisma as never, service), service, tx, prisma };
+  return { controller: new SalesController(prisma as never, service), service, tx, prisma, shelf };
 }
 
 describe("POS checkout", () => {
@@ -79,7 +91,7 @@ describe("POS checkout", () => {
     const { service, tx } = setup(2);
     await expect(service.checkout({ items: [{ productId: "product-1", quantity: 3 }], paymentMethod: "CASH", amountPaid: 30 }, admin)).rejects.toBeInstanceOf(BadRequestException);
     expect(tx.sale.create).not.toHaveBeenCalled();
-    expect(tx.product.update).not.toHaveBeenCalled();
+    expect(tx.$executeRaw).not.toHaveBeenCalled();
     expect(tx.inventoryMovement.create).not.toHaveBeenCalled();
   });
 
@@ -98,7 +110,9 @@ describe("POS checkout", () => {
     await service.checkout({ items: [{ productId: "product-1", quantity: 2 }], paymentMethod: "CASH", amountPaid: 25 }, admin);
     expect(tx.sale.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ subtotal: 20, total: 20, change: 5, cashPart: 20, mobilePart: 0, creditPart: 0 }) }));
     expect(tx.sale.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ items: { create: [{ productId: "product-1", name: "چای", sku: "T-1", quantity: 2, unitPrice: 10, unitCost: 6, discount: 0, lineTotal: 20 }] } }) }));
-    expect(tx.product.update).toHaveBeenCalledWith({ where: { id: "product-1" }, data: { stock: { decrement: 2 } } });
+    // کسر اتمیِ شرطی: یک UPDATE واحد که فقط وقتی می‌نشیند که قفسه هنوز
+    // کالا دارد — پادزهر قطعیِ فروش همزمانِ همان قلم روی دستگاه دیگر.
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
     expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "SALE", quantity: -2, stockAfter: 3 }) }));
   });
 
@@ -173,16 +187,18 @@ describe("POS checkout", () => {
   });
 
   it("sells a kit's serialized components through the serials on the bundle line", async () => {
-    const { service, tx } = setup();
+    const { service, tx, shelf } = setup();
     const phone = { ...product, id: "phone-1", name: "گوشی", isSerialized: true, stock: 5 };
     const kit = { ...product, id: "bundle-1", name: "بستهٔ گوشی", sku: "B-1", isBundle: true, price: 150, stock: 0 };
+    shelf.set("phone-1", 5);
     tx.product.findMany.mockResolvedValue([kit]);
     tx.bundleComponent.findMany.mockResolvedValue([{ bundleId: "bundle-1", componentId: "phone-1", quantity: 1, component: phone }]);
     tx.serialUnit.findMany.mockResolvedValue([{ serial: "IMEI-1", productId: "phone-1", status: "IN_STOCK" }]);
     tx.sale.create.mockResolvedValue({ id: "sale-1", receiptNo: "POS-1", items: [{ id: "sale-item-1", productId: "bundle-1" }] });
     await service.checkout({ items: [{ productId: "bundle-1", quantity: 1, serials: ["IMEI-1"] }], paymentMethod: "CASH" }, admin);
-    // The component leaves the shelf…
-    expect(tx.product.update).toHaveBeenCalledWith({ where: { id: "phone-1" }, data: { stock: { decrement: 1 } } });
+    // The component leaves the shelf (atomic conditional update on phone-1)…
+    expect(shelf.get("phone-1")).toBe(4);
+    expect(tx.inventoryMovement.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ productId: "phone-1", type: "SALE", quantity: -1, stockAfter: 4 }) }));
     // …and its unit flips to SOLD against the bundle's sale line, so a later
     // sale-return can find it and the serial list never shows a phantom unit.
     expect(tx.serialUnit.update).toHaveBeenCalledWith({ where: { serial: "IMEI-1" }, data: expect.objectContaining({ status: "SOLD", saleItemId: "sale-item-1" }) });
@@ -196,7 +212,7 @@ describe("POS checkout", () => {
     tx.bundleComponent.findMany.mockResolvedValue([{ bundleId: "bundle-1", componentId: "phone-1", quantity: 1, component: phone }]);
     await expect(service.checkout({ items: [{ productId: "bundle-1", quantity: 1 }], paymentMethod: "CASH" }, admin)).rejects.toThrow(/اجزای سریال‌دار هر بسته را وارد کنید/);
     expect(tx.sale.create).not.toHaveBeenCalled();
-    expect(tx.product.update).not.toHaveBeenCalled();
+    expect(tx.$executeRaw).not.toHaveBeenCalled();
     expect(tx.serialUnit.update).not.toHaveBeenCalled();
   });
 

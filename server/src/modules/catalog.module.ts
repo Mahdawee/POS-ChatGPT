@@ -58,6 +58,24 @@ export function decodeProductImage(data: string): DecodedProductImage {
   return { mime: isWebp ? "image/webp" : isJpeg ? "image/jpeg" : "image/png", bytes };
 }
 
+/** ساخت کلید «تازگی» صندوق از یک ردیف شمارش/بیشینه — تابع خالص و تست‌شدنی.
+ *  مقادیر تاریخ ممکن است از درایور به شکل Date یا رشته بیایند؛ هر دو به یک
+ *  شکل نرمال می‌شوند تا مقایسهٔ رشته‌ای بین دو فراخوانی معتبر بماند. */
+export function composePosVersion(row: {
+  moveCount: number | bigint; moveMax: string | null;
+  productCount: number | bigint; productMaxUpdated: string | Date | null;
+  cashCount: number | bigint; cashMaxOpened: string | Date | null; cashMaxClosed: string | Date | null;
+  customerCount: number | bigint; customerMaxUpdated: string | Date | null;
+}): string {
+  const key = (value: unknown) => (value instanceof Date ? value.toISOString() : String(value ?? ""));
+  return [
+    "movements", String(row.moveCount), key(row.moveMax),
+    "products", String(row.productCount), key(row.productMaxUpdated),
+    "cash", String(row.cashCount), key(row.cashMaxOpened), key(row.cashMaxClosed),
+    "customers", String(row.customerCount), key(row.customerMaxUpdated),
+  ].join("|");
+}
+
 @Controller("categories")
 class CategoriesController {
   constructor(private readonly prisma: PrismaService) {}
@@ -92,6 +110,29 @@ export class ProductsController {
    *  پاسخِ این نسخه چند برابر کوچک‌تر است و صندوق سریع‌تر باز می‌شود.
    *  شمارهٔ سریال‌ها لازم نیست — صندوق آنها را جداگانه و فقط برای کالاهای
    *  سریال‌دارِ داخل سبد می‌خواند (/inventory/serials). */
+  /** کلید «تازگی» داده‌های صندوق برای حالت چند-دستگاهی (شبکه). هر تغییری در
+   *  کاتالوگ/موجودی، شمارش انبار (cardex)، وضعیت صندوق پول یا مشتری‌ها این
+   *  کلید را عوض می‌کند؛ دستگاه‌های دیگر هر چند ثانیه همین یک رشتهٔ سبک را
+   *  می‌پرسند و فقط وقتی عوض شده باشد کل لیست را دوباره می‌گیرند — پس
+   *  کاهش موجودیِ فروش روی یک دستگاه، روی دستگاه دیگر هم دیده می‌شود. */
+  @Get("pos/version") async posVersion() {
+    const rows = await this.prisma.$queryRaw<Array<{
+      moveCount: number | bigint; moveMax: string | null;
+      productCount: number | bigint; productMaxUpdated: string | Date | null;
+      cashCount: number | bigint; cashMaxOpened: string | Date | null; cashMaxClosed: string | Date | null;
+      customerCount: number | bigint; customerMaxUpdated: string | Date | null;
+    }>>`SELECT
+        (SELECT COUNT(*) FROM InventoryMovement) AS moveCount,
+        (SELECT COALESCE(MAX(id), '') FROM InventoryMovement) AS moveMax,
+        (SELECT COUNT(*) FROM Product) AS productCount,
+        (SELECT COALESCE(MAX(updatedAt), '') FROM Product) AS productMaxUpdated,
+        (SELECT COUNT(*) FROM CashSession) AS cashCount,
+        (SELECT COALESCE(MAX(openedAt), '') FROM CashSession) AS cashMaxOpened,
+        (SELECT COALESCE(MAX(closedAt), '') FROM CashSession) AS cashMaxClosed,
+        (SELECT COUNT(*) FROM Customer) AS customerCount,
+        (SELECT COALESCE(MAX(updatedAt), '') FROM Customer) AS customerMaxUpdated`;
+    return { version: composePosVersion(rows[0]) };
+  }
   @Get("pos") posList() {
     return this.prisma.product.findMany({
       where: { isActive: true },

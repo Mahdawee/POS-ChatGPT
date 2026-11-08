@@ -35,9 +35,22 @@ function checkoutSetup(products: ProductFixture[], options: { customer?: Record<
   const productFindMany = jest.fn().mockImplementation(({ where }: { where?: { id?: { in: string[] } } }) =>
     Promise.resolve(where?.id?.in ? products.filter((row) => where.id!.in.includes(row.id)) : products));
   const tx = {
+    // کسر اتمیِ شرطی (UPDATE … WHERE stock >= qty) روی همان fixture ها؛
+    // پارامترها به ترتیب ظاهر در SQL می‌آیند: (quantity, id, quantity).
+    $executeRaw: jest.fn(async (_strings: TemplateStringsArray, ...values: unknown[]) => {
+      const [quantity, id] = values as [number, string];
+      const row = products.find((p) => p.id === id) as { id: string; stock: number } | undefined;
+      if (!row || row.stock < quantity) return 0;
+      row.stock -= quantity;
+      return 1;
+    }),
     product: {
       findMany: productFindMany,
       update: jest.fn().mockResolvedValue({}),
+      findUnique: jest.fn(async ({ where }: { where: { id: string } }) => {
+        const row = products.find((p) => p.id === where.id) as { stock?: number } | undefined;
+        return { id: where.id, stock: row?.stock ?? 0 };
+      }),
     },
     customer: {
       findUnique: jest.fn().mockResolvedValue(options.customer === undefined ? null : options.customer),
@@ -100,12 +113,14 @@ describe("Round 16 — checkout wallet/tier/bundle/serial/reserved", () => {
     const sugar = product({ id: "product-2", name: "شکر", sku: "S-1", stock: 4 });
     const { service, tx } = checkoutSetup([bundle, tea, sugar], { components: [{ bundleId: "bundle-1", componentId: "product-1", quantity: 2 }, { bundleId: "bundle-1", componentId: "product-2", quantity: 1 }] });
     await service.checkout({ items: [{ productId: "bundle-1", quantity: 3 }], paymentMethod: "CASH" }, admin);
-    const updates = (tx.product.update as jest.Mock).mock.calls.map((call) => call[0]);
-    expect(updates).toEqual(expect.arrayContaining([
-      expect.objectContaining({ where: { id: "product-1" }, data: { stock: { decrement: 6 } } }),
-      expect.objectContaining({ where: { id: "product-2" }, data: { stock: { decrement: 3 } } }),
-    ]));
-    expect(updates.find((call) => call.where?.id === "bundle-1")).toBeUndefined();
+    // کسر اتمی: هر فراخوانی $executeRaw پارامترهای (quantity, id, quantity)
+    // می‌گیرد — مجموع کسرِ هر کالا باید دقیقاً اجزای ۳ بسته باشد و خودِ
+    // بسته (که موجودی ندارد) هرگز کسر نشود.
+    const taken = new Map<string, number>();
+    for (const call of (tx.$executeRaw as jest.Mock).mock.calls) taken.set(call[2] as string, (taken.get(call[2] as string) || 0) + (call[1] as number));
+    expect(taken.get("product-1")).toBe(6);
+    expect(taken.get("product-2")).toBe(3);
+    expect(taken.has("bundle-1")).toBe(false);
   });
 
   it("rejects a bundle sale when a component is short", async () => {

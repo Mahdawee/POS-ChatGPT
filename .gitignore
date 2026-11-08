@@ -14,3 +14,6 @@ tools/license/keys/*.key
 # License panel ledger (issued licenses stay on the vendor machine)
 tools/license/ledger.json
 .prisma-engines/
+
+# E2E run artifact (screenshot written by ui-test.mjs)
+e2e/last-run.png

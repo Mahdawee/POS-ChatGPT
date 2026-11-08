@@ -46,16 +46,45 @@ export function serverOrigin(): string {
   try { return localStorage.getItem(SERVER_KEY) || ""; } catch { return ""; }
 }
 
+// اگر شبکه یا سرور پاسخ ندهد (اتصال نیمه‌گشوده که «معلق» می‌ماند)، برنامهٔ
+// صندوق نباید برای همیشه روی «در حال ورود…» بماند. هر درخواست بعد از مهلت
+// زیر قطع می‌شود؛ درخواست‌های بی‌خطر (GET و ورود/بازخوانی نشست) یک‌بار
+// خودکار تکرار می‌شوند. درخواست‌های تغییردهنده (فروش، پرداخت، …) هرگز
+// خودکار تکرار نمی‌شوند — خطر ثبت دوباره وجود دارد (تکرار دستی کاربر با
+// کلید Idempotency سرور ایمن است).
+const REQUEST_TIMEOUT_MS = 20000;
+
+const isRetryable = (path: string, method?: string) =>
+  !method || method === "GET" || path.endsWith("/auth/login") || path.endsWith("/auth/me");
+
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem("darpos-token");
-  const response = await fetch(`${apiBase()}${path}`, {
-    ...init,
-    headers: {
-      ...(init.body ? { "Content-Type": "application/json" } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...init.headers,
-    },
-  });
+  const attemptFetch = async (): Promise<Response> => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      return await fetch(`${apiBase()}${path}`, {
+        ...init,
+        signal: controller.signal,
+        headers: {
+          ...(init.body ? { "Content-Type": "application/json" } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...init.headers,
+        },
+      });
+    } finally { window.clearTimeout(timer); }
+  };
+  let response: Response;
+  try {
+    response = await attemptFetch();
+  } catch {
+    if (!isRetryable(path, init.method)) throw new Error(t("ارتباط با سرور برقرار نشد؛ اتصال شبکه را بررسی کنید."));
+    try {
+      response = await attemptFetch();
+    } catch {
+      throw new Error(t("ارتباط با سرور برقرار نشد؛ اتصال شبکه را بررسی کنید."));
+    }
+  }
   if (response.status === 401 && !path.endsWith("/auth/login")) window.dispatchEvent(new CustomEvent("darpos:session-expired"));
   // 402 = unlicensed/expired/tampered: the app switches to the license screen.
   if (response.status === 402) {

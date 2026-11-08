@@ -290,18 +290,21 @@ export class CheckoutService {
       // Bundles deduct each component (movement + FEFO batches); simple
       // products deduct themselves. Reserved quantities are never touched
       // here — reservations are released by the order workflow itself.
-      // `runningStock` keeps movement rows honest when the same simple
-      // product appears as a component of several bundles: every decrement
-      // continues from where the previous one left the shelf.
-      const runningStock = new Map<string, number>();
-      const stockNow = (product: StockishProduct): number => {
-        const current = runningStock.has(product.id) ? runningStock.get(product.id)! : product.stock;
-        return current;
-      };
+      // The friendly pre-check above ran on rows read at the start of this
+      // transaction; in network mode another device can sell the same shelf
+      // inside that gap. This single conditional UPDATE is therefore the
+      // hard, atomic guarantee: it only lands while the shelf still holds
+      // the goods, so the database can never go negative from two devices
+      // selling the last item at the same instant. The race loser gets a
+      // clear message instead of a silently corrupted shelf.
       const deduct = async (product: StockishProduct, quantity: number, note?: string): Promise<void> => {
-        const stockAfter = stockNow(product) - quantity;
-        runningStock.set(product.id, stockAfter);
-        await tx.product.update({ where: { id: product.id }, data: { stock: { decrement: quantity } } });
+        const affected = await tx.$executeRaw`UPDATE Product SET stock = stock - ${quantity} WHERE id = ${product.id} AND stock >= ${quantity}`;
+        if (affected === 0) {
+          const shelf = await tx.product.findUnique({ where: { id: product.id }, select: { stock: true } });
+          throw new BadRequestException(`موجودی «${product.name}» در همین لحظه کافی نیست — احتمالاً همین کالا همزمان روی دستگاه دیگری فروخته شده است. باقیماندهٔ فعلی: ${shelf?.stock ?? 0}. فهرست صندوق را دوباره بارگذاری کنید و دوباره امتحان کنید.`);
+        }
+        const after = await tx.product.findUnique({ where: { id: product.id }, select: { stock: true } });
+        const stockAfter = after?.stock ?? product.stock - quantity;
         await tx.inventoryMovement.create({ data: { productId: product.id, type: "SALE", quantity: -quantity, stockAfter, reference: receiptNo, note } });
         // Best-effort FEFO batch deduction for expiry warnings; never gates
         // the sale and silently stops when tracked batches run out.

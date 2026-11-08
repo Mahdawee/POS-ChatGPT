@@ -15,7 +15,7 @@
 //   E2E_EXECUTABLE_PATH=…             مسیر کرومیوم جایگزین (اگر مرورگر
 //                                     پیش‌فرض playwright در دسترس نیست)
 //
-// سناریوها (۳۳ چک در اجرای سالم؛ چک ۳۴م فقط در صورت خطای غیرمنتظره): ورود، گارد تغییر اجباری گذرواژهٔ پیش‌فرض در نصب تازه،
+// سناریوها (۳۷ چک در اجرای سالم؛ چک اضافی فقط در صورت خطای غیرمنتظره): ورود، گارد تغییر اجباری گذرواژهٔ پیش‌فرض در نصب تازه،
 // ثبت سریع کالا با کد خودکار، اسکن بارکد با گوشیِ شبیه‌سازی‌شده (پل PIN)
 // داخل فرم کالا، «ذخیره و کالای بعدی»، Enter، لیست سبک صندوق
 // (/products/pos)، کد خودکار مشتری، اسکن خارج از صندوق (نباید بی‌سروصدا
@@ -61,6 +61,10 @@ const consoleErrors = [];
 page.on("console", (msg) => { if (msg.type() === "error" && !isBenign(msg.text())) consoleErrors.push(msg.text().slice(0, 120)); });
 page.on("pageerror", (err) => consoleErrors.push(`pageerror: ${String(err.message).slice(0, 120)}`));
 page.on("response", (res) => { if (res.status() >= 500) consoleErrors.push(`HTTP ${res.status()} ${res.url().slice(0, 90)}`); });
+// ابزار تشخیصی بخش «دومین دستگاه»: مرحلهٔ فعلی و رخدادهای شبکهٔ صفحهٔ B —
+// بیرون از try تعریف می‌شوند تا catch هم بتواندشان در پیام شکست بیاورد.
+let bStage = "";
+const bNet = [];
 try {
   // ── ۱) ورود (دیتابیس تازه: اول صفحهٔ لایسنس می‌آید)
   await page.goto(UI);
@@ -302,6 +306,141 @@ try {
   const salesList = Array.isArray(salesBody) ? salesBody : (salesBody.list ?? []);
   check("فروش: فاکتور در فهرست فروش‌ها ثبت شد", salesList.length >= 1 && salesList.some((s) => Number(s.total) === 145), `${salesList.length} فاکتور`);
 
+  // ── ۱۳) حالت شبکه: همگام‌سازی زندهٔ موجودی بین دو دستگاه (سرور و مشتری).
+  // دستگاه دوم = صفحهٔ مرورگر دوم با حافظهٔ جدا، دقیقاً مثل لپ‌تاپ مشتری.
+  // پرداخت موبایلی تا صندوقِ بسته هم مزاحم نشود.
+  const normalizeDigits = (s) => s.replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)));
+  const syncName = `همگام-زنده ${String(Date.now()).slice(-5)}`;
+  const syncCreated = await fetch(`${API}/products`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders }, body: JSON.stringify({ name: syncName, price: 100, stock: 5, cost: 60 }) });
+  if (!syncCreated.ok) {
+    check("شبکه: کالای همگام‌سازی ساخته شد", false, `HTTP ${syncCreated.status}`);
+  } else {
+    const syncProduct = await syncCreated.json();
+    const versionBefore = await fetch(`${API}/products/pos/version`, { headers: authHeaders }).then((r) => r.json()).then((b) => b.version).catch(() => null);
+    let synced = false;
+    let bStock = "";
+    const pageB = await browser.newPage();
+    // ردیابی کامل شبکهٔ هر دو صفحه در سطح مرورگر (CDP): برخلاف Performance
+    // API، درخواست‌های در جریان (in-flight) را هم نشان می‌دهد — برای تشخیص
+    // این که POST لاگین اصلاً از مرورگر خارج شده، چه زمانی جواب گرفته و
+    // poller اسکن گوشی (pull) مال کدام صفحه است (initiator + مهر زمانی).
+    const mkCdp = async (pg) => {
+      const session = await pg.context().newCDPSession(pg);
+      const events = [];
+      const inflight = new Map();
+      let t0 = 0;
+      session.on("Network.requestWillBeSent", (p) => {
+        if (!p.request.url.includes("/api/")) return;
+        if (!t0) t0 = p.timestamp;
+        const short = p.request.url.replace(/^https?:\/\/[^/]+/, "").slice(0, 46);
+        const at = (p.timestamp - t0).toFixed(1);
+        inflight.set(p.requestId, short);
+        events.push(`+${at}s → ${p.request.method} ${short} [${p.initiator?.type || "?"}]`);
+      });
+      session.on("Network.responseReceived", (p) => { if (inflight.has(p.requestId)) events.push(`+${(p.timestamp - t0).toFixed(1)}s ←${p.response.status} ${inflight.get(p.requestId)}`); });
+      session.on("Network.loadingFinished", (p) => inflight.delete(p.requestId));
+      session.on("Network.loadingFailed", (p) => { if (inflight.has(p.requestId)) { events.push(`✗${p.errorText} ${inflight.get(p.requestId)}`); inflight.delete(p.requestId); } });
+      await session.send("Network.enable");
+      return { events, inflight };
+    };
+    const cdpB = await mkCdp(pageB);
+    const cdpA = await mkCdp(page);
+    pageB.on("console", (m) => { if (m.type() === "error") bNet.push(`CONSOLE ${m.text().slice(0, 110)}`); });
+    pageB.on("requestfailed", (r) => bNet.push(`FAIL ${r.method()} ${r.url().slice(-60)} ${r.failure()?.errorText || ""}`));
+    pageB.on("response", (r) => { if (r.status() >= 400) bNet.push(`HTTP ${r.status()} ${r.url().slice(-60)}`); });
+    try {
+      bStage = "B:goto";
+      await pageB.goto(UI);
+      bStage = "B:login-form";
+      await pageB.waitForSelector("form.login-form", { timeout: 20000 });
+      await pageB.locator("form.login-form input").nth(0).fill("admin");
+      await pageB.locator("form.login-form input").nth(1).fill("E2ePass12345");
+      // صبر تا دکمهٔ ورود فعال شود (بررسی سلامت سرور باید تمام کرده باشد)
+      bStage = "B:wait-enabled";
+      await pageB.waitForFunction(() => { const b = document.querySelector("button.login-submit"); return Boolean(b && !b.disabled); }, null, { timeout: 15000 });
+      bStage = "B:login-click";
+      const loginStart = Date.now();
+      await pageB.locator("button.login-submit").click();
+      bStage = "B:login-sent";
+      // ورود دستگاه دوم در اجراهای کامل قبلی «بسیار کند» بود (~۱۵-۲۰ث). اکنون
+      // ثانیه‌به‌ثانیه نظارت می‌شود: فرم چه زمانی برداشته می‌شود و در همان لحظه
+      // چه درخواست‌هایی در جریان (in-flight) هستند.
+      const watch = [];
+      let formGone = false;
+      for (let i = 0; i < 30; i++) {
+        await pageB.waitForTimeout(1000);
+        const up = await pageB.locator("form.login-form").count();
+        watch.push(`t${i + 1}:${up ? "فرم" : "خالی"}(${Array.from(cdpB.inflight.values()).join(",").slice(0, 70) || "—"})`);
+        if (!up) { formGone = true; break; }
+      }
+      const loginMs = Date.now() - loginStart;
+      if (!formGone) {
+        const errText = ((await pageB.locator(".form-error").textContent().catch(() => "")) || "").trim();
+        if (errText) {
+          // رمز عوض‌شده رد شد → رمز اولیه (تکرارپذیری روی دیتابیس‌های مختلف)
+          bStage = "B:login-retry-old-pass";
+          await pageB.locator("form.login-form input").nth(1).fill("admin12345");
+          await pageB.locator("button.login-submit").click();
+          await pageB.locator("form.login-form").waitFor({ state: "detached", timeout: 30000 });
+        } else {
+          const bState = await pageB.evaluate(() => ({
+            busy: (document.querySelector("button.login-submit")?.textContent || "").includes("…"),
+            token: Boolean(localStorage.getItem("darpos-token")),
+            serverOrigin: localStorage.getItem("darpos-server-origin") || "—",
+            scanClient: localStorage.getItem("darpos:scan-client-id") || "—",
+            sw: navigator.serviceWorker.controller?.scriptURL || "بدون SW",
+          }));
+          console.log("PAGEB-DIAG >>> نگارش: " + watch.join(" | "));
+          console.log("PAGEB-DIAG >>> CDP-B: " + cdpB.events.slice(-25).join(" | "));
+          console.log("PAGEB-DIAG >>> CDP-A: " + cdpA.events.slice(-15).join(" | "));
+          throw new Error(`ورود دستگاه دوم حتی پس از ۳۰ ثانیه برنگشت (busy=${bState.busy}؛ token=${bState.token}؛ origin=${bState.serverOrigin}؛ scan=${bState.scanClient}؛ sw=${bState.sw}؛ گیرکرده=${Array.from(cdpB.inflight.values()).join(",") || "—"})`);
+        }
+      }
+      check("شبکه: ورود دستگاه دوم به‌موقع (زیر ۵ ثانیه)", loginMs < 5000, `${loginMs}ms`);
+      if (loginMs >= 3000) {
+        console.log(`PAGEB-SLOW-LOGIN >>> ${loginMs}ms — نگارش: ${watch.join(" | ")}`);
+        console.log(`PAGEB-SLOW-LOGIN >>> CDP-B: ${cdpB.events.slice(-30).join(" | ")}`);
+        console.log(`PAGEB-SLOW-LOGIN >>> CDP-A: ${cdpA.events.slice(-15).join(" | ")}`);
+      }
+      bStage = "B:login-done";
+      await pageB.getByRole("button", { name: "صندوق فروش", exact: false }).first().click();
+      await pageB.waitForTimeout(1200);
+      const tile = pageB.locator(".pos-product").filter({ hasText: syncName });
+      await tile.waitFor({ state: "visible", timeout: 10000 });
+      // دستگاه اول می‌فروشد (از API — مثل فروش روی لپ‌تاپ سرور):
+      const sold = await fetch(`${API}/sales`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `e2e-sync-${Date.now()}`, ...authHeaders }, body: JSON.stringify({ items: [{ productId: syncProduct.id, quantity: 2 }], paymentMethod: "MOBILE", amountPaid: 200 }) });
+      // دستگاه دوم باید ظرف چند ثانیه (پرس‌وپرس ۵ثانیه‌ایِ نسخهٔ تازگی)
+      // موجودی جدید را بی‌هیچ F5 نشان دهد: ۵ → ۳
+      for (let i = 0; i < 24; i++) {
+        await pageB.waitForTimeout(500);
+        bStock = (await tile.locator("small").textContent().catch(() => "")) || "";
+        if (/^3/.test(normalizeDigits(bStock))) { synced = true; break; }
+      }
+      check("شبکه: فروش روی دستگاه اول، موجودی دستگاه دوم را همان لحظه کم می‌کند (بدون F5)", synced, `کاشی دستگاه دوم: «${bStock.trim().slice(0, 16)}»، فروش HTTP ${sold.status}${bNet.length ? `؛ شبکهٔ B: ${bNet.slice(0, 3).join(" | ")}` : ""}`);
+    } finally {
+      await pageB.close();
+    }
+    const versionAfter = await fetch(`${API}/products/pos/version`, { headers: authHeaders }).then((r) => r.json()).then((b) => b.version).catch(() => null);
+    check("شبکه: کلید تازگی (/products/pos/version) با هر تغییر عوض می‌شود", Boolean(versionBefore && versionAfter && versionBefore !== versionAfter));
+  }
+
+  // ── فروش همزمانِ دو دستگاه روی آخرین عدد موجودی: فقط یکی باید قبول شود
+  // و موجودی هرگز منفی نمی‌شود (تضمین UPDATE شرطی روی سرور).
+  const raceCreated = await fetch(`${API}/products`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders }, body: JSON.stringify({ name: `آخرین-عدد ${String(Date.now()).slice(-5)}`, price: 50, stock: 1, cost: 20 }) });
+  if (!raceCreated.ok) {
+    check("شبکه: کالای تست رقابت ساخته شد", false, `HTTP ${raceCreated.status}`);
+  } else {
+    const raceProduct = await raceCreated.json();
+    const raceBody = JSON.stringify({ items: [{ productId: raceProduct.id, quantity: 1 }], paymentMethod: "MOBILE", amountPaid: 50 });
+    const [r1, r2] = await Promise.all([
+      fetch(`${API}/sales`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `e2e-race-a-${Date.now()}`, ...authHeaders }, body: raceBody }),
+      fetch(`${API}/sales`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `e2e-race-b-${Date.now()}`, ...authHeaders }, body: raceBody }),
+    ]);
+    const okCount = [r1, r2].filter((r) => r.ok).length;
+    const raceStock = (await fetch(`${API}/products/pos`, { headers: authHeaders }).then((r) => r.json())).find((p) => p.id === raceProduct.id);
+    check("شبکه: فروش همزمان روی آخرین عدد — فقط یک دستگاه قبول، موجودی صفر و هرگز منفی", okCount === 1 && raceStock && raceStock.stock === 0, `قبول‌شده: ${okCount}، موجودی: ${raceStock?.stock}`);
+  }
+
   // ── ۱۳) ممیزی انتشار: همهٔ صفحه‌ها بدون خطای کنسول/کرش/5xx باز می‌شوند
   const navPages = ["نمای کلی", "صندوق فروش", "کالاها", "دسته‌بندی‌ها", "مشتریان", "تأمین‌کنندگان", "خریدها", "سفارش‌ها", "موجودی انبار", "فروش‌ها", "گزارش‌ها", "مدیریت صندوق", "دخل و خرج", "کاربران", "لاگ فعالیت", "تنظیمات"];
   for (const navName of navPages) {
@@ -325,7 +464,7 @@ try {
 
   check("ممیزی انتشار: بدون خطای کنسول/کرش/5xx در کل اجرا", consoleErrors.length === 0, consoleErrors.slice(0, 3).join(" | "));
 } catch (e) {
-  check("اجرای کامل سناریو (خطای غیرمنتظره: " + e.message.split("\n").slice(0, 4).join(" | ").slice(0, 160) + ")", false);
+  check("اجرای کامل سناریو (خطای غیرمنتظره: " + e.message.split("\n").slice(0, 4).join(" | ").slice(0, 200) + ")", false, [bStage ? `مرحله: ${bStage}` : "", ...bNet.slice(0, 4)].filter(Boolean).join(" | "));
 } finally {
   await page.screenshot({ path: "e2e/last-run.png" }).catch(() => {});
   await browser.close();
