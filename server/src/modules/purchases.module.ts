@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { AdminOnly, CurrentUser, SessionUser } from "../auth";
 import { PurchaseDto, PurchaseReturnDto, VoidDto } from "../dto";
 import { PrismaService } from "../prisma.service";
+import { roundQty } from "../quantities";
 import type { Prisma } from "@prisma/client";
 
 /** ثبت خرید و ورود کالا به انبار */
@@ -122,7 +123,11 @@ export class PurchasesController {
           throw new BadRequestException(`«${product.name}» کالای سریال‌دار نیست؛ فیلد سریال را خالی بگذارید.`);
         }
         await tx.product.update({ where: { id: productId }, data: { stock: { increment: quantity }, cost: unitCost } });
-        await tx.inventoryMovement.create({ data: { productId, type: "PURCHASE", quantity, stockAfter: product.stock + quantity, reference: purchase.id, note: "ورود خرید" } });
+        // خرید وزنی: نتیجه در دیتابیس گرد می‌شود تا خطای ممیز شناور
+        // (۰٫۱+۰٫۲=۰٫۳۰۰۰…۴) در موجودی ننشیند و بعداً فروشِ آخرین موجودی
+        // را به‌اشتباه رد نکند.
+        await tx.$executeRaw`UPDATE Product SET stock = ROUND(stock, 3) WHERE id = ${productId}`;
+        await tx.inventoryMovement.create({ data: { productId, type: "PURCHASE", quantity, stockAfter: roundQty(product.stock + quantity), reference: purchase.id, note: "ورود خرید" } });
         // Deliveries with their own expiry date are tracked as batches so the
         // dashboard can warn per-lot (FEFO) instead of per-product.
         if (expiryDate) {
@@ -178,7 +183,8 @@ export class PurchasesController {
       for (const [productId, quantity] of need) {
         const product = byId.get(productId)!;
         const updated = await tx.product.update({ where: { id: productId }, data: { stock: { decrement: quantity } }, select: { stock: true } });
-        await tx.inventoryMovement.create({ data: { productId, type: "ADJUSTMENT_OUT", quantity: -quantity, stockAfter: updated.stock, note: `ابطال رسید خرید${purchase.invoiceNo ? ` ${purchase.invoiceNo}` : ""} — ${dto.reason}` } });
+        await tx.$executeRaw`UPDATE Product SET stock = ROUND(stock, 3) WHERE id = ${productId}`;
+        await tx.inventoryMovement.create({ data: { productId, type: "ADJUSTMENT_OUT", quantity: -quantity, stockAfter: roundQty(updated.stock), note: `ابطال رسید خرید${purchase.invoiceNo ? ` ${purchase.invoiceNo}` : ""} — ${dto.reason}` } });
       }
       // The expiry lots of this receipt are exhausted (rows stay as trail).
       for (const batch of batches) await tx.productBatch.update({ where: { id: batch.id }, data: { remainingQty: 0 } });
@@ -268,7 +274,8 @@ export class PurchaseReturnsController {
       for (const row of rows) {
         const product = productMap.get(row.productId)!;
         await tx.product.update({ where: { id: row.productId }, data: { stock: { decrement: row.quantity } } });
-        await tx.inventoryMovement.create({ data: { productId: row.productId, type: "PURCHASE_RETURN", quantity: row.quantity, stockAfter: product.stock - row.quantity, reference: returnNo, note: "برگشت خرید" } });
+        await tx.$executeRaw`UPDATE Product SET stock = ROUND(stock, 3) WHERE id = ${row.productId}`;
+        await tx.inventoryMovement.create({ data: { productId: row.productId, type: "PURCHASE_RETURN", quantity: row.quantity, stockAfter: roundQty(product.stock - row.quantity), reference: returnNo, note: "برگشت خرید" } });
         // Expiry lots must give the returned units back too, or the expiry
         // dashboard keeps warning about stock that physically left the shop
         // (and FEFO sale deductions would look for units that are not there).

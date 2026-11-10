@@ -54,6 +54,17 @@ export function serverOrigin(): string {
 // کلید Idempotency سرور ایمن است).
 const REQUEST_TIMEOUT_MS = 20000;
 
+/** خطای «اتصال به سرور برقرار نشد» — هاردنینگ request() شکست شبکه را به
+ *  TypeError خام رها نمی‌کند، بلکه به این کلاس می‌پیچد. صف آفلاین و صندوق
+ *  فروش با همین کلاس تشخیص می‌دهند که فاکتور باید «پارک» شود و بعداً
+ *  دوباره ارسال، نه اینکه مثل خطای سرور برای همیشه دور انداخته شود. */
+export class ConnectionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConnectionError";
+  }
+}
+
 const isRetryable = (path: string, method?: string) =>
   !method || method === "GET" || path.endsWith("/auth/login") || path.endsWith("/auth/me");
 
@@ -78,11 +89,11 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   try {
     response = await attemptFetch();
   } catch {
-    if (!isRetryable(path, init.method)) throw new Error(t("ارتباط با سرور برقرار نشد؛ اتصال شبکه را بررسی کنید."));
+    if (!isRetryable(path, init.method)) throw new ConnectionError(t("ارتباط با سرور برقرار نشد؛ اتصال شبکه را بررسی کنید."));
     try {
       response = await attemptFetch();
     } catch {
-      throw new Error(t("ارتباط با سرور برقرار نشد؛ اتصال شبکه را بررسی کنید."));
+      throw new ConnectionError(t("ارتباط با سرور برقرار نشد؛ اتصال شبکه را بررسی کنید."));
     }
   }
   if (response.status === 401 && !path.endsWith("/auth/login")) window.dispatchEvent(new CustomEvent("darpos:session-expired"));
@@ -223,11 +234,16 @@ export function removeFromOfflineQueue(key: string): void {
  *  server rejected it for good. */
 export async function replayOfflineSale(sale: OfflineSale): Promise<{ ok: boolean; retry: boolean; message?: string }> {
   try {
-    await post("sales", sale.payload, { "Idempotency-Key": sale.key });
+    // مسیر باید با «/» شروع شود — apiBase() خودش با «/api» تمام می‌شود و
+    // بدون اسلش، درخواست به «/apisales» می‌رفت: پخش صف همیشه 404 می‌خورد و
+    // فاکتور پارک‌شده به‌اشتباه «رد شده» حذف می‌شد (شکار E2E دور ۸۰).
+    await post("/sales", sale.payload, { "Idempotency-Key": sale.key });
     removeFromOfflineQueue(sale.key);
     return { ok: true, retry: false };
   } catch (error) {
-    if (error instanceof TypeError) return { ok: false, retry: true };
+    // سرور هنوز در دسترس نیست → در صف بماند. (TypeError خام برای اطمینان
+    // می‌ماند؛ مسیر اصلی بعد از هاردنینگ request() همان ConnectionError است.)
+    if (error instanceof ConnectionError || error instanceof TypeError) return { ok: false, retry: true };
     removeFromOfflineQueue(sale.key);
     return { ok: false, retry: false, message: error instanceof Error ? error.message : String(error) };
   }

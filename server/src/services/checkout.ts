@@ -5,6 +5,7 @@ import type { SaleDto } from "../dto";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma.service";
 import { LicenseService } from "../license/license.service";
+import { roundQty } from "../quantities";
 
 const pad = (value: number, length = 2) => String(value).padStart(length, "0");
 
@@ -91,7 +92,10 @@ export class CheckoutService {
     const lineDiscounts = new Map<string, number>();
     const serialsByProduct = new Map<string, string[]>();
     for (const line of dto.items) {
-      quantities.set(line.productId, (quantities.get(line.productId) || 0) + line.quantity);
+      // گردکردنِ جمع: ۰٫۱ + ۰٫۲ باید دقیقاً ۰٫۳ شود، نه ۰٫۳۰۰۰…۴ — وگرنه
+      // هم DTO خطای «تعداد اعشاری» می‌دهد هم گارد اتمیکِ انتهایی فروش را
+      // به‌اشتباه رد می‌کند.
+      quantities.set(line.productId, roundQty((quantities.get(line.productId) || 0) + line.quantity));
       lineDiscounts.set(line.productId, Math.max(0, lineDiscounts.get(line.productId) || 0) + (line.discount || 0));
       if (line.serials?.length) serialsByProduct.set(line.productId, (serialsByProduct.get(line.productId) || []).concat(line.serials));
     }
@@ -128,16 +132,16 @@ export class CheckoutService {
         if (product.isBundle) {
           const rows = await tx.bundleComponent.findMany({ where: { bundleId: productId }, include: { component: true } });
           if (!rows.length) throw new BadRequestException(`برای بستهٔ «${product.name}» اجزا تعیین نشده است.`);
-          const parts = rows.map((row) => ({ component: row.component as StockishProduct, quantity: row.quantity * quantity }));
+          const parts = rows.map((row) => ({ component: row.component as StockishProduct, quantity: roundQty(row.quantity * quantity) }));
           for (const part of parts) {
             if (part.component.isBundle) throw new BadRequestException("بسته داخل بسته مجاز نیست؛ اجزای بسته باید کالای ساده باشند.");
-            const available = part.component.stock - part.component.reserved;
+            const available = roundQty(part.component.stock - part.component.reserved);
             if (available < part.quantity) throw new BadRequestException(`موجودی جزء ${part.component.name} از بستهٔ ${product.name} کافی نیست. موجودی آزاد: ${available}`);
             componentById.set(part.component.id, part.component);
           }
           bundleComponents.set(productId, parts);
         } else {
-          const available = product.stock - product.reserved;
+          const available = roundQty(product.stock - product.reserved);
           if (available < quantity) throw new BadRequestException(`موجودی ${product.name} کافی نیست. موجودی آزاد: ${available}${product.reserved > 0 ? " (بخشی از موجودی رزرو سفارش است)" : ""}`);
         }
         if (product.isSerialized) {
@@ -189,10 +193,10 @@ export class CheckoutService {
       // checked against its COMBINED demand: per-line checks alone would let
       // 3 + 3 pass over a stock of 5 and drive the shelf negative.
       const combined = new Map<string, number>();
-      for (const parts of bundleComponents.values()) for (const part of parts) combined.set(part.component.id, (combined.get(part.component.id) || 0) + part.quantity);
+      for (const parts of bundleComponents.values()) for (const part of parts) combined.set(part.component.id, roundQty((combined.get(part.component.id) || 0) + part.quantity));
       for (const [componentId, demand] of combined) {
         const component = componentById.get(componentId)!;
-        const available = component.stock - component.reserved;
+        const available = roundQty(component.stock - component.reserved);
         if (available < demand) throw new BadRequestException(`موجودی ${component.name} برای مجموع بسته‌های این فاکتور کافی نیست. موجودی آزاد: ${available}، لازم: ${demand}`);
       }
       let subtotal = 0;
@@ -298,13 +302,17 @@ export class CheckoutService {
       // selling the last item at the same instant. The race loser gets a
       // clear message instead of a silently corrupted shelf.
       const deduct = async (product: StockishProduct, quantity: number, note?: string): Promise<void> => {
-        const affected = await tx.$executeRaw`UPDATE Product SET stock = stock - ${quantity} WHERE id = ${product.id} AND stock >= ${quantity}`;
+        // ROUND دو نقش دارد: مقدار نهاییِ ذخیره‌شده همیشه سه‌رقمیِ تمیز می‌ماند
+        // (خطای ممیز شناورِ فروش‌های وزنیِ قبلی هم همین‌جا التیام می‌یابد) و
+        // گارد روی مقدار گردشده مقایسه می‌شود تا «آخرین ۰٫۳ کیلو» قفسه‌ای که
+        // ذخیرهٔ تاریخی‌اش ۰٫۲۹۹۹…۹۸ است به‌اشتباه رد نشود.
+        const affected = await tx.$executeRaw`UPDATE Product SET stock = ROUND(stock - ${quantity}, 3) WHERE id = ${product.id} AND ROUND(stock, 3) >= ${quantity}`;
         if (affected === 0) {
           const shelf = await tx.product.findUnique({ where: { id: product.id }, select: { stock: true } });
           throw new BadRequestException(`موجودی «${product.name}» در همین لحظه کافی نیست — احتمالاً همین کالا همزمان روی دستگاه دیگری فروخته شده است. باقیماندهٔ فعلی: ${shelf?.stock ?? 0}. فهرست صندوق را دوباره بارگذاری کنید و دوباره امتحان کنید.`);
         }
         const after = await tx.product.findUnique({ where: { id: product.id }, select: { stock: true } });
-        const stockAfter = after?.stock ?? product.stock - quantity;
+        const stockAfter = after?.stock ?? roundQty(product.stock - quantity);
         await tx.inventoryMovement.create({ data: { productId: product.id, type: "SALE", quantity: -quantity, stockAfter, reference: receiptNo, note } });
         // Best-effort FEFO batch deduction for expiry warnings; never gates
         // the sale and silently stops when tracked batches run out.

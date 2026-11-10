@@ -272,6 +272,7 @@ const saleFixture = {
 
 function returnSetup(sale: typeof saleFixture = saleFixture) {
   const tx = {
+    $executeRaw: jest.fn().mockResolvedValue(0),
     sale: { findUnique: jest.fn().mockResolvedValue(sale) },
     product: { findMany: jest.fn().mockResolvedValue([{ ...product, stock: 0 }]), update: jest.fn().mockResolvedValue({}) },
     saleReturn: { create: jest.fn().mockImplementation(({ data }: { data: { total: number; returnNo: string } }) => Promise.resolve({ id: "return-1", ...data })) },
@@ -451,6 +452,7 @@ describe("voiding a sale (ابطال فاکتور)", () => {
       ...saleOverrides,
     };
     const tx = {
+    $executeRaw: jest.fn().mockResolvedValue(0),
       sale: { findUnique: jest.fn().mockResolvedValue(sale), update: jest.fn().mockResolvedValue({}), aggregate: jest.fn().mockResolvedValue({ _sum: { creditPart: 0 } }) },
       product: { findMany: jest.fn().mockResolvedValue([
         { id: "product-1", isBundle: false, bundleComponents: [] },

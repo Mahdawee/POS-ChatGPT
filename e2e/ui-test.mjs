@@ -15,7 +15,7 @@
 //   E2E_EXECUTABLE_PATH=…             مسیر کرومیوم جایگزین (اگر مرورگر
 //                                     پیش‌فرض playwright در دسترس نیست)
 //
-// سناریوها (۳۷ چک در اجرای سالم؛ چک اضافی فقط در صورت خطای غیرمنتظره): ورود، گارد تغییر اجباری گذرواژهٔ پیش‌فرض در نصب تازه،
+// سناریوها (۴۶ چک در اجرای سالم؛ چک اضافی فقط در صورت خطای غیرمنتظره): ورود، گارد تغییر اجباری گذرواژهٔ پیش‌فرض در نصب تازه،
 // ثبت سریع کالا با کد خودکار، اسکن بارکد با گوشیِ شبیه‌سازی‌شده (پل PIN)
 // داخل فرم کالا، «ذخیره و کالای بعدی»، Enter، لیست سبک صندوق
 // (/products/pos)، کد خودکار مشتری، اسکن خارج از صندوق (نباید بی‌سروصدا
@@ -23,7 +23,8 @@
 // ثبت سرویس‌ورکر)، عکس کالا (کوچک‌سازی کلاینت + آپلود + کش immutable +
 // بندانگشتی جدول و کاشی صندوق)، ممیزی انتشار (فروش کامل تا بستن صندوق +
 // کاهش موجودی + فاکتور در فروش‌ها + بدون خطای کنسول/کرش/5xx در همهٔ
-// صفحه‌ها).
+// صفحه‌ها)، رگرسیون ممیز شناور کالای وزنی (بارکد ترازو؛ ۰٫۳ − ۰٫۱×۳ =
+// ۰ دقیق) و صف آفلاین هنگام قطعی سرور (پارک → ثبت با بازگشت شبکه).
 // ─────────────────────────────────────────────────────────────────────────────
 
 let chromium;
@@ -439,6 +440,103 @@ try {
     const okCount = [r1, r2].filter((r) => r.ok).length;
     const raceStock = (await fetch(`${API}/products/pos`, { headers: authHeaders }).then((r) => r.json())).find((p) => p.id === raceProduct.id);
     check("شبکه: فروش همزمان روی آخرین عدد — فقط یک دستگاه قبول، موجودی صفر و هرگز منفی", okCount === 1 && raceStock && raceStock.stock === 0, `قبول‌شده: ${okCount}، موجودی: ${raceStock?.stock}`);
+  }
+
+  // ── ۱۵) رگرسیون ممیز شناور + صف آفلاین: کالای وزنی با بارکد ترازو.
+  // سه فروشِ ۰٫۱ کیلویی از قفسهٔ ۰٫۳کیلویی باید قفسه را «دقیقاً» صفر کند
+  // (۰٫۳ − ۰٫۱ − ۰٫۱ − ۰٫۱ = ۰؛ نه ۰٫۰۰۰۰۰۰۰۰۴ و نه منفی). سومین فروش
+  // عمداً هنگام قطعی سرور ثبت می‌شود: باید در صف آفلاین پارک شود (نه اینکه
+  // مثل خطای سرور برای همیشه دور انداخته شود — رگرسیون هاردنینگ request
+  // که خطای شبکه را در ConnectionError می‌پیچد) و با بازگشت شبکه ثبت و کم شود.
+  const pluName = `پنیر تازه ${String(Date.now()).slice(-4)}`;
+  const pluCreated = await fetch(`${API}/products`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders }, body: JSON.stringify({ name: pluName, sku: "54321", price: 500, cost: 300, stock: 0.3, unit: "کیلوگرم", isWeighted: true }) });
+  if (!pluCreated.ok) {
+    check("وزنی: کالای وزنی PLU ساخته شد", false, `HTTP ${pluCreated.status}`);
+  } else {
+    const pluProduct = await pluCreated.json();
+    const pluStock = () => fetch(`${API}/products/pos`, { headers: authHeaders }).then((r) => r.json()).then((list) => list.find((p) => p.id === pluProduct.id));
+    await page.getByRole("button", { name: "صندوق فروش", exact: false }).first().click();
+    await page.waitForTimeout(900);
+    await page.locator(".pos-product").filter({ hasText: pluName }).waitFor({ state: "visible", timeout: 10000 });
+    const posSearch = page.locator("form.pos-search input");
+    // پرداخت موبایلی — صندوق اینجای سناریو بسته است و فروش نقدی رد می‌شد.
+    await page.locator("aside.cart-panel .cart-options select").nth(1).selectOption("MOBILE");
+    // بارکد ترازو: 2 + PLU(۵رقمی) + گرم(۵رقمی) + ۲ رقم چک → 2543210010099 = ۰٫۱ کیلو
+    await posSearch.fill("2543210010099");
+    await posSearch.press("Enter");
+    await page.waitForTimeout(700);
+    const weightedLine = page.locator("aside.cart-panel .cart-line").filter({ hasText: pluName });
+    const weightedCount = await weightedLine.count();
+    const weightedQty = weightedCount ? await weightedLine.locator("input.qty-input").inputValue() : "—";
+    check("وزنی: اسکن بارکد ترازو ۰٫۱ کیلو را با مقدار دقیق در سبد می‌گذارد", weightedCount === 1 && weightedQty === "0.1", `${weightedCount} ردیف؛ مقدار: ${weightedQty}`);
+    await page.locator("button.checkout-button").click();
+    await page.waitForTimeout(1800);
+    const afterFirstTenth = await pluStock();
+    check("وزنی: فروش ۰٫۱ از ۰٫۳ — موجودی دقیقاً ۰٫۲ شد", afterFirstTenth && afterFirstTenth.stock === 0.2, String(afterFirstTenth?.stock));
+    await page.keyboard.press("Escape").catch(() => {});
+    await page.waitForTimeout(500);
+    await posSearch.fill("2543210010099");
+    await posSearch.press("Enter");
+    await page.waitForTimeout(700);
+    await page.locator("button.checkout-button").click();
+    await page.waitForTimeout(1800);
+    const afterSecondTenth = await pluStock();
+    check("وزنی: فروش ۰٫۱ دوم — موجودی دقیقاً ۰٫۱ ماند (بدون خطای شناور)", afterSecondTenth && afterSecondTenth.stock === 0.1, String(afterSecondTenth?.stock));
+    await page.keyboard.press("Escape").catch(() => {});
+    await page.waitForTimeout(500);
+    // ── سومین فروش در قطعی سرور — روی یک دستگاهِ تازه (صفحهٔ جدید = حافظه و
+    // سرویس‌ورکر جدا، دقیقاً مثل روشن‌کردن دستگاه جدید وسط قطعی). شبکهٔ فقط همین
+    // صفحه به API بسته می‌شود؛ خود تست همچنان مستقیم به API وصل است تا موجودی
+    // واقعی سرور را بپرسد.
+    const cPass = (await tryLogin("E2ePass12345")).accessToken ? "E2ePass12345" : "admin12345";
+    const pageC = await browser.newPage();
+    try {
+      await pageC.goto(UI);
+      await pageC.waitForSelector("form.login-form", { timeout: 20000 });
+      await pageC.locator("form.login-form input").nth(0).fill("admin");
+      await pageC.locator("form.login-form input").nth(1).fill(cPass);
+      await pageC.waitForFunction(() => { const b = document.querySelector("button.login-submit"); return Boolean(b && !b.disabled); }, null, { timeout: 15000 });
+      await pageC.locator("button.login-submit").click();
+      await pageC.locator("form.login-form").waitFor({ state: "detached", timeout: 30000 });
+      await pageC.getByRole("button", { name: "صندوق فروش", exact: false }).first().click();
+      await pageC.waitForTimeout(1200);
+      await pageC.locator(".pos-product").filter({ hasText: pluName }).waitFor({ state: "visible", timeout: 10000 });
+      // پرداخت موبایلی — صندوق بسته است و فروش نقدی غیرفعال می‌ماند.
+      await pageC.locator("aside.cart-panel .cart-options select").nth(1).selectOption("MOBILE");
+      // قطع شبکه: برنامهٔ بدون تنظیم دستی، هم‌مبدأ با UI وصل می‌شود
+      // (1420/api که vite به سرور پروکسی می‌کند) — پس همان مسیر بسته می‌شود؛
+      // مسیر مستقیم سرور هم برای اطمینان بسته می‌شود.
+      const uiApiPattern = `${new URL(UI).origin}/api/**`;
+      const directApiPattern = `${API}/**`;
+      const abortRoute = (route) => route.abort();
+      await pageC.route(uiApiPattern, abortRoute);
+      await pageC.route(directApiPattern, abortRoute);
+      const cSearch = pageC.locator("form.pos-search input");
+      await cSearch.fill("2543210010099");
+      await cSearch.press("Enter");
+      await pageC.waitForTimeout(700);
+      await pageC.locator("button.checkout-button").click();
+      await pageC.waitForTimeout(2500);
+      const parkMessage = (await pageC.locator(".pos-products .error-box").allTextContents().catch(() => [])).join(" ");
+      check("آفلاین: قطعی سرور هنگام ثبت — فاکتور در صف آفلاین پارک شد", parkMessage.includes("فاکتور در صف آفلاین ذخیره شد"), parkMessage.trim().slice(0, 70));
+      const offlineBadge = pageC.locator("aside.cart-panel button.amber-text");
+      const badgeText = normalizeDigits((await offlineBadge.textContent().catch(() => "")) || "");
+      check("آفلاین: نشانگر «صف آفلاین» با شمارندهٔ ۱ ظاهر شد", (await offlineBadge.count()) === 1 && badgeText.includes("صف آفلاین") && badgeText.includes("(1)"), badgeText.trim().slice(0, 30));
+      const stockWhileParked = await pluStock();
+      check("آفلاین: موجودی سرور هنوز ۰٫۱ است (فاکتور پارک‌شده ارسال نشده)", stockWhileParked && stockWhileParked.stock === 0.1, String(stockWhileParked?.stock));
+      // بازگشت شبکه + ارسال دستی صف از دکمهٔ خود صندوق
+      await pageC.unroute(uiApiPattern);
+      await pageC.unroute(directApiPattern);
+      await offlineBadge.click();
+      await pageC.waitForTimeout(2500);
+      const flushToast = (await pageC.locator(".toast").allTextContents().catch(() => [])).join(" | ");
+      check("آفلاین: با بازگشت سرور فاکتور پارک‌شده ثبت و ارسال شد", flushToast.includes("فاکتور آفلاین") && flushToast.includes("ثبت شد"), flushToast.trim().slice(0, 70));
+      const afterFlush = await pluStock();
+      check("وزنی+آفلاین: پس از پخش صف، قفسهٔ ۰٫۳کیلویی دقیقاً صفر شد (۰٫۱ × ۳)", afterFlush && afterFlush.stock === 0, String(afterFlush?.stock));
+      check("آفلاین: نشانگر صف آفلاین خالی شد", (await pageC.locator("aside.cart-panel button.amber-text").count()) === 0, "");
+    } finally {
+      await pageC.close();
+    }
   }
 
   // ── ۱۳) ممیزی انتشار: همهٔ صفحه‌ها بدون خطای کنسول/کرش/5xx باز می‌شوند

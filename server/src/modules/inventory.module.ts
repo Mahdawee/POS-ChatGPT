@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Get, Module, NotFoundException, 
 import { CurrentUser, SessionUser } from "../auth";
 import { InventoryAdjustmentDto, StockTransferDto } from "../dto";
 import { PrismaService } from "../prisma.service";
+import { roundQty } from "../quantities";
 
 @Controller("inventory")
 export class InventoryController {
@@ -100,7 +101,7 @@ export class InventoryController {
     return this.prisma.$transaction(async (tx) => {
       const product = await tx.product.findUnique({ where: { id: dto.productId } });
       if (!product || !product.isActive) throw new BadRequestException("کالا پیدا نشد.");
-      const stock = product.stock + dto.quantity;
+      const stock = roundQty(product.stock + dto.quantity);
       if (stock < 0) throw new BadRequestException(`موجودی ${product.name} کافی نیست.`);
       await tx.product.update({ where: { id: product.id }, data: { stock } });
       const movement = await tx.inventoryMovement.create({ data: { productId: product.id, type: dto.quantity > 0 ? "ADJUSTMENT_IN" : "ADJUSTMENT_OUT", quantity: dto.quantity, stockAfter: stock, note: dto.note?.trim() || "تعدیل دستی" } });
@@ -118,15 +119,15 @@ export class InventoryController {
       if (dto.direction === "TO_BACKROOM") {
         // Reservations live on the shelf: moving promised units to the
         // backroom would strand the pre-order waiting for them.
-        const free = product.stock - product.reserved;
+        const free = roundQty(product.stock - product.reserved);
         if (free < dto.quantity) throw new BadRequestException(`موجودی آزاد قفسهٔ فروش ${product.name} کافی نیست. موجودی آزاد: ${free} (رزرو سفارش: ${product.reserved})`);
-        const stock = product.stock - dto.quantity;
-        await tx.product.update({ where: { id: product.id }, data: { stock, backstock: { increment: dto.quantity } } });
+        const stock = roundQty(product.stock - dto.quantity);
+        await tx.product.update({ where: { id: product.id }, data: { stock, backstock: roundQty(product.backstock + dto.quantity) } });
         await tx.inventoryMovement.create({ data: { productId: product.id, type: "ADJUSTMENT_OUT", quantity: -dto.quantity, stockAfter: stock, note: "انتقال به انبار پشتیبان" } });
       } else {
-        if (product.backstock < dto.quantity) throw new BadRequestException(`موجودی انبار پشتیبان ${product.name} کافی نیست. موجودی فعلی: ${product.backstock}`);
-        const stock = product.stock + dto.quantity;
-        await tx.product.update({ where: { id: product.id }, data: { stock, backstock: { decrement: dto.quantity } } });
+        if (roundQty(product.backstock) < dto.quantity) throw new BadRequestException(`موجودی انبار پشتیبان ${product.name} کافی نیست. موجودی فعلی: ${roundQty(product.backstock)}`);
+        const stock = roundQty(product.stock + dto.quantity);
+        await tx.product.update({ where: { id: product.id }, data: { stock, backstock: roundQty(product.backstock - dto.quantity) } });
         await tx.inventoryMovement.create({ data: { productId: product.id, type: "ADJUSTMENT_IN", quantity: dto.quantity, stockAfter: stock, note: "انتقال از انبار پشتیبان به قفسهٔ فروش" } });
       }
       await tx.auditLog.create({ data: { actor: user.username, action: "TRANSFER_STOCK", entity: "Product", entityId: product.id, detail: `${dto.direction} / ${dto.quantity}` } });

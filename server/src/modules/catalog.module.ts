@@ -4,6 +4,7 @@ import { AdminOnly, CurrentUser, Public, SessionUser } from "../auth";
 import { AUTO_CODE_ATTEMPTS, autoCodeRetryDelay, isAutoCodeRace, serialized } from "../auto-code";
 import { BundleDto, CategoryDto, ProductDto, ProductImageDto, ProductImportDto } from "../dto";
 import { PrismaService } from "../prisma.service";
+import { roundQty } from "../quantities";
 
 /**
  * Prisma's unique-constraint error (P2002) would surface as a raw 500; the
@@ -215,7 +216,16 @@ export class ProductsController {
   }
   @Post() async create(@Body() dto: ProductDto) {
     if (dto.isBundle && dto.isSerialized) throw new BadRequestException("یک کالا نمی‌تواند هم‌زمان بسته و سریال‌دار باشد؛ بسته اجزایی ساده دارد.");
-    const stock = dto.stock ?? 0;
+    const stock = roundQty(dto.stock ?? 0);
+    const minStock = roundQty(dto.minStock ?? 0);
+    // کالای شمارشی مقدار اعشاری نمی‌گیرد — اعشار فقط برای کالای «وزنی»
+    // معنا دارد (فرم هم تنها در حالت وزنی گام ۰٫۰۰۱ نشان می‌دهد). این گارد
+    // نبود، چون DTO قبلاً موجودی را @IsInt می‌گرفت و فرمِ کالای وزنی با
+    // موجودی اعشاری (مثل ۰٫۳ کیلو) همیشه با خطای اعتبارسنجی رد می‌شد.
+    if (!dto.isWeighted) {
+      if (!Number.isInteger(stock)) throw new BadRequestException("موجودی اولیهٔ کالای شمارشی باید عدد صحیح باشد؛ برای مقدار اعشاری، نوع کالا را «وزنی» بگذارید.");
+      if (!Number.isInteger(minStock)) throw new BadRequestException("حداقل موجودی کالای شمارشی باید عدد صحیح باشد؛ برای مقدار اعشاری، نوع کالا را «وزنی» بگذارید.");
+    }
     // کد خودکار → دو ثبتِ همزمان هر دو «بزرگ‌ترین شمارهٔ موجود + ۱» را
     // می‌خوانند؛ قید یکتای sku بازنده را با P2002/P2034 برمی‌گرداند و
     // تلاشِ تازه شمارهٔ درست را می‌گیرد. کد دستی هیچ‌وقت دوباره تلاش
@@ -226,7 +236,7 @@ export class ProductsController {
         return await serialized(() => this.prisma.$transaction(async (tx) => {
           // کد خالی → کد خودکارِ پیوسته؛ صد‌ها کالا بدون تایپِ کد ثبت می‌شوند
           const sku = dto.sku?.trim() || await nextSku(tx as unknown as ProductTx);
-          const product = await tx.product.create({ data: { sku, barcode: dto.barcode?.trim() || null, name: dto.name.trim(), unit: dto.unit || "عدد", isWeighted: dto.isWeighted ?? false, isBundle: dto.isBundle ?? false, isSerialized: dto.isSerialized ?? false, expiryDate: dto.expiryDate ? new Date(`${dto.expiryDate}T00:00:00.000Z`) : null, price: dto.price, wholesalePrice: dto.wholesalePrice ?? null, wholesaleMinQty: dto.wholesaleMinQty ?? null, cost: dto.cost ?? 0, stock, minStock: dto.minStock ?? 0, categoryId: dto.categoryId || null } });
+          const product = await tx.product.create({ data: { sku, barcode: dto.barcode?.trim() || null, name: dto.name.trim(), unit: dto.unit || "عدد", isWeighted: dto.isWeighted ?? false, isBundle: dto.isBundle ?? false, isSerialized: dto.isSerialized ?? false, expiryDate: dto.expiryDate ? new Date(`${dto.expiryDate}T00:00:00.000Z`) : null, price: dto.price, wholesalePrice: dto.wholesalePrice ?? null, wholesaleMinQty: dto.wholesaleMinQty ?? null, cost: dto.cost ?? 0, stock, minStock, categoryId: dto.categoryId || null } });
           if (stock > 0) await tx.inventoryMovement.create({ data: { productId: product.id, type: "ADJUSTMENT_IN", quantity: stock, stockAfter: stock, note: "موجودی اولیه" } });
           await tx.auditLog.create({ data: { action: "CREATE", entity: "Product", entityId: product.id, detail: product.sku } });
           return product;
@@ -241,9 +251,15 @@ export class ProductsController {
     const { stock: _stock, ...fields } = dto;
     // The flags are optional on PATCH: judge the request against the stored
     // product, not against absent keys.
-    const stored = await this.prisma.product.findUnique({ where: { id }, select: { isBundle: true, isSerialized: true } });
+    const stored = await this.prisma.product.findUnique({ where: { id }, select: { isBundle: true, isSerialized: true, isWeighted: true } });
     if (!stored) throw new NotFoundException("کالا پیدا نشد.");
     if ((fields.isBundle ?? stored.isBundle) && (fields.isSerialized ?? stored.isSerialized)) throw new BadRequestException("یک کالا نمی‌تواند هم‌زمان بسته و سریال‌دار باشد؛ بسته اجزایی ساده دارد.");
+    // همان گارد create: اعشار فقط برای کالای وزنی (حداقل موجودی از PATCH
+    // قابل تغییر است؛ موجودی اصلی از مسیر انبار/خرید تغییر می‌کند).
+    if (!((fields.isWeighted ?? stored.isWeighted))) {
+      if (fields.minStock !== undefined && !Number.isInteger(roundQty(fields.minStock))) throw new BadRequestException("حداقل موجودی کالای شمارشی باید عدد صحیح باشد؛ برای مقدار اعشاری، نوع کالا را «وزنی» بگذارید.");
+    }
+    if (fields.minStock !== undefined) fields.minStock = roundQty(fields.minStock);
     // Turning a kit back into a plain product drops its BOM in the same
     // transaction — stale rows would silently re-apply if it is ever flipped
     // into a bundle again.
@@ -362,11 +378,19 @@ export class ProductsController {
             categoryId = category.id;
           }
           const expiryDate = row.expiryDate ? new Date(`${row.expiryDate}T00:00:00.000Z`) : null;
+          // همان گارد فرم: اعشار فقط برای کالای وزنی — برای سطرِ به‌روزرسانی،
+          // پرچم وزنیِ خود کالای موجود هم ملاک است (ستون فایل اختیاری است).
+          const effectiveWeighted = row.isWeighted ?? Boolean(existing?.isWeighted);
+          if (!effectiveWeighted && ((row.stock !== undefined && !Number.isInteger(row.stock)) || (row.minStock !== undefined && !Number.isInteger(row.minStock)))) {
+            const reject = new Error("COUNTED_STOCK_FRACTIONAL");
+            reject.name = "ImportReject";
+            throw reject;
+          }
           if (existing) {
-            const nextStock = row.stock ?? existing.stock;
+            const nextStock = roundQty(row.stock ?? existing.stock);
             await tx.product.update({ where: { id: existing.id }, data: {
               price: row.price ?? existing.price, cost: row.cost ?? existing.cost,
-              minStock: row.minStock ?? existing.minStock, stock: nextStock,
+              minStock: roundQty(row.minStock ?? existing.minStock), stock: nextStock,
               unit: row.unit || existing.unit, isWeighted: row.isWeighted ?? existing.isWeighted,
               expiryDate: row.expiryDate === undefined ? existing.expiryDate : expiryDate,
               categoryId: categoryId || existing.categoryId,
@@ -375,7 +399,7 @@ export class ProductsController {
             // file is an adjustment like any other, so it gets a movement row
             // too (without it the stock figure and the movement history
             // silently disagreed after an import).
-            const stockDelta = nextStock - existing.stock;
+            const stockDelta = roundQty(nextStock - existing.stock);
             if (stockDelta !== 0) await tx.inventoryMovement.create({ data: { productId: existing.id, type: stockDelta > 0 ? "ADJUSTMENT_IN" : "ADJUSTMENT_OUT", quantity: stockDelta, stockAfter: nextStock, note: "ورود از فایل" } });
             updated += 1;
           } else {
@@ -383,14 +407,19 @@ export class ProductsController {
             const product = await tx.product.create({ data: {
               sku, barcode: row.barcode?.trim() || null, name, unit: row.unit || "عدد",
               isWeighted: row.isWeighted ?? false, expiryDate,
-              price: row.price ?? 0, cost: row.cost ?? 0, stock: row.stock ?? 0, minStock: row.minStock ?? 0, categoryId,
+              price: row.price ?? 0, cost: row.cost ?? 0, stock: roundQty(row.stock ?? 0), minStock: roundQty(row.minStock ?? 0), categoryId,
             } });
-            if ((row.stock ?? 0) > 0) await tx.inventoryMovement.create({ data: { productId: product.id, type: "ADJUSTMENT_IN", quantity: row.stock ?? 0, stockAfter: row.stock ?? 0, note: "ورود از فایل" } });
+            if ((row.stock ?? 0) > 0) await tx.inventoryMovement.create({ data: { productId: product.id, type: "ADJUSTMENT_IN", quantity: roundQty(row.stock ?? 0), stockAfter: roundQty(row.stock ?? 0), note: "ورود از فایل" } });
             created += 1;
           }
         });
       } catch (error) {
-        errors.push({ row: index + 2, message: error instanceof Error && error.message.includes("Unique") ? "بارکد یا کد کالا تکراری است." : "ذخیرهٔ این سطر ممکن نشد." });
+        errors.push({
+          row: index + 2,
+          message: error instanceof Error && error.name === "ImportReject"
+            ? "موجودی کالای شمارشی باید عدد صحیح باشد؛ برای مقدار اعشاری، نوع کالا را «وزنی» بگذارید."
+            : error instanceof Error && error.message.includes("Unique") ? "بارکد یا کد کالا تکراری است." : "ذخیرهٔ این سطر ممکن نشد.",
+        });
       }
     }
     await this.prisma.auditLog.create({ data: { actor: user.username, action: "IMPORT_PRODUCTS", entity: "Product", detail: `created=${created}; updated=${updated}; errors=${errors.length}` } });

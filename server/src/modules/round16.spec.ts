@@ -158,6 +158,7 @@ describe("Round 16 — checkout wallet/tier/bundle/serial/reserved", () => {
 
 function installmentsSetup() {
   const tx = {
+    $executeRaw: jest.fn().mockResolvedValue(0),
     customer: { findUnique: jest.fn().mockResolvedValue({ id: "customer-1", name: "احمد", isActive: true }) },
     installmentPlan: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]), create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "plan-1", ...data, installments: (data.installments?.create || []).map((row: Record<string, unknown>, index: number) => ({ id: `inst-${index}`, ...row })) })), update: jest.fn().mockResolvedValue({}) },
     installment: { findUnique: jest.fn().mockResolvedValue({ id: "inst-1", amount: 4000, paidAmount: 0, paidAt: null, plan: { id: "plan-1", status: "OPEN", total: 12000, paidAmount: 0, customerId: "customer-1", installments: [{}, {}, {}], customer: { id: "customer-1", name: "احمد" } } }), update: jest.fn().mockResolvedValue({}) },
@@ -317,6 +318,7 @@ describe("Round 16 — orders reserve and release stock", () => {
   function ordersSetup(productRow: Record<string, unknown>, order: Record<string, unknown> | null = null) {
     const findOrder = jest.fn().mockResolvedValue(order);
     const tx = {
+    $executeRaw: jest.fn().mockResolvedValue(0),
       customer: { findUnique: jest.fn().mockResolvedValue({ id: "customer-1", name: "احمد", isActive: true }) },
       product: { findMany: jest.fn().mockResolvedValue([productRow]), update: jest.fn().mockResolvedValue({}) },
       customerOrder: { create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "order-1", orderNo: "ORD-1", ...data, lines: (data.lines?.create || []).map((row: Record<string, unknown>, index: number) => ({ id: `line-${index}`, deliveredQty: 0, ...row })) })), findUnique: findOrder, update: jest.fn().mockResolvedValue({}) },
@@ -447,6 +449,7 @@ describe("Round 16 audit — regression fixes", () => {
 
   it("rejects a product that is both bundle and serialized, and a duplicate sku surfaces as 400", async () => {
     const tx = {
+    $executeRaw: jest.fn().mockResolvedValue(0),
       product: { create: jest.fn().mockRejectedValue(Object.assign(new Error("Unique constraint failed"), { code: "P2002", meta: { target: ["Product_sku_key"] } })) },
       inventoryMovement: { create: jest.fn() },
       auditLog: { create: jest.fn() },
@@ -470,6 +473,7 @@ describe("Round 16 audit — regression fixes", () => {
 
   it("setBundle logs the acting user, not a hardcoded 'admin'", async () => {
     const tx = {
+    $executeRaw: jest.fn().mockResolvedValue(0),
       product: {
         findUnique: jest.fn().mockResolvedValue({ id: "bundle-1", name: "بسته", isActive: true, isBundle: true, isSerialized: false, bundleComponents: [] }),
         findMany: jest.fn().mockResolvedValue([{ id: "product-1", name: "چای", isActive: true, isBundle: false, isSerialized: false }]),

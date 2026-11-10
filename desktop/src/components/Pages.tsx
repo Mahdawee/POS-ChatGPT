@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AlertTriangle, Archive, ArrowDown, ArrowDownLeft, ArrowDownUp, ArrowLeftRight, ArrowUp, ArrowUpRight, Banknote, Boxes, Check, ChevronDown, CirclePlus, ClipboardList, FileInput as FileInputIcon, FileText, FileDown, History, Image as ImageIcon, ImagePlus, KeyRound, Lightbulb, MonitorPlay, Package, Pause, Percent, PackagePlus, Printer, ReceiptText, RefreshCw, Save, Search, ShieldCheck, ShoppingBag, ShoppingCart, Trash2, Truck, Undo2, UsersRound, Wallet, X } from "lucide-react";
-import { del, enqueueOfflineSale, flushOfflineQueue, get, patch, post, productImageUrl, put, readOfflineQueue, serverOrigin, setServerOrigin, type AuditEntry, type BackupExport, type CashSession, type Category, type Contact, type CustomerDetail, type CustomersReport, type DebtorsReport, type DiscountsReport, type ExpenseList, type InventoryReport, type Product, type ProductBatch, type ProductImportResult, type ProfitReport, type Purchase, type PurchaseList, type PurchasesReport, type PurchaseReturn, type Quote, type Sale, type SaleList, type SaleReturn, type ShopSettings, type Stocktake, type SuppliersReport, type SupplierDetail, type User, type ZReport } from "../lib/api";
+import { ConnectionError, del, enqueueOfflineSale, flushOfflineQueue, get, patch, post, productImageUrl, put, readOfflineQueue, serverOrigin, setServerOrigin, type AuditEntry, type BackupExport, type CashSession, type Category, type Contact, type CustomerDetail, type CustomersReport, type DebtorsReport, type DiscountsReport, type ExpenseList, type InventoryReport, type Product, type ProductBatch, type ProductImportResult, type ProfitReport, type Purchase, type PurchaseList, type PurchasesReport, type PurchaseReturn, type Quote, type Sale, type SaleList, type SaleReturn, type ShopSettings, type Stocktake, type SuppliersReport, type SupplierDetail, type User, type ZReport } from "../lib/api";
 import { applyCurrencyList, applyLocaleSettings, BASE_CURRENCIES, dateOnly, dateTime, dayLabel, fullDate, money, moneyPlain, percent, qty, t, timeOnly, type CurrencyRow } from "../i18n";
 import { isoOf } from "../lib/calendar";
 import { debtorsHtml, invoiceHtml, labelsHtml, printDebtReceipt, printHtml, purchaseReturnHtml, reportHtml, returnSlipHtml, saleReceiptHtml, printSaleReceipt, testQuickPrint, zReportHtml } from "../lib/print";
@@ -74,10 +74,17 @@ function serialGroups(product: Product, lineQuantity: number): Array<{ key: stri
   return (product.bundleComponents || []).filter((row) => row.component?.isSerialized).map((row) => ({ key: row.componentId, label: `${row.component?.name || "?"} × ${row.quantity * lineQuantity}`, need: Math.round(row.quantity * lineQuantity) }));
 }
 
+/** کالاهای وزنی تا سه رقم اعشار معتبرند؛ جمع ممیز شناور بدون گردکردن منحرف
+ *  می‌شود (۰٫۱ + ۰٫۲ = ۰٫۳۰۰۰…۴) و هم سبد را به خطای «تعداد اعشاری» می‌کشاند
+ *  هم فروشِ آخرین موجودی را به‌اشتباه رد می‌کند. هر مقدار کمیتی در صندوق از
+ *  این گردکننده رد می‌شود. */
+const qty3 = (value: number): number => Math.round(value * 1000) / 1000;
+
 function buildableKits(product: Product): number {
   const rows = product.bundleComponents || [];
   if (!rows.length) return 0;
-  return Math.floor(Math.min(...rows.map((row) => (((row.component?.stock ?? 0) - (row.component?.reserved ?? 0)) / (row.quantity || 1)))));
+  // خارج‌قسمت گرد می‌شود: ۰٫۳ ÷ ۰٫۱ در ممیز شناور ۲٫۹۹۹… است و کفِ آن به‌اشتباه ۲ بسته می‌شد.
+  return Math.floor(Math.min(...rows.map((row) => qty3(qty3((row.component?.stock ?? 0) - (row.component?.reserved ?? 0)) / (row.quantity || 1)))));
 }
 
 function Loading() { return <div className="loading"><RefreshCw size={18}/>{t("در حال بارگذاری اطلاعات…")}</div>; }
@@ -479,7 +486,7 @@ export function PosPage({ notify, user, active = true }: { notify: Notify; user:
   const isWholesaleTier = selectedCustomer?.tier === "WHOLESALE";
   const unitPriceFor = (product: Product, quantity: number): number => (product.wholesalePrice != null && (isWholesaleTier || (product.wholesaleMinQty != null && quantity >= product.wholesaleMinQty)) ? product.wholesalePrice : product.price);
   /** Stock a walk-in can actually sell: open pre-orders reserve the rest. */
-  const freeStock = (product: Product): number => product.isBundle ? buildableKits(product) : product.stock - (product.reserved || 0);
+  const freeStock = (product: Product): number => product.isBundle ? buildableKits(product) : qty3(product.stock - (product.reserved || 0));
   const lineGross = (product: Product, quantity: number): number => Math.round(unitPriceFor(product, quantity) * quantity);
   const lineTotalOf = (product: Product, quantity: number): number => Math.max(0, lineGross(product, quantity) - Math.min(lineDiscounts[product.id] || 0, lineGross(product, quantity)));
   // Shop settings (incl. the logo data-URL and print options) are fetched
@@ -581,7 +588,7 @@ export function PosPage({ notify, user, active = true }: { notify: Notify; user:
       channel.close();
     } catch { /* display window not supported */ }
   }, [cartItems, total, customerId, shop, customers]);
-  const add = (product: Product, amount = 1) => { setError(""); bumpPosFavorite(product.id); setFavorites(readPosFavorites()); setCart((previous) => { const current = previous[product.id] || 0; if (current + amount > freeStock(product)) { setError(t("موجودی {name} بیشتر از {stock} نیست.", { name: product.name, stock: qty(freeStock(product)) })); return previous; } return { ...previous, [product.id]: current + amount }; }); setPaid(total); };
+  const add = (product: Product, amount = 1) => { setError(""); bumpPosFavorite(product.id); setFavorites(readPosFavorites()); setCart((previous) => { const next = qty3((previous[product.id] || 0) + amount); if (next > freeStock(product)) { setError(t("موجودی {name} بیشتر از {stock} نیست.", { name: product.name, stock: qty(freeStock(product)) })); return previous; } return { ...previous, [product.id]: next }; }); setPaid(total); };
   /** Exact quantity entry for weighted goods (e.g. 1.25 kg). */
   const setExact = (id: string, value: number) => setCart((previous) => {
     const rounded = Math.round(value * 1000) / 1000;
@@ -599,13 +606,13 @@ export function PosPage({ notify, user, active = true }: { notify: Notify; user:
       const plu = code.slice(1, 6);
       const weight = Number(code.slice(6, 11)) / 1000;
       const scaled = products.find((p) => p.sku === plu);
-      if (scaled && weight > 0) { scannerBeep((cart[scaled.id] || 0) + weight <= freeStock(scaled)); add(scaled, Math.round(weight * 1000) / 1000); setQuery(""); return; }
+      if (scaled && weight > 0) { scannerBeep(qty3((cart[scaled.id] || 0) + weight) <= freeStock(scaled)); add(scaled, Math.round(weight * 1000) / 1000); setQuery(""); return; }
     }
     const exact = products.find((p) => p.barcode === code || p.sku.toLowerCase() === code.toLowerCase());
-    if (exact) { scannerBeep((cart[exact.id] || 0) + 1 <= freeStock(exact)); add(exact); setQuery(""); }
+    if (exact) { scannerBeep(qty3((cart[exact.id] || 0) + 1) <= freeStock(exact)); add(exact); setQuery(""); }
     else if (code) { scannerBeep(false); setError(t("کالایی با این بارکد یا کد پیدا نشد.")); }
   };
-  const quantity = (id: string, change: number) => setCart((previous) => { const next = (previous[id] || 0) + change; if (next <= 0) { const copy = { ...previous }; delete copy[id]; return copy; } const product = products.find((p) => p.id === id); if (product && next > freeStock(product)) { setError(t("موجودی {name} کافی نیست.", { name: product.name })); return previous; } return { ...previous, [id]: next }; });
+  const quantity = (id: string, change: number) => setCart((previous) => { const next = qty3((previous[id] || 0) + change); if (next <= 0) { const copy = { ...previous }; delete copy[id]; return copy; } const product = products.find((p) => p.id === id); if (product && next > freeStock(product)) { setError(t("موجودی {name} کافی نیست.", { name: product.name })); return previous; } return { ...previous, [id]: next }; });
   const parkOrder = () => {
     if (!cartItems.length) return;
     const order: HeldOrder = {
@@ -632,9 +639,9 @@ export function PosPage({ notify, user, active = true }: { notify: Notify; user:
       // or drop it entirely, instead of restoring an unsellable basket.
       const room = freeStock(product) - (restored[item.productId] || 0);
       if (room <= 0) { reduced += 1; continue; }
-      const take = Math.min(room, item.quantity);
+      const take = Math.min(room, qty3(item.quantity));
       if (take < item.quantity) reduced += 1;
-      restored[item.productId] = (restored[item.productId] || 0) + take;
+      restored[item.productId] = qty3((restored[item.productId] || 0) + take);
     }
     setCart(restored); setCustomerId(order.customerId || ""); setPaid(0);
     const next = held.filter((entry) => entry.id !== order.id);
@@ -675,9 +682,11 @@ export function PosPage({ notify, user, active = true }: { notify: Notify; user:
       notify(t("فروش با موفقیت ثبت شد.")); scannerBeep();
       if (shop.autoPrintReceipt === "1") void printSaleReceipt(sale, shop);
     } catch (e) {
-      if (e instanceof TypeError) {
+      if (e instanceof ConnectionError || e instanceof TypeError) {
         // Server unreachable: park the basket; the retry loop (30s) or the
         // manual button will post it with the same idempotency key later.
+        // (ConnectionError همان TypeErrorِ قدیمی شبکه است — request() هاردندشده
+        // آن را می‌پیچد؛ بدون این شاخه سبد پارک نمی‌شد و از دست می‌رفت.)
         const label = `${cartItems.length} ${t("قلم")} · ${money(total)}${customerId ? ` · ${customers.find((c) => c.id === customerId)?.name || ""}` : ""}`;
         enqueueOfflineSale(label, total, payload);
         setOfflineCount(readOfflineQueue().length);

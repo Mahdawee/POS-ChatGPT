@@ -7,6 +7,7 @@ const product = { id: "product-1", name: "چای", sku: "T-1", stock: 2, cost: 1
 function setup() {
   const created: Record<string, unknown> = { id: "purchase-1", total: 0, items: [] };
   const tx = {
+    $executeRaw: jest.fn().mockResolvedValue(0),
     product: { findMany: jest.fn().mockResolvedValue([{ ...product }]), update: jest.fn().mockResolvedValue({}) },
     supplier: { findUnique: jest.fn().mockResolvedValue({ id: "supplier-1", name: "تأمین‌کننده" }) },
     purchase: { create: jest.fn().mockImplementation(({ data }: { data: { total: number } }) => { created.total = data.total; return Promise.resolve({ ...created, total: data.total }); }) },
@@ -114,6 +115,7 @@ describe("Purchases", () => {
 function returnSetup() {
   const product = { id: "product-1", name: "چای", sku: "T-1", stock: 8, cost: 10, price: 15, isActive: true };
   const tx = {
+    $executeRaw: jest.fn().mockResolvedValue(0),
     product: { findMany: jest.fn().mockResolvedValue([{ ...product }]), update: jest.fn().mockResolvedValue({}) },
     supplier: { findUnique: jest.fn().mockResolvedValue({ id: "supplier-1", name: "تأمین‌کننده" }) },
     purchase: { findUnique: jest.fn().mockResolvedValue({ supplierId: "supplier-1" }) },
@@ -195,6 +197,7 @@ describe("voiding a purchase (ابطال رسید خرید)", () => {
       ...overrides.purchase,
     };
     const tx = {
+    $executeRaw: jest.fn().mockResolvedValue(0),
       purchase: { findUnique: jest.fn().mockResolvedValue(purchase), update: jest.fn().mockResolvedValue({}) },
       purchaseReturn: { findMany: jest.fn().mockResolvedValue(overrides.returns || []) },
       product: { findMany: jest.fn().mockResolvedValue(overrides.products || [{ id: "product-1", name: "چای", stock: 10 }]), update: jest.fn().mockImplementation(({ data }: { data: { stock: { decrement?: number } } }) => Promise.resolve({ stock: 10 - (data.stock.decrement ?? 0) })) },

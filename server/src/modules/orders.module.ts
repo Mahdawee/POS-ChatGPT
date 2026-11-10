@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { CurrentUser, SessionUser } from "../auth";
 import { CreateOrderDto, DeliverOrderDto } from "../dto";
 import { PrismaService } from "../prisma.service";
+import { roundQty } from "../quantities";
 import { CheckoutService } from "../services/checkout";
 
 /**
@@ -19,7 +20,7 @@ export class OrdersController {
   @Post()
   async create(@Body() dto: CreateOrderDto, @CurrentUser() user: SessionUser) {
     const quantities = new Map<string, number>();
-    for (const line of dto.items) quantities.set(line.productId, (quantities.get(line.productId) || 0) + line.quantity);
+    for (const line of dto.items) quantities.set(line.productId, roundQty((quantities.get(line.productId) || 0) + line.quantity));
     return this.prisma.$transaction(async (tx) => {
       if (dto.customerId) {
         const customer = await tx.customer.findUnique({ where: { id: dto.customerId } });
@@ -38,7 +39,7 @@ export class OrdersController {
           if (quantity < 1) throw new BadRequestException(`تعداد «${product.name}» باید عدد صحیح و حداقل ۱ باشد.`);
           quantities.set(product.id, quantity);
         }
-        const available = product.stock - product.reserved;
+        const available = roundQty(product.stock - product.reserved);
         if (available < quantity) throw new BadRequestException(`موجودی آزاد ${product.name} کافی نیست. موجودی آزاد: ${available}`);
       }
       const orderNo = `ORD-${Date.now()}-${randomBytes(2).toString("hex").toUpperCase()}`;
@@ -56,6 +57,7 @@ export class OrdersController {
       });
       for (const [productId, quantity] of quantities) {
         await tx.product.update({ where: { id: productId }, data: { reserved: { increment: quantity } } });
+        await tx.$executeRaw`UPDATE Product SET reserved = ROUND(reserved, 3) WHERE id = ${productId}`;
       }
       await tx.auditLog.create({ data: { actor: user.username, action: "CREATE_ORDER", entity: "CustomerOrder", entityId: order.id, detail: `${orderNo} / ${order.lines.length} قلم` } });
       return order;
@@ -113,6 +115,7 @@ export class OrdersController {
       if (fresh?.status !== "OPEN") throw new BadRequestException("این سفارش بسته شده است.");
       for (const item of releasing) {
         await tx.product.update({ where: { id: item.productId }, data: { reserved: { decrement: item.quantity } } });
+        await tx.$executeRaw`UPDATE Product SET reserved = ROUND(reserved, 3) WHERE id = ${item.productId}`;
       }
       const sale = await this.checkout.checkoutInTx(
         tx,
@@ -151,8 +154,11 @@ export class OrdersController {
       if (!order) throw new NotFoundException("سفارش پیدا نشد.");
       if (order.status !== "OPEN") throw new BadRequestException("این سفارش بسته شده است.");
       for (const line of order.lines) {
-        const undelivered = line.quantity - line.deliveredQty;
-        if (undelivered > 0) await tx.product.update({ where: { id: line.productId }, data: { reserved: { decrement: undelivered } } });
+        const undelivered = roundQty(line.quantity - line.deliveredQty);
+        if (undelivered > 0) {
+          await tx.product.update({ where: { id: line.productId }, data: { reserved: { decrement: undelivered } } });
+          await tx.$executeRaw`UPDATE Product SET reserved = ROUND(reserved, 3) WHERE id = ${line.productId}`;
+        }
       }
       const updated = await tx.customerOrder.update({ where: { id }, data: { status: "CANCELLED" } });
       await tx.auditLog.create({ data: { actor: user.username, action: "CANCEL_ORDER", entity: "CustomerOrder", entityId: order.id, detail: order.orderNo } });

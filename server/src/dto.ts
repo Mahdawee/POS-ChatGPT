@@ -29,8 +29,9 @@ export class ProductDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) wholesalePrice?: number | null;
   @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0) wholesaleMinQty?: number | null;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) cost?: number;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) stock?: number;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(2147483647) minStock?: number;
+  /** موجودی اولیه — وزنی تا ۳ رقم اعشار؛ شمارشی فقط صحیح (گارد در سرویس). */
+  @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0) @Max(2147483647) stock?: number;
+  @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0) @Max(2147483647) minStock?: number;
   @IsOptional() @IsString() categoryId?: string;
 }
 export class ContactDto {

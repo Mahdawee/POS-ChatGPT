@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { AdminOnly, CurrentUser, SessionUser } from "../auth";
 import { SaleDto, SaleReturnDto, VoidDto } from "../dto";
 import { PrismaService } from "../prisma.service";
+import { roundQty } from "../quantities";
 import { CheckoutService } from "../services/checkout";
 import type { Prisma } from "@prisma/client";
 
@@ -179,9 +180,11 @@ export class SalesController {
       const runningStock = new Map<string, number>();
       const restock = async (product: { id: string; stock: number }, quantity: number, note: string): Promise<void> => {
         const before = runningStock.has(product.id) ? runningStock.get(product.id)! : product.stock;
-        const stockAfter = before + quantity;
+        // گردکردن جمع: برگشتِ کالای وزنی نباید خطای ممیز شناور در موجودی بگذارد.
+        const stockAfter = roundQty(before + quantity);
         runningStock.set(product.id, stockAfter);
         await tx.product.update({ where: { id: product.id }, data: { stock: { increment: quantity } } });
+        await tx.$executeRaw`UPDATE Product SET stock = ROUND(stock, 3) WHERE id = ${product.id}`;
         await tx.inventoryMovement.create({ data: { productId: product.id, type: "SALE_RETURN", quantity, stockAfter, reference: returnNo, note } });
       };
       const record = await tx.saleReturn.create({
@@ -317,13 +320,14 @@ export class SalesController {
           const product = byId.get(item.productId);
           if (!product) continue;
           if (product.isBundle) {
-            for (const part of product.bundleComponents) restock.set(part.componentId, (restock.get(part.componentId) || 0) + part.quantity * item.quantity);
-          } else restock.set(product.id, (restock.get(product.id) || 0) + item.quantity);
+            for (const part of product.bundleComponents) restock.set(part.componentId, roundQty((restock.get(part.componentId) || 0) + part.quantity * item.quantity));
+          } else restock.set(product.id, roundQty((restock.get(product.id) || 0) + item.quantity));
         }
       }
       for (const [productId, quantity] of restock) {
         const product = await tx.product.update({ where: { id: productId }, data: { stock: { increment: quantity } }, select: { stock: true } });
-        await tx.inventoryMovement.create({ data: { productId, type: "ADJUSTMENT_IN", quantity, stockAfter: product.stock, note: `ابطال فاکتور ${sale.receiptNo} — ${dto.reason}` } });
+        await tx.$executeRaw`UPDATE Product SET stock = ROUND(stock, 3) WHERE id = ${productId}`;
+        await tx.inventoryMovement.create({ data: { productId, type: "ADJUSTMENT_IN", quantity, stockAfter: roundQty(product.stock), note: `ابطال فاکتور ${sale.receiptNo} — ${dto.reason}` } });
       }
       // Serial units handed over with this invoice become sellable again
       // (the row keeps its links — the trail is the audit).
