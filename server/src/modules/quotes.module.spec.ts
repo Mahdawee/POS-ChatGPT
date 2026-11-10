@@ -4,8 +4,8 @@ import { QuotesController } from "./quotes.module";
 const user = { id: "user-1", username: "admin", displayName: "Admin", role: "ADMIN" as const };
 
 function setup(products = [
-  { id: "product-1", name: "چای", sku: "T-1", price: 10, cost: 6, wholesalePrice: null, wholesaleMinQty: null, isActive: true },
-  { id: "product-2", name: "شکر", sku: "S-1", price: 20, cost: 12, wholesalePrice: 15, wholesaleMinQty: 4, isActive: true },
+  { id: "product-1", name: "چای", sku: "T-1", price: 10, cost: 6, wholesalePrice: null, wholesaleMinQty: null, isActive: true, isWeighted: false },
+  { id: "product-2", name: "شکر", sku: "S-1", price: 20, cost: 12, wholesalePrice: 15, wholesaleMinQty: 4, isActive: true, isWeighted: false },
 ]) {
   const quoteRow = { id: "quote-1", quoteNo: "QTE-1", status: "OPEN", total: 0, items: [] as unknown[] };
   const tx = {
@@ -54,6 +54,14 @@ describe("Quotes", () => {
     const quote = (await controller.create({ items: [{ productId: "product-1", quantity: 2.001 }, { productId: "product-2", quantity: 4 }] }, user)) as { items: { quantity: number; lineTotal: number }[]; total: number };
     expect(quote.items.map((item) => item.quantity)).toEqual([2, 4]);
     expect(quote.total).toBe(80);
+  });
+
+  it("merges weighted lines without float dirt (0.1 + 0.2 = 0.3, دور ۸۱)", async () => {
+    const { controller } = setup([{ id: "product-w", name: "برنج", sku: "R-1", price: 1000, cost: 600, wholesalePrice: null, wholesaleMinQty: null, isActive: true, isWeighted: true }]);
+    const quote = (await controller.create({ items: [{ productId: "product-w", quantity: 0.1 }, { productId: "product-w", quantity: 0.2 }] }, user)) as { items: { quantity: number }[]; total: number };
+    expect(quote.items).toHaveLength(1);
+    expect(quote.items[0].quantity).toBe(0.3); // نه ۰٫۳۰۰۰…۴
+    expect(quote.total).toBe(300);
   });
 
   it("windows the quote list so quotes beyond the first page stay reachable", async () => {

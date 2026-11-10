@@ -67,8 +67,8 @@ export class InventoryController {
     // Net velocity: goods sold and then returned did not really leave the
     // shop, so they must not inflate the reorder suggestion.
     const soldMap = new Map<string, number>();
-    for (const row of soldRows) soldMap.set(row.productId, (soldMap.get(row.productId) || 0) + row.quantity);
-    for (const row of returnedRows) soldMap.set(row.productId, (soldMap.get(row.productId) || 0) - row.quantity);
+    for (const row of soldRows) soldMap.set(row.productId, roundQty((soldMap.get(row.productId) || 0) + row.quantity));
+    for (const row of returnedRows) soldMap.set(row.productId, roundQty((soldMap.get(row.productId) || 0) - row.quantity));
     const lastSupplier = new Map<string, { id: string; name: string; phone: string | null }>();
     for (const item of purchases) {
       if (!lastSupplier.has(item.productId) && item.purchase.supplier) {

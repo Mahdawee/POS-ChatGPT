@@ -90,12 +90,12 @@ export class OrdersController {
     const serialsByLine = new Map<string, string[]>();
     for (const delivery of dto.deliveries) {
       if (!requested.has(delivery.lineId)) throw new BadRequestException("یکی از اقلام تحویل در این سفارش نیست.");
-      requested.set(delivery.lineId, (requested.get(delivery.lineId) || 0) + delivery.quantity);
+      requested.set(delivery.lineId, roundQty((requested.get(delivery.lineId) || 0) + delivery.quantity));
       if (delivery.serials?.length) serialsByLine.set(delivery.lineId, (serialsByLine.get(delivery.lineId) || []).concat(delivery.serials));
     }
     for (const line of order.lines) {
       const deliverQty = requested.get(line.id) || 0;
-      if (deliverQty > line.quantity - line.deliveredQty) throw new BadRequestException(`بیشتر از مقدار سفارش نمی‌توان تحویل کرد. قابل تحویل «${line.name}»: ${line.quantity - line.deliveredQty}`);
+      if (deliverQty > roundQty(line.quantity - line.deliveredQty)) throw new BadRequestException(`بیشتر از مقدار سفارش نمی‌توان تحویل کرد. قابل تحویل «${line.name}»: ${roundQty(line.quantity - line.deliveredQty)}`);
     }
     const releasing: Array<{ productId: string; quantity: number }> = [];
     for (const line of order.lines) {
@@ -136,7 +136,10 @@ export class OrdersController {
       );
       for (const line of order.lines) {
         const deliverQty = requested.get(line.id) || 0;
-        if (deliverQty > 0) await tx.customerOrderLine.update({ where: { id: line.id }, data: { deliveredQty: { increment: deliverQty } } });
+        if (deliverQty > 0) {
+          await tx.customerOrderLine.update({ where: { id: line.id }, data: { deliveredQty: { increment: deliverQty } } });
+          await tx.$executeRaw`UPDATE CustomerOrderLine SET deliveredQty = ROUND(deliveredQty, 3) WHERE id = ${line.id}`;
+        }
       }
       const refreshed = await tx.customerOrder.findUnique({ where: { id: order.id }, include: { lines: true } });
       const complete = refreshed?.lines.every((line) => line.deliveredQty >= line.quantity) ?? false;

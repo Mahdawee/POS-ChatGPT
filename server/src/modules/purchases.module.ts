@@ -57,7 +57,7 @@ export class PurchasesController {
     const merged = new Map<string, { quantity: number; unitCost: number; expiryDate?: string; serials: string[] }>();
     for (const line of dto.items) {
       const current = merged.get(line.productId);
-      merged.set(line.productId, { quantity: (current?.quantity || 0) + line.quantity, unitCost: line.unitCost ?? current?.unitCost ?? 0, expiryDate: line.expiryDate ?? current?.expiryDate, serials: (current?.serials || []).concat(line.serials || []) });
+      merged.set(line.productId, { quantity: roundQty((current?.quantity || 0) + line.quantity), unitCost: line.unitCost ?? current?.unitCost ?? 0, expiryDate: line.expiryDate ?? current?.expiryDate, serials: (current?.serials || []).concat(line.serials || []) });
     }
     const lines = [...merged.entries()];
     return this.prisma.$transaction(async (tx) => {
@@ -167,7 +167,7 @@ export class PurchasesController {
       const products = await tx.product.findMany({ where: { id: { in: [...new Set(purchase.items.map((item) => item.productId))] } } });
       const byId = new Map(products.map((product) => [product.id, product]));
       const need = new Map<string, number>();
-      for (const item of purchase.items) need.set(item.productId, (need.get(item.productId) || 0) + item.quantity);
+      for (const item of purchase.items) need.set(item.productId, roundQty((need.get(item.productId) || 0) + item.quantity));
       for (const [productId, quantity] of need) {
         const product = byId.get(productId);
         if (!product) continue;

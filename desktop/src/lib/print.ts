@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { qrSvg } from "./qr";
-import { dateTime, dayLabel, dir, fullDate, lang, money, moneyPlain, percent, t } from "../i18n";
+import { dateTime, dayLabel, dir, fullDate, lang, money, moneyPlain, percent, qty, t } from "../i18n";
 import { getBrand } from "./brand";
 import type { CustomerDetail, ProfitReport, Product, PurchaseReturn, Sale, SaleReturn, ShopSettings, ZReport } from "./api";
 
@@ -110,7 +110,7 @@ export function textReceipt(sale: Sale, shop: ShopSettings): string {
   rows.push(line(t("زمان"), new Date(sale.createdAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short", hour12: true })));
   rows.push(line(t("مشتری"), sale.customer?.name || t("مشتری گذری")));
   rows.push("-".repeat(40));
-  for (const item of sale.items) rows.push(line(`${item.name} x${item.quantity}`, moneyPlain(item.lineTotal)));
+  for (const item of sale.items) rows.push(line(`${item.name} x${qty(item.quantity)}`, moneyPlain(item.lineTotal)));
   rows.push("-".repeat(40));
   rows.push(line(t("جمع کل"), moneyPlain(sale.total)));
   if (sale.discount > 0) rows.push(line(t("تخفیف"), moneyPlain(sale.discount)));
@@ -123,7 +123,7 @@ export function textReceipt(sale: Sale, shop: ShopSettings): string {
 
 /** Formal A4 wholesale invoice with letterhead, item table and signatures. */
 export function invoiceHtml(sale: Sale, shop: ShopSettings): string {
-  const rows = sale.items.map((item, index) => `<tr><td class="num">${index + 1}</td><td>${esc(item.name)}</td><td class="num">${item.quantity}</td><td class="num">${money(item.unitPrice)}</td><td class="num">${money(item.lineTotal)}</td></tr>`).join("");
+  const rows = sale.items.map((item, index) => `<tr><td class="num">${index + 1}</td><td>${esc(item.name)}</td><td class="num">${qty(item.quantity)}</td><td class="num">${money(item.unitPrice)}</td><td class="num">${money(item.lineTotal)}</td></tr>`).join("");
   return `
     <div class="invoice-head">
       <div>${shop.printLogo === "0" ? "" : shop.logo?.trim() ? `<img class="shop-logo" style="margin:0" src="${esc(shop.logo)}" alt=""/>` : ""}<div class="receipt-brand">${esc(shop.shopName?.trim() || t("فروشگاه من"))}</div>${[shop.address?.trim(), shop.phone?.trim()].filter(Boolean).join(" · ") ? `<div style="font-size:11px;color:#444;">${esc([shop.address?.trim(), shop.phone?.trim()].filter(Boolean).join(" · "))}</div>` : ""}</div>
@@ -207,7 +207,7 @@ export function saleReceiptHtml(sale: Sale, shop: ShopSettings, qrHtml = ""): st
     [t("زمان"), dateTime(sale.createdAt)],
     [t("مشتری"), sale.customer?.name || t("مشتری گذری")],
   ];
-  const items = sale.items.map((item) => `<div class="receipt-item"><span>${esc(item.name)} × ${item.quantity}</span><b>${money(item.lineTotal)}</b></div>`);
+  const items = sale.items.map((item) => `<div class="receipt-item"><span>${esc(item.name)} × ${qty(item.quantity)}</span><b>${money(item.lineTotal)}</b></div>`);
   const totals: Array<[string, string, boolean?]> = [[t("جمع کل"), money(sale.total), true]];
   if (sale.discount > 0) totals.push([t("تخفیف"), money(sale.discount)]);
   totals.push([t("روش پرداخت"), payLabel(sale.paymentMethod)]);
@@ -221,7 +221,7 @@ export function returnSlipHtml(sale: Sale, record: SaleReturn, shop: ShopSetting
     [t("فاکتور اصلی"), sale.receiptNo],
     [t("زمان"), dateTime(record.createdAt)],
   ];
-  const items = (record.items || []).map((item) => `<div class="receipt-item"><span>${esc(item.name)} × ${item.quantity}</span><b>${money(item.lineTotal)}</b></div>`);
+  const items = (record.items || []).map((item) => `<div class="receipt-item"><span>${esc(item.name)} × ${qty(item.quantity)}</span><b>${money(item.lineTotal)}</b></div>`);
   const totals: Array<[string, string, boolean?]> = [[t("مبلغ برگشتی"), money(record.total), true]];
   // Refund channels, so money sent back over mobile money stays visible.
   if (record.cashAmount) totals.push([t("بازپرداخت نقدی"), money(record.cashAmount)]);
@@ -268,7 +268,7 @@ export function purchaseReturnHtml(record: PurchaseReturn, shop: ShopSettings): 
     [t("تأمین‌کننده"), record.supplier?.name || "—"],
     [t("زمان"), dateTime(record.createdAt)],
   ];
-  const items = (record.items || []).map((item) => `<div class="receipt-item"><span>${esc(item.name)} × ${item.quantity}</span><b>${money(item.lineTotal)}</b></div>`);
+  const items = (record.items || []).map((item) => `<div class="receipt-item"><span>${esc(item.name)} × ${qty(item.quantity)}</span><b>${money(item.lineTotal)}</b></div>`);
   const totals: Array<[string, string, boolean?]> = [
     [t("مبلغ برگشت خرید"), money(record.total), true],
     [t("ثبت در حساب"), t("تأمین‌کننده")],
@@ -312,7 +312,7 @@ export function reportHtml(report: ProfitReport, shop: ShopSettings = {}): strin
       <tbody>${[...report.byDay].reverse().map((row) => `<tr><td>${esc(dayLabel(row.day))}</td><td class="num">${money(row.revenue)}</td><td class="num">${money(row.profit)}</td></tr>`).join("")}</tbody></table>
     <h2>${esc(t("پرفروش‌ترین کالاها"))}</h2>
     <table><thead><tr><th>${esc(t("کالا"))}</th><th>${esc(t("تعداد"))}</th><th>${esc(t("فروش"))}</th><th>${esc(t("سود"))}</th></tr></thead>
-      <tbody>${report.topProducts.map((product) => `<tr><td>${esc(product.name)}</td><td class="num">${product.quantity}</td><td class="num">${money(product.revenue)}</td><td class="num">${money(product.profit)}</td></tr>`).join("")}</tbody></table>
+      <tbody>${report.topProducts.map((product) => `<tr><td>${esc(product.name)}</td><td class="num">${qty(product.quantity)}</td><td class="num">${money(product.revenue)}</td><td class="num">${money(product.profit)}</td></tr>`).join("")}</tbody></table>
     <p class="receipt-thanks muted">${esc(t("برای خروجی PDF، در پنجرهٔ چاپ گزینهٔ Microsoft Print to PDF را انتخاب کنید."))}</p>`;
 }
 

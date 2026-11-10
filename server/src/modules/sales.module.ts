@@ -70,18 +70,18 @@ export class SalesController {
       const requested = new Map<string, number>();
       const serialsByProduct = new Map<string, string[]>();
       for (const line of dto.items) {
-        requested.set(line.productId, (requested.get(line.productId) || 0) + line.quantity);
+        requested.set(line.productId, roundQty((requested.get(line.productId) || 0) + line.quantity));
         if (line.serials?.length) serialsByProduct.set(line.productId, (serialsByProduct.get(line.productId) || []).concat(line.serials));
       }
       const returned = new Map<string, number>();
-      for (const item of sale.returns.flatMap((record) => record.items)) returned.set(item.productId, (returned.get(item.productId) || 0) + item.quantity);
+      for (const item of sale.returns.flatMap((record) => record.items)) returned.set(item.productId, roundQty((returned.get(item.productId) || 0) + item.quantity));
       let lineSum = 0;
       const lines: { productId: string; name: string; sku: string; quantity: number; unitPrice: number; unitCost: number; lineTotal: number }[] = [];
       for (const [productId, quantity] of requested) {
         const saleItem = sale.items.find((item) => item.productId === productId);
         if (!saleItem) throw new BadRequestException("این کالا در فاکتور اصلی وجود ندارد.");
         const already = returned.get(productId) || 0;
-        if (already + quantity > saleItem.quantity) throw new BadRequestException(`بیشتر از مقدار فاکتور نمی‌توان برگشت داد. قابل برگشت: ${saleItem.quantity - already}`);
+        if (roundQty(already + quantity) > saleItem.quantity) throw new BadRequestException(`بیشتر از مقدار فاکتور نمی‌توان برگشت داد. قابل برگشت: ${roundQty(saleItem.quantity - already)}`);
         const lineTotal = Math.round(saleItem.unitPrice * quantity);
         if (!Number.isSafeInteger(lineSum + lineTotal)) throw new BadRequestException("مبلغ برگشتی از سقف مجاز بیشتر است.");
         lineSum += lineTotal;
@@ -99,7 +99,7 @@ export class SalesController {
       // (i.e. the sale total after discount); partial returns refund the
       // undiscounted line prices — but never more than what was actually
       // paid, so a discounted invoice cannot be refunded above its collection.
-      const fullReturn = sale.items.every((item) => (returned.get(item.productId) || 0) + (requested.get(item.productId) || 0) >= item.quantity);
+      const fullReturn = sale.items.every((item) => roundQty((returned.get(item.productId) || 0) + (requested.get(item.productId) || 0)) >= item.quantity);
       let total = fullReturn ? Math.min(sale.total, paidPart) : lineSum;
       total = Math.min(total, Math.max(0, paidPart - alreadyRefunded));
       // Goods bought on credit stop being a debt the moment they come back:
@@ -138,9 +138,9 @@ export class SalesController {
           // were SOLD against this invoice's bundle line and must flip back,
           // otherwise the device sits on the shelf as unsellable forever.
           const rows = await tx.bundleComponent.findMany({ where: { bundleId: line.productId }, include: { component: true } });
-          const serializedParts = rows.filter((row) => row.component.isSerialized).map((row) => ({ id: row.component.id, name: row.component.name, quantity: row.quantity * line.quantity }));
+          const serializedParts = rows.filter((row) => row.component.isSerialized).map((row) => ({ id: row.component.id, name: row.component.name, quantity: roundQty(row.quantity * line.quantity) }));
           if (!serializedParts.length) continue;
-          const needed = serializedParts.reduce((sum, part) => sum + part.quantity, 0);
+          const needed = roundQty(serializedParts.reduce((sum, part) => sum + part.quantity, 0));
           if (!serials.length) throw new BadRequestException(`برای برگشت «${line.name}» شمارهٔ سریال/IMEI اجزای سریال‌دار هر بسته را وارد کنید (${needed} عدد).`);
           if (new Set(serials).size !== serials.length) throw new BadRequestException(`سریال تکراری در برگشت «${line.name}» هست؛ هر دستگاه را یک بار وارد کنید.`);
           const units = await tx.serialUnit.findMany({ where: { serial: { in: serials } } });
@@ -168,12 +168,12 @@ export class SalesController {
       // the net usage keeps the shelf from silently inflating.
       const takenMoves = await tx.inventoryMovement.findMany({ where: { reference: sale.receiptNo, type: "SALE" }, select: { productId: true, quantity: true } });
       const taken = new Map<string, number>();
-      for (const move of takenMoves) taken.set(move.productId, (taken.get(move.productId) || 0) + Math.abs(move.quantity));
+      for (const move of takenMoves) taken.set(move.productId, roundQty((taken.get(move.productId) || 0) + Math.abs(move.quantity)));
       const earlierReturnNos = sale.returns.map((record) => record.returnNo).filter((value): value is string => Boolean(value));
       const putBackMoves = earlierReturnNos.length ? await tx.inventoryMovement.findMany({ where: { reference: { in: earlierReturnNos }, type: "SALE_RETURN" }, select: { productId: true, quantity: true } }) : [];
       const putBack = new Map<string, number>();
-      for (const move of putBackMoves) putBack.set(move.productId, (putBack.get(move.productId) || 0) + move.quantity);
-      const roomFor = (productId: string): number => Math.max(0, (taken.get(productId) || 0) - (putBack.get(productId) || 0));
+      for (const move of putBackMoves) putBack.set(move.productId, roundQty((putBack.get(move.productId) || 0) + move.quantity));
+      const roomFor = (productId: string): number => Math.max(0, roundQty((taken.get(productId) || 0) - (putBack.get(productId) || 0)));
       // Restock with a running stock map: a component shared by several
       // returned bundles must chain its increments so every movement row's
       // stockAfter stays truthful.
@@ -246,7 +246,7 @@ export class SalesController {
     const shopName = settings.find((row) => row.key === "shopName")?.value || "فروشگاه";
     const footer = settings.find((row) => row.key === "receiptFooter")?.value || "";
     const returned = new Map<string, number>();
-    for (const record of sale.returns) for (const item of record.items) returned.set(item.productId, (returned.get(item.productId) || 0) + item.quantity);
+    for (const record of sale.returns) for (const item of record.items) returned.set(item.productId, roundQty((returned.get(item.productId) || 0) + item.quantity));
     const lines = [
       shopName,
       `فاکتور ${sale.invoiceNo || sale.receiptNo}`,

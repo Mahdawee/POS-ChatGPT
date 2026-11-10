@@ -327,6 +327,21 @@ describe("Sale returns", () => {
     expect(tx.saleReturn.create).not.toHaveBeenCalled();
   });
 
+  it("accepts the completing return of weighted goods whose parts sum with float dirt (0.1 + 0.2 of a 0.3 sale)", async () => {
+    // دور ۸۱: جمع خامِ برگشتیِ قبلی (۰٫۱) و درخواست (۰٫۲) برابر ۰٫۳۰۰۰…۴
+    // می‌شد و «بیشتر از مقدار فاکتور» برگشتِ مجازِ آخرین ۰٫۲ را رد می‌کرد.
+    const weightedSale = {
+      ...saleFixture,
+      subtotal: 300, discount: 0, total: 300, amountPaid: 300, cashPart: 300,
+      items: [{ id: "item-w", productId: "product-1", name: "برنج", sku: "R-1", quantity: 0.3, unitPrice: 1000, unitCost: 600, lineTotal: 300, discount: 0 }],
+      returns: [{ total: 100, creditRelief: 0, cashAmount: 100, items: [{ productId: "product-1", quantity: 0.1 }] }],
+    };
+    const { controller, tx } = returnSetup(weightedSale);
+    const record = await controller.returnSale("sale-1", { items: [{ productId: "product-1", quantity: 0.2 }] }, admin);
+    expect(tx.saleReturn.create).toHaveBeenCalled();
+    expect(record.total).toBe(200); // برگشت کامل: ۳۰۰ پرداختی − ۱۰۰ برگشتی قبلی
+  });
+
   it("refunds the discounted total on a full return and takes cash out of the open session", async () => {
     const { controller, tx } = returnSetup();
     const record = await controller.returnSale("sale-1", { items: [{ productId: "product-1", quantity: 3 }] }, admin);

@@ -15,7 +15,7 @@
 //   E2E_EXECUTABLE_PATH=…             مسیر کرومیوم جایگزین (اگر مرورگر
 //                                     پیش‌فرض playwright در دسترس نیست)
 //
-// سناریوها (۴۶ چک در اجرای سالم؛ چک اضافی فقط در صورت خطای غیرمنتظره): ورود، گارد تغییر اجباری گذرواژهٔ پیش‌فرض در نصب تازه،
+// سناریوها (۵۰ چک در اجرای سالم؛ چک اضافی فقط در صورت خطای غیرمنتظره): ورود، گارد تغییر اجباری گذرواژهٔ پیش‌فرض در نصب تازه،
 // ثبت سریع کالا با کد خودکار، اسکن بارکد با گوشیِ شبیه‌سازی‌شده (پل PIN)
 // داخل فرم کالا، «ذخیره و کالای بعدی»، Enter، لیست سبک صندوق
 // (/products/pos)، کد خودکار مشتری، اسکن خارج از صندوق (نباید بی‌سروصدا
@@ -24,7 +24,9 @@
 // بندانگشتی جدول و کاشی صندوق)، ممیزی انتشار (فروش کامل تا بستن صندوق +
 // کاهش موجودی + فاکتور در فروش‌ها + بدون خطای کنسول/کرش/5xx در همهٔ
 // صفحه‌ها)، رگرسیون ممیز شناور کالای وزنی (بارکد ترازو؛ ۰٫۳ − ۰٫۱×۳ =
-// ۰ دقیق) و صف آفلاین هنگام قطعی سرور (پارک → ثبت با بازگشت شبکه).
+// ۰ دقیق) و صف آفلاین هنگام قطعی سرور (پارک → ثبت با بازگشت شبکه) و
+// رگرسیون P0 دور ۸۱: فروش نقدیِ پارک‌شدهٔ آفلاین در روزِ بسته‌شدهٔ صندوق
+// (۴۰۰ «صندوق بسته است» نباید فاکتور را از صف حذف کند؛ با صندوق بعدی ثبت می‌شود).
 // ─────────────────────────────────────────────────────────────────────────────
 
 let chromium;
@@ -536,6 +538,75 @@ try {
       check("آفلاین: نشانگر صف آفلاین خالی شد", (await pageC.locator("aside.cart-panel button.amber-text").count()) === 0, "");
     } finally {
       await pageC.close();
+    }
+  }
+
+  // ── ۱۵ب) رگرسیون P0 دور ۸۱: فروش نقدیِ پارک‌شدهٔ آفلاین در روزِ بسته‌شده.
+  // صندوق باز است → شبکه می‌رود → فروش نقدی در صف پارک می‌شود → صندوق (از
+  // دستگاه دیگر، وسط قطعی) بسته می‌شود → شبکه برمی‌گردد. قبلاً ۴۰۰ «صندوق
+  // بسته است» فاکتور را «ردشده» از صف حذف می‌کرد = فروش گم‌شده. حالا باید
+  // در صف بماند، خطای صندوق را نشان بدهد و با باز شدن صندوق بعدی ثبت شود.
+  const closedName = `شیر آفلاین ${String(Date.now()).slice(-4)}`;
+  const closedCreated = await fetch(`${API}/products`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders }, body: JSON.stringify({ name: closedName, sku: "e2e-closed-cash", barcode: "9988776655", price: 200, cost: 100, stock: 1 }) });
+  if (!closedCreated.ok) {
+    check("آفلاینِ صندوق‌بسته: کالای سناریو ساخته شد", false, `HTTP ${closedCreated.status}`);
+  } else {
+    const closedProduct = await closedCreated.json();
+    const closedStock = () => fetch(`${API}/products/pos`, { headers: authHeaders }).then((r) => r.json()).then((list) => list.find((p) => p.id === closedProduct.id));
+    // صندوق باید در ابتدای سناریو باز باشد (دکمهٔ فروش نقدی فعال بماند).
+    let openSession = await fetch(`${API}/cash/current`, { headers: authHeaders }).then((r) => r.json()).catch(() => null);
+    if (!openSession) {
+      await fetch(`${API}/cash/open`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders }, body: JSON.stringify({ openingCash: 0 }) });
+      openSession = await fetch(`${API}/cash/current`, { headers: authHeaders }).then((r) => r.json()).catch(() => null);
+    }
+    const dPass = (await tryLogin("E2ePass12345")).accessToken ? "E2ePass12345" : "admin12345";
+    const pageD = await browser.newPage();
+    try {
+      await pageD.goto(UI);
+      await pageD.waitForSelector("form.login-form", { timeout: 20000 });
+      await pageD.locator("form.login-form input").nth(0).fill("admin");
+      await pageD.locator("form.login-form input").nth(1).fill(dPass);
+      await pageD.waitForFunction(() => { const b = document.querySelector("button.login-submit"); return Boolean(b && !b.disabled); }, null, { timeout: 15000 });
+      await pageD.locator("button.login-submit").click();
+      await pageD.locator("form.login-form").waitFor({ state: "detached", timeout: 30000 });
+      await pageD.getByRole("button", { name: "صندوق فروش", exact: false }).first().click();
+      await pageD.waitForTimeout(1200);
+      await pageD.locator(".pos-product").filter({ hasText: closedName }).waitFor({ state: "visible", timeout: 10000 });
+      const dSearch = pageD.locator("form.pos-search input");
+      // قطع شبکهٔ همین صفحه؛ تست خودش مستقیم به API وصل می‌ماند.
+      const uiApiPattern2 = `${new URL(UI).origin}/api/**`;
+      const directApiPattern2 = `${API}/**`;
+      const abortRoute2 = (route) => route.abort();
+      await pageD.route(uiApiPattern2, abortRoute2);
+      await pageD.route(directApiPattern2, abortRoute2);
+      // پرداخت پیش‌فرض نقدی است و صندوقِ (هنوز) باز دکمه را فعال نگه داشته.
+      await dSearch.fill("9988776655");
+      await dSearch.press("Enter");
+      await pageD.waitForTimeout(700);
+      await pageD.locator("button.checkout-button").click();
+      await pageD.waitForTimeout(2500);
+      const closedParkMessage = (await pageD.locator(".pos-products .error-box").allTextContents().catch(() => [])).join(" ");
+      check("آفلاینِ صندوق‌بسته: فروش نقدی در قطعی شبکه در صف پارک شد", closedParkMessage.includes("فاکتور در صف آفلاین ذخیره شد"), closedParkMessage.trim().slice(0, 70));
+      // صندوق وسط قطعی بسته می‌شود (دستگاه دیگر) — شمارش = مورد انتظار → اختلاف صفر
+      const closeRes = await fetch(`${API}/cash/close`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders }, body: JSON.stringify({ countedCash: openSession?.expectedCash ?? 0 }) });
+      await pageD.unroute(uiApiPattern2);
+      await pageD.unroute(directApiPattern2);
+      const closedBadge = pageD.locator("aside.cart-panel button.amber-text");
+      await closedBadge.click();
+      await pageD.waitForTimeout(2500);
+      const stuckError = (await pageD.locator(".pos-products .error-box").allTextContents().catch(() => [])).join(" ");
+      const stuckBadgeText = normalizeDigits((await closedBadge.textContent().catch(() => "")) || "");
+      const stuckStock = await closedStock();
+      check("آفلاینِ صندوق‌بسته: با ۴۰۰ صندوقِ بسته فاکتور «رد» نشد و در صف ماند", closeRes.ok && (await closedBadge.count()) === 1 && stuckBadgeText.includes("(1)") && stuckError.includes("صندوق بسته"), `${stuckBadgeText.trim().slice(0, 30)} — ${stuckError.trim().slice(0, 70)}`);
+      check("آفلاینِ صندوق‌بسته: موجودی سرور دست‌نخورده ماند (فروش گم نشد)", stuckStock && stuckStock.stock === 1, String(stuckStock?.stock));
+      // باز شدن صندوق بعدی → همان فاکتور باید ثبت و کم شود
+      await fetch(`${API}/cash/open`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders }, body: JSON.stringify({ openingCash: 0 }) });
+      await closedBadge.click();
+      await pageD.waitForTimeout(2500);
+      const afterReopenStock = await closedStock();
+      check("آفلاینِ صندوق‌بسته: با باز شدن صندوق بعدی فاکتور ثبت و موجودی صفر شد", afterReopenStock && afterReopenStock.stock === 0 && (await closedBadge.count()) === 0, `موجودی: ${afterReopenStock?.stock ?? "—"}، نشانگر صف: ${await closedBadge.count()}`);
+    } finally {
+      await pageD.close();
     }
   }
 

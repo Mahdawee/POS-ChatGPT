@@ -282,3 +282,19 @@ describe("Profit report cache", () => {
     expect(prisma.sale.findMany).toHaveBeenCalledTimes(3);
   });
 });
+
+describe("Weighted quantity hygiene (دور ۸۱)", () => {
+  it("ranks weighted products with clean quantities — 0.1 + 0.2 = 0.3, no float dirt", async () => {
+    const { controller, prisma } = setup();
+    invalidateReportCache();
+    (prisma.$queryRawUnsafe as jest.Mock).mockResolvedValue([
+      { saleId: "sale-1", productId: "pw", name: "برنج", quantity: 0.1, unitCost: 60, lineTotal: 100, categoryName: "خواربار" },
+      { saleId: "sale-2", productId: "pw", name: "برنج", quantity: 0.2, unitCost: 60, lineTotal: 200, categoryName: "خواربار" },
+    ]);
+    prisma.saleReturn.findMany.mockResolvedValue([]); // این سناریو برگشتی ندارد
+    const report = await controller.profit("2026-11-01", "2026-11-30");
+    const rice = report.topProducts.find((row) => row.name === "برنج");
+    expect(rice?.quantity).toBe(0.3); // قبلاً: ۰٫۳۰۰۰…۴
+    expect(rice?.revenue).toBe(300);
+  });
+});

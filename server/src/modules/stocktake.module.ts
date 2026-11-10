@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { CurrentUser, SessionUser } from "../auth";
 import { StocktakeDto } from "../dto";
 import { PrismaService } from "../prisma.service";
+import { roundQty } from "../quantities";
 
 /**
  * Physical stock counts (شمارش انبار): a count is registered with the
@@ -36,7 +37,7 @@ export class StocktakesController {
   async create(@Body() dto: StocktakeDto, @CurrentUser() user: SessionUser) {
     // Merge duplicated lines before touching the database.
     const counted = new Map<string, number>();
-    for (const line of dto.lines) counted.set(line.productId, (counted.get(line.productId) || 0) + line.counted);
+    for (const line of dto.lines) counted.set(line.productId, roundQty((counted.get(line.productId) || 0) + line.counted));
     const lines = [...counted.entries()];
     return this.prisma.$transaction(async (tx) => {
       const products = await tx.product.findMany({ where: { id: { in: lines.map(([id]) => id) }, isActive: true } });
@@ -53,7 +54,7 @@ export class StocktakesController {
           note: dto.note?.trim() || null,
           status: "OPEN",
           userId: user.id,
-          lines: { create: lines.map(([productId, quantity]) => { const product = productMap.get(productId)!; return { productId, expected: product.stock, counted: quantity, diff: quantity - product.stock }; }) },
+          lines: { create: lines.map(([productId, quantity]) => { const product = productMap.get(productId)!; return { productId, expected: product.stock, counted: quantity, diff: roundQty(quantity - product.stock) }; }) },
         },
         include: { lines: { include: { product: { select: { name: true, sku: true, unit: true } } } } },
       });
@@ -77,7 +78,7 @@ export class StocktakesController {
     for (const line of record.lines) {
       const product = await tx.product.findUnique({ where: { id: line.productId } });
       if (!product) continue; // product vanished; skip silently
-      const diff = line.counted - product.stock;
+      const diff = roundQty(line.counted - product.stock);
       if (Math.abs(diff) < 0.0005) continue;
       await tx.product.update({ where: { id: line.productId }, data: { stock: line.counted } });
       await tx.inventoryMovement.create({ data: { productId: line.productId, type: diff > 0 ? "ADJUSTMENT_IN" : "ADJUSTMENT_OUT", quantity: diff, stockAfter: line.counted, note: `شمارش انبار ${label}` } });

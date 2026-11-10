@@ -2,6 +2,7 @@ import { BadRequestException, Controller, Get, Module, Query } from "@nestjs/com
 import { AdminOnly } from "../auth";
 import { customerBalances, supplierBalances } from "../balances";
 import { PrismaService } from "../prisma.service";
+import { roundQty } from "../quantities";
 
 /**
  * ── Report cache ──────────────────────────────────────────────────────────
@@ -199,7 +200,7 @@ export class ReportsController {
         if (item.unitCost === 0) unknownCostRevenue += item.lineTotal;
         saleProfit += item.lineTotal - lineCost;
         const product = perProduct.get(item.productId) || { productId: item.productId, name: item.name, quantity: 0, revenue: 0, profit: 0 };
-        product.quantity += item.quantity;
+        product.quantity = roundQty(product.quantity + item.quantity);
         product.revenue += item.lineTotal;
         product.profit += item.lineTotal - lineCost;
         perProduct.set(item.productId, product);
@@ -234,7 +235,7 @@ export class ReportsController {
         const lineCost = item.unitCost * item.quantity;
         categoryBucket.revenue += item.lineTotal;
         categoryBucket.profit += item.lineTotal - lineCost;
-        categoryBucket.quantity += item.quantity;
+        categoryBucket.quantity = roundQty(categoryBucket.quantity + item.quantity);
         perCategory.set(categoryName, categoryBucket);
       }
     }
@@ -247,7 +248,7 @@ export class ReportsController {
         returnCost += item.unitCost * item.quantity;
         const product = perProduct.get(item.productId);
         if (product) {
-          product.quantity -= item.quantity;
+          product.quantity = roundQty(product.quantity - item.quantity);
           product.revenue -= item.lineTotal;
           product.profit -= item.lineTotal - item.unitCost * item.quantity;
         }
@@ -279,7 +280,7 @@ export class ReportsController {
         const categoryBucket = perCategory.get(categoryName) || { category: categoryName, revenue: 0, profit: 0, quantity: 0 };
         categoryBucket.revenue -= item.lineTotal;
         categoryBucket.profit -= item.lineTotal - item.unitCost * item.quantity;
-        categoryBucket.quantity -= item.quantity;
+        categoryBucket.quantity = roundQty(categoryBucket.quantity - item.quantity);
         perCategory.set(categoryName, categoryBucket);
       }
     }
@@ -457,7 +458,7 @@ export class ReportsController {
         invoiceDiscount += row.discount; lineDiscount += lineSum;
         for (const item of items) if (item.discount > 0) {
           const bucket = perProduct.get(item.name) || { name: item.name, quantity: 0, discount: 0 };
-          bucket.quantity += item.quantity; bucket.discount += item.discount; perProduct.set(item.name, bucket);
+          bucket.quantity = roundQty(bucket.quantity + item.quantity); bucket.discount += item.discount; perProduct.set(item.name, bucket);
         }
       }
       return {

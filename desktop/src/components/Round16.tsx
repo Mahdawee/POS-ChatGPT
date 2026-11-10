@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { AlertTriangle, CalendarClock, ClipboardList, Copy, Check, Mail, MessageCircle, PackageCheck, RefreshCw, Send, Smartphone, Trash2, X } from "lucide-react";
 import { get, post, type Contact, type CustomerOrder, type InstallmentPlan, type LicenseStatus, type Product, type ReceiptText, type ReorderRow, type Sale, type SerialUnit } from "../lib/api";
-import { dateOnly, dateTime, licensePlanLabel, money, t } from "../i18n";
+import { dateOnly, dateTime, licensePlanLabel, money, qty, qtyPlain, t } from "../i18n";
 import { useBrand } from "../lib/brand";
 import { DateField } from "./DatePicker";
 import { Modal } from "./Pages";
@@ -225,15 +225,15 @@ export function OrdersPage({ notify }: { notify: Notify }) {
     if (!window.confirm(t("این سفارش لغو شود؟ موجودی رزروشده آزاد می‌شود."))) return;
     try { await post(`/orders/${order.id}/cancel`, {}); notify(t("سفارش لغو شد.")); void load(); } catch (e) { notify((e as Error).message, "error"); }
   };
-  const remaining = (order: CustomerOrder) => order.lines.reduce((sum, line) => sum + (line.quantity - line.deliveredQty), 0);
+  const remaining = (order: CustomerOrder) => Math.round(order.lines.reduce((sum, line) => sum + line.quantity - line.deliveredQty, 0) * 1000) / 1000;
   // Exports the orders currently listed for the picked status.
   const exportOrders = (kindOfExport: "csv" | "pdf") => {
     const header = [t("شماره سفارش"), t("مشتری"), t("تعداد اقلام"), t("مانده تحویل"), t("یادداشت"), t("زمان ثبت")];
     const rows: Array<Array<string | number>> = orders.map((order) => [
       order.orderNo,
       order.customer?.name || t("بدون مشتری"),
-      order.lines.reduce((count, line) => count + line.quantity, 0),
-      Math.max(0, order.lines.reduce((remaining, line) => remaining + Math.max(0, line.quantity - line.deliveredQty), 0)),
+      qtyPlain(order.lines.reduce((count, line) => count + line.quantity, 0)),
+      qtyPlain(Math.max(0, order.lines.reduce((remaining, line) => remaining + Math.max(0, line.quantity - line.deliveredQty), 0))),
       order.note || "",
       dateTime(order.createdAt),
     ]);
@@ -255,8 +255,8 @@ export function OrdersPage({ notify }: { notify: Notify }) {
         <tbody>{orders.map((order, idx) => <tr key={order.id}><td className="muted mono">{idx + 1}</td>
           <td><b>{order.orderNo}</b></td>
           <td>{order.customer?.name || t("مشتری گذری")}</td>
-          <td className="muted">{order.lines.map((line) => `${line.name} × ${line.quantity}`).join("، ")}</td>
-          <td>{order.status === "OPEN" ? <b className={remaining(order) > 0 ? "danger-text" : "green-text"}>{remaining(order)}</b> : "—"}</td>
+          <td className="muted">{order.lines.map((line) => `${line.name} × ${qty(line.quantity)}`).join("، ")}</td>
+          <td>{order.status === "OPEN" ? <b className={remaining(order) > 0 ? "danger-text" : "green-text"}>{qty(remaining(order))}</b> : "—"}</td>
           <td className="muted">{order.note || "—"}</td>
           <td className="muted">{dateTime(order.createdAt)}</td>
           <td>{order.status === "OPEN" && <div className="row-actions"><button className="text-button" onClick={() => openDeliver(order)}><PackageCheck size={14}/>{t("تحویل")}</button><button className="text-button danger-text" onClick={() => void cancel(order)}><X size={14}/>{t("لغو")}</button></div>}</td>

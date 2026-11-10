@@ -4,8 +4,8 @@ import { StocktakesController } from "./stocktake.module";
 const user = { id: "user-1", username: "admin", displayName: "Admin", role: "ADMIN" as const };
 
 function setup(products = [
-  { id: "product-1", name: "چای", sku: "T-1", stock: 8, isActive: true },
-  { id: "product-2", name: "شکر", sku: "S-1", stock: 5, isActive: true },
+  { id: "product-1", name: "چای", sku: "T-1", stock: 8, isActive: true, isWeighted: false },
+  { id: "product-2", name: "شکر", sku: "S-1", stock: 5, isActive: true, isWeighted: false },
 ]) {
   const stocktakeRow = { id: "st-1", name: "شمارش پایان هفته", status: "OPEN", lines: [] as unknown[] };
   let createdRow: Record<string, unknown> | null = null;
@@ -53,6 +53,15 @@ describe("Stocktakes", () => {
     const { controller, tx } = setup();
     await controller.create({ lines: [{ productId: "product-1", counted: 2 }, { productId: "product-1", counted: 4 }] }, user);
     expect(tx.stocktake.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ lines: { create: [expect.objectContaining({ counted: 6 })] } }) }));
+  });
+
+  it("keeps weighted counts and diffs free of float dirt (0.1 + 0.2 counted over 0.1 stock)", async () => {
+    // دور ۸۱: جمع خام شمارش ۰٫۳۰۰۰…۴ و تفریق خام diff ۰٫۱۹۹۹…۹ ذخیره می‌شد.
+    const { controller } = setup([{ id: "product-w", name: "برنج", sku: "R-1", stock: 0.1, isActive: true, isWeighted: true }]);
+    const record = (await controller.create({ lines: [{ productId: "product-w", counted: 0.1 }, { productId: "product-w", counted: 0.2 }] }, user)) as { lines: { counted: number; expected: number; diff: number }[] };
+    expect(record.lines).toHaveLength(1);
+    expect(record.lines[0].counted).toBe(0.3);
+    expect(record.lines[0].diff).toBe(0.2);
   });
 
   it("applies differences as stock adjustments with traceable movements", async () => {

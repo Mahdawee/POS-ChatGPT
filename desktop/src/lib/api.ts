@@ -244,8 +244,13 @@ export async function replayOfflineSale(sale: OfflineSale): Promise<{ ok: boolea
     // سرور هنوز در دسترس نیست → در صف بماند. (TypeError خام برای اطمینان
     // می‌ماند؛ مسیر اصلی بعد از هاردنینگ request() همان ConnectionError است.)
     if (error instanceof ConnectionError || error instanceof TypeError) return { ok: false, retry: true };
+    const message = error instanceof Error ? error.message : String(error);
+    // «صندوق بسته است» برای صف آفلاین خطایی گذراست، نه دائمی: فروش نقدیِ
+    // پارک‌شدهٔ روزِ بسته‌شده باید در صف بماند تا صندوق بعدی باز شود و ثبت
+    // شود؛ قبلاً ۴۰۰ آن را «ردشده» فرض می‌کردیم و فاکتور برای همیشه گم می‌شد.
+    if (message.includes("صندوق بسته است")) return { ok: false, retry: true, message };
     removeFromOfflineQueue(sale.key);
-    return { ok: false, retry: false, message: error instanceof Error ? error.message : String(error) };
+    return { ok: false, retry: false, message };
   }
 }
 /** Retries every parked sale; resolves when the queue settles (empty or all

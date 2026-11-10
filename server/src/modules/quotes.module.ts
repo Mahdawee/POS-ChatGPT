@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { CurrentUser, SessionUser } from "../auth";
 import { QuoteDto , ConvertQuoteDto } from "../dto";
 import { PrismaService } from "../prisma.service";
+import { roundQty } from "../quantities";
 import { CheckoutService } from "../services/checkout";
 
 /**
@@ -38,7 +39,7 @@ export class QuotesController {
   @Post()
   async create(@Body() dto: QuoteDto, @CurrentUser() user: SessionUser) {
     const quantities = new Map<string, number>();
-    for (const line of dto.items) quantities.set(line.productId, (quantities.get(line.productId) || 0) + line.quantity);
+    for (const line of dto.items) quantities.set(line.productId, roundQty((quantities.get(line.productId) || 0) + line.quantity));
     const lines = [...quantities.entries()];
     return this.prisma.$transaction(async (tx) => {
       const products = await tx.product.findMany({ where: { id: { in: lines.map(([id]) => id) }, isActive: true } });

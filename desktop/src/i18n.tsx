@@ -93,6 +93,9 @@ const dateOptions = (): { calendar: string; timeZone?: string } => {
 export const money = (value: number): string => `${new Intl.NumberFormat(activeLocale(), { maximumFractionDigits: 0 }).format(value)} ${t(currencyLabel(currentCurrency))}`;
 export const moneyPlain = (value: number): string => new Intl.NumberFormat(activeLocale(), { maximumFractionDigits: 0 }).format(value);
 export const qty = (value: number): string => new Intl.NumberFormat(activeLocale(), { maximumFractionDigits: 3 }).format(value);
+// کمیتِ «ماشین‌خوان»: ارقام لاتین و نقطهٔ اعشار — برای خانه‌های CSV که باید
+// دوباره واردسازی شوند (جداشکنندهٔ اعشار فارسی «٫» در toNumber پارس نمی‌شود).
+export const qtyPlain = (value: number): string => String(Math.round((Number(value) || 0) * 1000) / 1000);
 // زمان‌ها در کل برنامه ۱۲ساعته‌اند (ق.ظ/ب.ظ، AM/PM) — درخواست مالک؛
 // hour12 صریحاً گذاشته شده تا هیچ زبانی به ساعت ۲۴نگاره‌ای برنگردد.
 export const dateTime = (value: string | Date): string => new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium", timeStyle: "short", hour12: true, ...dateOptions() }).format(new Date(value));

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { dir, t } from "../i18n";
+import { dir, moneyPlain, qty, t } from "../i18n";
 import { useBrand } from "../lib/brand";
 
 /**
@@ -34,7 +34,7 @@ export function CustomerDisplay() {
   return <div className="customer-display" dir={dir()}>
     <header className="cd-head"><div className="brand-mark"> {brand.appName.trim().slice(0, 2)} </div><div><strong>{state?.shop || brand.appName}</strong><small>{t("نمایشگر مشتری")}</small></div></header>
     {state && state.count > 0 ? <main className="cd-body">
-      <div className="cd-last"><span>{t("آخرین قلم")}</span><b>{last?.name}</b><small>{last ? `${last.quantity} × ${last.lineTotal}` : ""}</small></div>
+      <div className="cd-last"><span>{t("آخرین قلم")}</span><b>{last?.name}</b><small>{last ? `${qty(last.quantity)} × ${moneyPlain(last.lineTotal)}` : ""}</small></div>
       <div className="cd-total"><span>{t("جمع فاکتور")}</span><b>{t("{amount} افغانی", { amount: new Intl.NumberFormat("fa-AF").format(state.total) })}</b></div>
       <div className="cd-count">{t("{count} قلم کالا", { count: state.count })}</div>
       {state.customer && <div className="cd-count">{state.customer}</div>}

@@ -168,7 +168,7 @@ export class CheckoutService {
           const serializedParts = (bundleComponents.get(productId) || []).filter((part) => part.component.isSerialized);
           if (serializedParts.length) {
             const serials = (serialsByProduct.get(productId) || []).map((value) => value.trim()).filter(Boolean);
-            const needed = serializedParts.reduce((sum, part) => sum + part.quantity, 0);
+            const needed = roundQty(serializedParts.reduce((sum, part) => sum + part.quantity, 0));
             if (!serials.length) throw new BadRequestException(`برای «${product.name}» شمارهٔ سریال/IMEI اجزای سریال‌دار هر بسته را وارد کنید (${needed} عدد).`);
             if (new Set(serials).size !== serials.length) throw new BadRequestException(`سریال تکراری در اقلام «${product.name}» هست؛ هر دستگاه را یک بار وارد کنید.`);
             const units = await tx.serialUnit.findMany({ where: { serial: { in: serials } } });
